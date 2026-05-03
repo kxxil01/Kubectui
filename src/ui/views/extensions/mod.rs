@@ -11,6 +11,7 @@ use ratatui::{
 use crate::{
     app::{AppState, AppView},
     state::{ClusterSnapshot, DataPhase, RefreshScope, ViewLoadState},
+    ui::active_view_fetch_error,
 };
 
 const STACKED_EXTENSIONS_WIDTH: u16 = 72;
@@ -51,11 +52,14 @@ pub fn render_extensions(
     crds::render_crd_picker(
         frame,
         chunks[0],
-        &snapshot.custom_resource_definitions,
-        crds_loading,
-        app.selected_idx(),
-        app.search_query(),
-        !app.extension_in_instances,
+        crds::CrdPickerPane {
+            crds: &snapshot.custom_resource_definitions,
+            is_loading: crds_loading,
+            fetch_error: active_view_fetch_error(snapshot, AppView::Extensions),
+            selected_idx: app.selected_idx(),
+            query: app.search_query(),
+            is_focused: !app.extension_in_instances,
+        },
     );
 
     custom_resources::render_custom_resources(

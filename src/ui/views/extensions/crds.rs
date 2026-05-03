@@ -10,7 +10,7 @@ use ratatui::{
 use crate::k8s::dtos::CustomResourceDefinitionInfo;
 use crate::ui::{
     TableFrame, components::default_theme, contains_ci, loading_spinner_char, render_table_frame,
-    resource_table_title, striped_row_style, table_viewport_rows, table_window,
+    resource_table_title, striped_row_style, table_viewport_rows, table_window, truncate_message,
 };
 
 const NARROW_CRD_WIDTH: u16 = 96;
@@ -59,30 +59,43 @@ pub fn selected_crd<'a>(
         .and_then(|&idx| crds.get(idx))
 }
 
-pub fn render_crd_picker(
-    frame: &mut Frame,
-    area: Rect,
-    crds: &[CustomResourceDefinitionInfo],
-    is_loading: bool,
-    selected_idx: usize,
-    query: &str,
-    is_focused: bool,
-) {
+pub struct CrdPickerPane<'a> {
+    pub crds: &'a [CustomResourceDefinitionInfo],
+    pub is_loading: bool,
+    pub fetch_error: Option<&'a str>,
+    pub selected_idx: usize,
+    pub query: &'a str,
+    pub is_focused: bool,
+}
+
+pub fn render_crd_picker(frame: &mut Frame, area: Rect, pane: CrdPickerPane<'_>) {
     let theme = default_theme();
-    let filtered = filtered_crd_indices(crds, query);
-    let query_trimmed = query.trim();
+    let filtered = filtered_crd_indices(pane.crds, pane.query);
+    let query_trimmed = pane.query.trim();
 
     if filtered.is_empty() {
-        let (icon, icon_color, msg) = if is_loading {
+        let (icon, icon_color, msg) = if pane.is_loading {
             (
                 format!("{} ", loading_spinner_char()),
                 theme.accent,
-                "Loading CRDs...",
+                "Loading CRDs...".to_string(),
+            )
+        } else if query_trimmed.is_empty()
+            && let Some(error) = pane.fetch_error
+        {
+            (
+                "✗ ".to_string(),
+                theme.error,
+                truncate_message(&format!("Failed to load CRDs: {error}"), 180).into_owned(),
             )
         } else if query_trimmed.is_empty() {
-            ("○ ".to_string(), theme.fg_dim, "No CRDs found")
+            ("○ ".to_string(), theme.fg_dim, "No CRDs found".to_string())
         } else {
-            ("⊘ ".to_string(), theme.warning, "No CRDs match search")
+            (
+                "⊘ ".to_string(),
+                theme.warning,
+                "No CRDs match search".to_string(),
+            )
         };
         frame.render_widget(
             Paragraph::new(ratatui::text::Line::from(vec![
@@ -90,21 +103,24 @@ pub fn render_crd_picker(
                 Span::styled(msg, theme.inactive_style()),
             ]))
             .alignment(ratatui::layout::Alignment::Center)
-            .block(crate::ui::components::content_block("CRDs", is_focused)),
+            .block(crate::ui::components::content_block(
+                "CRDs",
+                pane.is_focused,
+            )),
             area,
         );
         return;
     }
 
     let total = filtered.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
+    let selected = pane.selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
     let rows = filtered[window.start..window.end]
         .iter()
         .enumerate()
         .map(|(offset, &crd_idx)| {
             let idx = window.start + offset;
-            let crd = &crds[crd_idx];
+            let crd = &pane.crds[crd_idx];
             Row::new(vec![
                 Cell::from(crd.kind.clone()),
                 Cell::from(crd.group.clone()),
@@ -124,12 +140,19 @@ pub fn render_crd_picker(
     .style(theme.header_style())
     .height(1);
 
-    let title_suffix = if is_loading {
+    let title_suffix = if pane.is_loading {
         format!(" [{} loading]", loading_spinner_char())
     } else {
         String::new()
     };
-    let title = resource_table_title(" ", "CRDs", total, crds.len(), query_trimmed, &title_suffix);
+    let title = resource_table_title(
+        " ",
+        "CRDs",
+        total,
+        pane.crds.len(),
+        query_trimmed,
+        &title_suffix,
+    );
     let widths = crd_widths(area);
     render_table_frame(
         frame,
@@ -139,7 +162,7 @@ pub fn render_crd_picker(
             header,
             widths: &widths,
             title: &title,
-            focused: is_focused,
+            focused: pane.is_focused,
             window,
             total,
             selected,
@@ -192,7 +215,18 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render_crd_picker(frame, frame.area(), &crds, false, 18, "", true);
+                render_crd_picker(
+                    frame,
+                    frame.area(),
+                    CrdPickerPane {
+                        crds: &crds,
+                        is_loading: false,
+                        fetch_error: None,
+                        selected_idx: 18,
+                        query: "",
+                        is_focused: true,
+                    },
+                );
             })
             .expect("render");
 
@@ -207,6 +241,41 @@ mod tests {
 
         assert!(out.contains("Kind18"));
         assert!(!out.contains("Kind0"));
+    }
+
+    #[test]
+    fn render_crd_picker_shows_fetch_error_before_empty_state() {
+        let backend = TestBackend::new(80, 8);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_crd_picker(
+                    frame,
+                    frame.area(),
+                    CrdPickerPane {
+                        crds: &[],
+                        is_loading: false,
+                        fetch_error: Some("forbidden by RBAC"),
+                        selected_idx: 0,
+                        query: "",
+                        is_focused: true,
+                    },
+                );
+            })
+            .expect("render");
+
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+
+        assert!(out.contains("Failed to load CRDs: forbidden by RBAC"));
+        assert!(!out.contains("No CRDs found"));
     }
 
     #[test]
