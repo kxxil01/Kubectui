@@ -323,6 +323,7 @@ pub struct AppState {
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
     pub extension_selected_crd: Option<String>,
+    pub extension_instances_loading: bool,
     pub extension_pending_selection: Option<(String, Option<String>)>,
     /// When true, keyboard focus is on the instances pane (right) instead of CRD picker (left).
     pub extension_in_instances: bool,
