@@ -18,6 +18,7 @@ pub async fn handle_debug_container_dialog_open(
     snapshot: &ClusterSnapshot,
     bootstrap_tx: &tokio::sync::mpsc::Sender<DebugContainerDialogBootstrapResult>,
     request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let Some(resource) = app
         .detail_view
@@ -61,6 +62,7 @@ pub async fn handle_debug_container_dialog_open(
         let _ = tx
             .send(DebugContainerDialogBootstrapResult {
                 request_id,
+                context_generation,
                 resource,
                 result,
             })

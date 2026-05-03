@@ -4309,6 +4309,9 @@ pub(crate) async fn run_app_inner(
             result = debug_dialog_bootstrap_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     if let Some(detail) = app.detail_view.as_mut()
                         && detail.resource.as_ref() == Some(&result.resource)
                         && let Some(dialog) = detail.debug_dialog.as_mut()
@@ -6454,6 +6457,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &debug_dialog_bootstrap_tx,
                         &mut debug_dialog_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {
