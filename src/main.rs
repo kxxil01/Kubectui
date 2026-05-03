@@ -179,6 +179,7 @@ fn workbench_waiting_for_detail_result(
 #[derive(Clone)]
 struct NodeDebugSessionRuntime {
     client: K8sClient,
+    context_generation: u64,
     node_name: String,
     pod_name: String,
     namespace: String,
@@ -196,6 +197,7 @@ async fn spawn_node_debug_cleanup(
             .map_err(|err| format!("{err:#}"));
         let _ = cleanup_tx
             .send(NodeDebugCleanupAsyncResult {
+                context_generation: session.context_generation,
                 node_name: session.node_name,
                 pod_name: session.pod_name,
                 namespace: session.namespace,
@@ -4584,6 +4586,7 @@ pub(crate) async fn run_app_inner(
                                 spawn_node_debug_cleanup(
                                     NodeDebugSessionRuntime {
                                         client: result.cleanup_client,
+                                        context_generation: result.context_generation,
                                         node_name: launch.node_name,
                                         pod_name: launch.pod_name,
                                         namespace: launch.namespace,
@@ -4597,6 +4600,7 @@ pub(crate) async fn run_app_inner(
                                 spawn_node_debug_cleanup(
                                     NodeDebugSessionRuntime {
                                         client: result.cleanup_client,
+                                        context_generation: result.context_generation,
                                         node_name: launch.node_name,
                                         pod_name: launch.pod_name,
                                         namespace: launch.namespace,
@@ -4641,6 +4645,7 @@ pub(crate) async fn run_app_inner(
                                         result.session_id,
                                         NodeDebugSessionRuntime {
                                             client: result.cleanup_client,
+                                            context_generation: result.context_generation,
                                             node_name: launch.node_name.clone(),
                                             pod_name: launch.pod_name.clone(),
                                             namespace: launch.namespace.clone(),
@@ -4674,6 +4679,7 @@ pub(crate) async fn run_app_inner(
                                     spawn_node_debug_cleanup(
                                         NodeDebugSessionRuntime {
                                             client: result.cleanup_client,
+                                            context_generation: result.context_generation,
                                             node_name: launch.node_name.clone(),
                                             pod_name: launch.pod_name.clone(),
                                             namespace: launch.namespace.clone(),
@@ -4785,6 +4791,9 @@ pub(crate) async fn run_app_inner(
 
             result = node_debug_cleanup_rx.recv() => {
                     if let Some(result) = result {
+                        if result.context_generation != refresh_state.context_generation {
+                            continue;
+                        }
                         needs_redraw = true;
                         if let Err(err) = result.result {
                             app.set_error(format!(
