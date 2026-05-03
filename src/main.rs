@@ -1908,6 +1908,13 @@ fn format_ai_log_context_line(line: &str) -> String {
     truncate_ai_block(&redact_ai_inline_secrets(line), 180)
 }
 
+fn prioritize_ai_log_context_lines(
+    status_lines: Vec<String>,
+    content_lines: Vec<String>,
+) -> Vec<String> {
+    status_lines.into_iter().chain(content_lines).collect()
+}
+
 async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut AiAnalysisContext) {
     if !context.log_lines.is_empty() {
         return;
@@ -1916,7 +1923,8 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
     let fetch = async {
         let targets = ai_live_log_targets(client, &context.resource).await?;
         let logs_client = LogsClient::new(client.get_client());
-        let mut lines = Vec::new();
+        let mut status_lines = Vec::new();
+        let mut content_lines = Vec::new();
         let mut streams_seen = 0usize;
         let mut streams_skipped = 0usize;
 
@@ -1937,11 +1945,11 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                     .await
                 {
                     Ok(current) if !current.is_empty() => {
-                        lines.push(format!(
+                        content_lines.push(format!(
                             "pod {}/{} container {container} current logs:",
                             target.namespace, target.pod_name
                         ));
-                        lines.extend(current.into_iter().map(|line| {
+                        content_lines.extend(current.into_iter().map(|line| {
                             format_ai_log_context_line(&format!(
                                 "{}/{} {container}: {line}",
                                 target.namespace, target.pod_name
@@ -1949,7 +1957,7 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                         }));
                     }
                     Ok(_) => {}
-                    Err(err) => lines.push(format!(
+                    Err(err) => status_lines.push(format!(
                         "pod {}/{} container {container} current logs unavailable: {err}",
                         target.namespace, target.pod_name
                     )),
@@ -1964,11 +1972,11 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                     .await
                 {
                     Ok(previous) if !previous.is_empty() => {
-                        lines.push(format!(
+                        content_lines.push(format!(
                             "pod {}/{} container {container} previous logs:",
                             target.namespace, target.pod_name
                         ));
-                        lines.extend(previous.into_iter().map(|line| {
+                        content_lines.extend(previous.into_iter().map(|line| {
                             format_ai_log_context_line(&format!(
                                 "{}/{} {container} previous: {line}",
                                 target.namespace, target.pod_name
@@ -1982,12 +1990,12 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
         }
 
         if streams_skipped > 0 {
-            lines.push(format!(
+            status_lines.push(format!(
                 "log fetch skipped {streams_skipped} additional pod/container stream(s)"
             ));
         }
 
-        anyhow::Ok(lines)
+        anyhow::Ok(prioritize_ai_log_context_lines(status_lines, content_lines))
     };
 
     let lines =
