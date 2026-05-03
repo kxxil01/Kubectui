@@ -71,6 +71,7 @@ impl AppState {
         self.extension_instances.clear();
         self.extension_error = None;
         self.extension_selected_crd = None;
+        self.extension_instances_loading = false;
         self.extension_pending_selection = None;
         self.extension_in_instances = false;
         self.extension_instance_cursor = 0;
@@ -86,6 +87,7 @@ impl AppState {
         })
         .flatten();
         self.extension_selected_crd = Some(crd_name);
+        self.extension_instances_loading = true;
         self.extension_instances.clear();
         self.extension_error = None;
         self.extension_instance_cursor = 0;
@@ -111,6 +113,7 @@ impl AppState {
                     .flatten()
             });
         self.extension_selected_crd = Some(crd_name);
+        self.extension_instances_loading = false;
         self.extension_instances = instances;
         self.extension_error = error;
         self.extension_instance_cursor = selected_resource
@@ -365,6 +368,7 @@ mod tests {
         app.extension_instance_cursor = 1;
 
         app.begin_extension_instances_load("widgets.demo.io".to_string());
+        assert!(app.extension_instances_loading);
         app.set_extension_instances(
             "widgets.demo.io".to_string(),
             vec![
@@ -374,6 +378,7 @@ mod tests {
             None,
         );
 
+        assert!(!app.extension_instances_loading);
         assert_eq!(app.extension_instance_cursor, 0);
         assert_eq!(app.extension_instances[0].name, "beta");
     }
@@ -390,6 +395,7 @@ mod tests {
             Some("old error".to_string()),
         );
         app.extension_in_instances = true;
+        app.extension_instances_loading = true;
         app.extension_pending_selection = Some(("beta".to_string(), Some("team-b".to_string())));
         app.extension_instance_cursor = 1;
 
@@ -399,6 +405,7 @@ mod tests {
         assert!(app.extension_instances.is_empty());
         assert!(app.extension_error.is_none());
         assert!(app.extension_selected_crd.is_none());
+        assert!(!app.extension_instances_loading);
         assert!(app.extension_pending_selection.is_none());
         assert!(!app.extension_in_instances);
         assert_eq!(app.extension_instance_cursor, 0);
