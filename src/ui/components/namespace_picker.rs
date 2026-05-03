@@ -94,8 +94,17 @@ impl NamespacePicker {
             .selected_namespace_from_indices(&self.filtered_namespace_indices())
             .map(ToOwned::to_owned)
             .or_else(|| self.selection_anchor.clone());
+        let had_selected_namespace = selected_namespace.is_some();
         self.namespaces = namespaces;
         self.restore_selected_namespace(selected_namespace);
+        if had_selected_namespace {
+            let filtered = self.filtered_namespace_indices();
+            if !filtered.is_empty() {
+                self.selection_anchor = self
+                    .selected_namespace_from_indices(&filtered)
+                    .map(ToOwned::to_owned);
+            }
+        }
     }
 
     pub fn selected_index(&self) -> usize {
@@ -710,6 +719,22 @@ mod tests {
         assert_eq!(
             picker.filtered_namespaces().get(picker.selected_index()),
             Some(&"kube-system".to_string())
+        );
+    }
+
+    #[test]
+    fn namespace_picker_refresh_drops_stale_anchor_when_selected_namespace_disappears() {
+        let mut picker =
+            NamespacePicker::new(vec!["default".to_string(), "kube-system".to_string()]);
+        picker.open();
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+
+        picker.set_namespaces(vec!["default".to_string()]);
+        picker.set_namespaces(vec!["default".to_string(), "kube-system".to_string()]);
+
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"default".to_string())
         );
     }
 }
