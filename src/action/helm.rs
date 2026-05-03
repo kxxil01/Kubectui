@@ -26,6 +26,7 @@ pub fn spawn_helm_history_fetch(
     resource: ResourceRef,
     kube_context: Option<String>,
     request_id: u64,
+    context_generation: u64,
 ) {
     let tx = history_tx.clone();
     tokio::spawn(async move {
@@ -40,6 +41,7 @@ pub fn spawn_helm_history_fetch(
         let _ = tx
             .send(HelmHistoryAsyncResult {
                 request_id,
+                context_generation,
                 resource,
                 result,
             })
@@ -54,6 +56,7 @@ fn spawn_helm_values_diff_fetch(
     current_revision: i32,
     target_revision: i32,
     request_id: u64,
+    context_generation: u64,
 ) {
     let tx = diff_tx.clone();
     tokio::spawn(async move {
@@ -72,6 +75,7 @@ fn spawn_helm_values_diff_fetch(
         let _ = tx
             .send(HelmValuesDiffAsyncResult {
                 request_id,
+                context_generation,
                 resource,
                 result,
             })
@@ -85,6 +89,7 @@ pub async fn handle_open_helm_history(
     snapshot: &kubectui::state::ClusterSnapshot,
     history_tx: &tokio::sync::mpsc::Sender<HelmHistoryAsyncResult>,
     request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let resource = app
         .detail_view
@@ -120,6 +125,7 @@ pub async fn handle_open_helm_history(
         resource,
         app.current_context_name.clone(),
         request_id,
+        context_generation,
     );
     false
 }
@@ -129,6 +135,7 @@ pub fn refresh_helm_history_tab(
     history_tx: &tokio::sync::mpsc::Sender<HelmHistoryAsyncResult>,
     request_seq: &mut u64,
     resource: ResourceRef,
+    context_generation: u64,
 ) {
     let request_id = next_request_id(request_seq);
     if let Some(tab) = app
@@ -143,6 +150,7 @@ pub fn refresh_helm_history_tab(
         resource,
         app.current_context_name.clone(),
         request_id,
+        context_generation,
     );
 }
 
@@ -152,6 +160,7 @@ pub async fn handle_open_helm_values_diff(
     snapshot: &kubectui::state::ClusterSnapshot,
     diff_tx: &tokio::sync::mpsc::Sender<HelmValuesDiffAsyncResult>,
     request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let kube_context = app.current_context_name.clone();
     let Some(tab) = app.workbench.active_tab() else {
@@ -203,6 +212,7 @@ pub async fn handle_open_helm_values_diff(
         current_revision,
         target_revision,
         request_id,
+        context_generation,
     );
     false
 }

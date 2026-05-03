@@ -3014,9 +3014,13 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     let DetailAsyncResult {
                         request_id,
+                        context_generation,
                         resource: requested_resource,
                         result,
                     } = result;
+                    if context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let detail_still_waiting_for_this = app
                         .detail_view
                         .as_ref()
@@ -3063,9 +3067,13 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     let ResourceDiffAsyncResult {
                         request_id,
+                        context_generation,
                         resource,
                         result,
                     } = result;
+                    if context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
                         matches!(
                             &tab.state,
@@ -3110,9 +3118,13 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     let HelmHistoryAsyncResult {
                         request_id,
+                        context_generation,
                         resource,
                         result,
                     } = result;
+                    if context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
                         matches!(
                             &tab.state,
@@ -3149,9 +3161,13 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     let RolloutInspectionAsyncResult {
                         request_id,
+                        context_generation,
                         resource,
                         result,
                     } = result;
+                    if context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
                         matches!(
                             &tab.state,
@@ -3186,9 +3202,13 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     let HelmValuesDiffAsyncResult {
                         request_id,
+                        context_generation,
                         resource,
                         result,
                     } = result;
+                    if context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
                         matches!(
                             &tab.state,
@@ -3857,6 +3877,7 @@ pub(crate) async fn run_app_inner(
                                 &rollout_inspection_tx,
                                 &mut rollout_inspection_request_seq,
                                 result.resource.clone(),
+                                refresh_state.context_generation,
                             );
                             apply_mutation_success(
                                 &mut app,
@@ -4139,6 +4160,7 @@ pub(crate) async fn run_app_inner(
                                 &helm_history_tx,
                                 &mut helm_history_request_seq,
                                 result.resource.clone(),
+                                refresh_state.context_generation,
                             );
                             apply_mutation_success(
                                 &mut app,
@@ -4902,9 +4924,13 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     let RelationsAsyncResult {
                         request_id,
+                        context_generation,
                         resource: requested_resource,
                         result,
                     } = result;
+                    if context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let tab_key = WorkbenchTabKey::Relations(requested_resource.clone());
                     if let Some(tab) = app.workbench.find_tab_mut(&tab_key)
                         && let WorkbenchTabState::Relations(ref mut state) = tab.state
@@ -5433,6 +5459,7 @@ pub(crate) async fn run_app_inner(
                             &detail_tx,
                             resource.clone(),
                             &mut detail_request_seq,
+                            refresh_state.context_generation,
                         );
                     }
 
@@ -5548,6 +5575,7 @@ pub(crate) async fn run_app_inner(
                                     &detail_tx,
                                     resource.clone(),
                                     &mut detail_request_seq,
+                                    refresh_state.context_generation,
                                 );
                             }
                             banner_message =
@@ -6084,6 +6112,7 @@ pub(crate) async fn run_app_inner(
                                 &detail_tx,
                                 resource,
                                 &mut detail_request_seq,
+                                refresh_state.context_generation,
                             );
                         }
                         Err(err) => app.set_error(err),
@@ -6105,6 +6134,7 @@ pub(crate) async fn run_app_inner(
                         &detail_tx,
                         resource,
                         &mut detail_request_seq,
+                        refresh_state.context_generation,
                     );
                     if app.focus == kubectui::app::Focus::Workbench {
                         app.focus = kubectui::app::Focus::Content;
@@ -6133,6 +6163,7 @@ pub(crate) async fn run_app_inner(
                         &detail_tx,
                         target.resource,
                         &mut detail_request_seq,
+                        refresh_state.context_generation,
                     );
                 }
                 AppAction::CloseDetail => {
@@ -6145,6 +6176,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &detail_tx,
                         &mut detail_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {
@@ -6158,6 +6190,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &resource_diff_tx,
                         &mut resource_diff_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {
@@ -6171,6 +6204,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &rollout_inspection_tx,
                         &mut rollout_inspection_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {
@@ -6184,6 +6218,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &helm_history_tx,
                         &mut helm_history_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {
@@ -6197,6 +6232,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &helm_values_diff_tx,
                         &mut helm_values_diff_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {
@@ -6210,6 +6246,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &detail_tx,
                         &mut detail_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {
@@ -6228,6 +6265,7 @@ pub(crate) async fn run_app_inner(
                         &client,
                         &relations_tx,
                         &mut relations_request_seq,
+                        refresh_state.context_generation,
                     ) {
                         continue;
                     }
@@ -6272,6 +6310,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &detail_tx,
                         &mut detail_request_seq,
+                        refresh_state.context_generation,
                     )
                     .await
                     {

@@ -887,6 +887,7 @@ pub fn open_detail_for_resource(
     detail_tx: &tokio::sync::mpsc::Sender<DetailAsyncResult>,
     resource: ResourceRef,
     detail_request_seq: &mut u64,
+    context_generation: u64,
 ) {
     app.record_recent_resource_jump(resource.clone());
     let request_id = super::next_request_id(detail_request_seq);
@@ -905,6 +906,7 @@ pub fn open_detail_for_resource(
         let _ = tx
             .send(DetailAsyncResult {
                 request_id,
+                context_generation,
                 resource: requested_resource,
                 result,
             })

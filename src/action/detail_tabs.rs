@@ -32,6 +32,7 @@ fn spawn_detail_fetch(
     snapshot: &ClusterSnapshot,
     resource: ResourceRef,
     request_id: u64,
+    context_generation: u64,
 ) {
     let tx = detail_tx.clone();
     let client_clone = client.clone();
@@ -43,6 +44,7 @@ fn spawn_detail_fetch(
         let _ = tx
             .send(DetailAsyncResult {
                 request_id,
+                context_generation,
                 resource,
                 result,
             })
@@ -55,6 +57,7 @@ fn spawn_resource_diff_fetch(
     client: &K8sClient,
     resource: ResourceRef,
     request_id: u64,
+    context_generation: u64,
 ) {
     let tx = diff_tx.clone();
     let client_clone = client.clone();
@@ -66,6 +69,7 @@ fn spawn_resource_diff_fetch(
         let _ = tx
             .send(ResourceDiffAsyncResult {
                 request_id,
+                context_generation,
                 resource,
                 result,
             })
@@ -82,6 +86,7 @@ pub async fn handle_open_resource_yaml(
     snapshot: &ClusterSnapshot,
     detail_tx: &tokio::sync::mpsc::Sender<DetailAsyncResult>,
     detail_request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let resource = app
         .detail_view
@@ -128,7 +133,14 @@ pub async fn handle_open_resource_yaml(
         pending_request_id,
     );
     if let Some(request_id) = pending_request_id {
-        spawn_detail_fetch(detail_tx, client, snapshot, resource, request_id);
+        spawn_detail_fetch(
+            detail_tx,
+            client,
+            snapshot,
+            resource,
+            request_id,
+            context_generation,
+        );
     }
     false
 }
@@ -142,6 +154,7 @@ pub async fn handle_open_resource_diff(
     snapshot: &ClusterSnapshot,
     diff_tx: &tokio::sync::mpsc::Sender<ResourceDiffAsyncResult>,
     diff_request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let resource = app
         .detail_view
@@ -169,7 +182,7 @@ pub async fn handle_open_resource_diff(
 
     app.detail_view = None;
     app.open_resource_diff_tab(resource.clone(), None, None, Some(request_id));
-    spawn_resource_diff_fetch(diff_tx, client, resource, request_id);
+    spawn_resource_diff_fetch(diff_tx, client, resource, request_id, context_generation);
     false
 }
 
@@ -182,6 +195,7 @@ pub async fn handle_open_decoded_secret(
     snapshot: &ClusterSnapshot,
     detail_tx: &tokio::sync::mpsc::Sender<DetailAsyncResult>,
     detail_request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let resource = app
         .detail_view
@@ -253,7 +267,14 @@ pub async fn handle_open_decoded_secret(
         }
     }
     if let Some(request_id) = pending_request_id {
-        spawn_detail_fetch(detail_tx, client, snapshot, resource, request_id);
+        spawn_detail_fetch(
+            detail_tx,
+            client,
+            snapshot,
+            resource,
+            request_id,
+            context_generation,
+        );
     }
     false
 }
@@ -267,6 +288,7 @@ pub async fn handle_open_resource_events(
     snapshot: &ClusterSnapshot,
     detail_tx: &tokio::sync::mpsc::Sender<DetailAsyncResult>,
     detail_request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let resource = app
         .detail_view
@@ -320,7 +342,14 @@ pub async fn handle_open_resource_events(
         pending_request_id,
     );
     if let Some(request_id) = pending_request_id {
-        spawn_detail_fetch(detail_tx, client, snapshot, resource, request_id);
+        spawn_detail_fetch(
+            detail_tx,
+            client,
+            snapshot,
+            resource,
+            request_id,
+            context_generation,
+        );
     }
     false
 }
@@ -564,6 +593,7 @@ pub fn handle_open_relationships(
     client: &K8sClient,
     relations_tx: &tokio::sync::mpsc::Sender<RelationsAsyncResult>,
     relations_request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let resource = app
         .detail_view
@@ -608,6 +638,7 @@ pub fn handle_open_relationships(
         let _ = tx
             .send(RelationsAsyncResult {
                 request_id,
+                context_generation,
                 resource: requested_resource,
                 result,
             })
@@ -855,9 +886,15 @@ mod tests {
         };
         let mut request_seq = 0;
 
-        let handled =
-            handle_open_resource_events(&mut app, &client, &snapshot, &detail_tx, &mut request_seq)
-                .await;
+        let handled = handle_open_resource_events(
+            &mut app,
+            &client,
+            &snapshot,
+            &detail_tx,
+            &mut request_seq,
+            7,
+        )
+        .await;
 
         assert!(handled);
         assert_eq!(
@@ -896,6 +933,7 @@ mod tests {
             &ClusterSnapshot::default(),
             &detail_tx,
             &mut request_seq,
+            7,
         )
         .await;
 
@@ -940,6 +978,7 @@ mod tests {
             &ClusterSnapshot::default(),
             &detail_tx,
             &mut request_seq,
+            7,
         )
         .await;
 
@@ -987,6 +1026,7 @@ mod tests {
             &ClusterSnapshot::default(),
             &detail_tx,
             &mut request_seq,
+            7,
         )
         .await;
 
