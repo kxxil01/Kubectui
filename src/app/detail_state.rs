@@ -750,6 +750,10 @@ impl DetailViewState {
                 .scale_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.pending)
+            || self
+                .probe_panel
+                .as_ref()
+                .is_some_and(|panel| panel.pending_request_id.is_some())
     }
 
     pub fn has_confirmation_dialog(&self) -> bool {
@@ -861,6 +865,16 @@ mod tests {
         );
         scale_dialog.set_pending(true);
         detail.scale_dialog = Some(scale_dialog);
+        assert!(detail.has_loading_indicator());
+
+        detail.scale_dialog = None;
+        let mut probe_panel = crate::ui::components::probe_panel::ProbePanelState::new(
+            "pod-a".to_string(),
+            "default".to_string(),
+            Vec::new(),
+        );
+        probe_panel.begin_refresh(44);
+        detail.probe_panel = Some(probe_panel);
         assert!(detail.has_loading_indicator());
     }
 

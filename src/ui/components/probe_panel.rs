@@ -8,7 +8,7 @@ use ratatui::{
 use std::collections::HashSet;
 
 use crate::k8s::probes::{ContainerProbes, ProbeStatus};
-use crate::ui::wrapped_line_count;
+use crate::ui::{loading_spinner_char, wrapped_line_count};
 
 /// State for the probe panel widget.
 #[derive(Debug, Clone, Default)]
@@ -159,8 +159,13 @@ impl ProbePanelState {
 
 /// Render the probe panel widget.
 pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState) {
+    let title = if state.pending_request_id.is_some() {
+        format!("Health Probes {} refreshing", loading_spinner_char())
+    } else {
+        "Health Probes".to_string()
+    };
     let block = Block::default()
-        .title("Health Probes")
+        .title(title)
         .borders(Borders::ALL)
         .style(Style::default().fg(Color::White));
     let inner = block.inner(area);
@@ -328,6 +333,7 @@ fn build_probe_lines(state: &ProbePanelState) -> (Vec<Line<'static>>, usize) {
 mod tests {
     use super::*;
     use crate::k8s::probes::{ProbeConfig, ProbeHandler, ProbeType};
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn test_probe_panel_navigation() {
@@ -450,6 +456,45 @@ mod tests {
         assert!(applied);
         assert!(state.pending_request_id.is_none());
         assert_eq!(state.container_probes[state.selected_index].0, "container2");
+    }
+
+    #[test]
+    fn probe_panel_pending_refresh_title_animates() {
+        let mut state = ProbePanelState::new(
+            "test-pod".to_string(),
+            "default".to_string(),
+            vec![("container1".to_string(), ContainerProbes::default())],
+        );
+        state.begin_refresh(7);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).expect("terminal");
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_probe_panel(frame, frame.area(), &state))
+            .expect("probe panel should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_probe_panel(frame, frame.area(), &state))
+            .expect("probe panel should render");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("refreshing"));
+        assert!(after.contains("refreshing"));
+        assert_ne!(before, after);
     }
 
     #[test]
