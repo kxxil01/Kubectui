@@ -24,12 +24,14 @@ use kubectui::{
 pub enum LogsViewerAsyncResult {
     Containers {
         request_id: u64,
+        context_generation: u64,
         pod_name: String,
         namespace: String,
         result: Result<Vec<String>, String>,
     },
     Tail {
         request_id: u64,
+        context_generation: u64,
         pod_name: String,
         namespace: String,
         container_name: String,
@@ -160,6 +162,7 @@ pub struct SetCronJobSuspendAsyncResult {
 #[derive(Debug)]
 pub struct ProbeAsyncResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<Vec<(String, ContainerProbes)>, String>,
 }
@@ -167,6 +170,7 @@ pub struct ProbeAsyncResult {
 #[derive(Debug)]
 pub struct ExecBootstrapResult {
     pub session_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<Vec<String>, String>,
 }
@@ -209,6 +213,7 @@ pub struct NodeDebugCleanupAsyncResult {
 #[derive(Debug)]
 pub struct WorkloadLogsBootstrapResult {
     pub session_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<Vec<WorkloadLogTarget>, String>,
 }
