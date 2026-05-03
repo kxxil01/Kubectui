@@ -22,6 +22,7 @@ pub fn spawn_rollout_inspection_fetch(
     client: &kubectui::k8s::client::K8sClient,
     resource: ResourceRef,
     request_id: u64,
+    context_generation: u64,
 ) {
     let tx = tx.clone();
     let client = client.clone();
@@ -33,6 +34,7 @@ pub fn spawn_rollout_inspection_fetch(
         let _ = tx
             .send(RolloutInspectionAsyncResult {
                 request_id,
+                context_generation,
                 resource,
                 result,
             })
@@ -46,6 +48,7 @@ pub async fn handle_open_rollout(
     snapshot: &kubectui::state::ClusterSnapshot,
     tx: &tokio::sync::mpsc::Sender<RolloutInspectionAsyncResult>,
     request_seq: &mut u64,
+    context_generation: u64,
 ) -> bool {
     let resource = app
         .detail_view
@@ -83,7 +86,7 @@ pub async fn handle_open_rollout(
     let request_id = next_request_id(request_seq);
     app.detail_view = None;
     app.open_rollout_tab(resource.clone(), None, None, Some(request_id));
-    spawn_rollout_inspection_fetch(tx, client, resource, request_id);
+    spawn_rollout_inspection_fetch(tx, client, resource, request_id, context_generation);
     false
 }
 
@@ -93,6 +96,7 @@ pub fn refresh_rollout_tab(
     tx: &tokio::sync::mpsc::Sender<RolloutInspectionAsyncResult>,
     request_seq: &mut u64,
     resource: ResourceRef,
+    context_generation: u64,
 ) {
     let Some(tab) = app
         .workbench_mut()
@@ -105,7 +109,7 @@ pub fn refresh_rollout_tab(
     };
     let request_id = next_request_id(request_seq);
     rollout_tab.refresh(request_id);
-    spawn_rollout_inspection_fetch(tx, client, resource, request_id);
+    spawn_rollout_inspection_fetch(tx, client, resource, request_id, context_generation);
 }
 
 pub async fn handle_rollout_restart(
