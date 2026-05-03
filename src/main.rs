@@ -2884,7 +2884,7 @@ pub(crate) async fn run_app_inner(
     let mut last_config_save: Option<Instant> = None;
     let mut auto_refresh_count: u64 = 0;
     let mut status_message_clear_at: Option<Instant> = None;
-    let mut pending_palette_action: Option<AppAction> = None;
+    let mut pending_palette_action: Option<PendingPaletteAction> = None;
     let mut pending_flux_reconcile_verifications: Vec<PendingFluxReconcileVerification> =
         Vec::new();
     let mut last_flux_watch_refresh_at: Option<Instant> = None;
@@ -3046,14 +3046,9 @@ pub(crate) async fn run_app_inner(
         watch_manager.ensure_watches(&client, watch_tx.clone(), watch_scope_for_view(app.view()));
 
         // Check if a deferred palette action is ready to dispatch.
-        let pending_action_ready = pending_palette_action.as_ref().is_some_and(|a| {
-            let needs_loaded_detail = palette_action_requires_loaded_detail(a);
-            !needs_loaded_detail
-                || app
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|d| !d.loading && d.error.is_none())
-        });
+        let pending_action_ready = pending_palette_action
+            .as_ref()
+            .is_some_and(|pending| pending_palette_action_ready(&app, pending));
 
         let mut action_to_process: Option<AppAction> = None;
         let mut extension_selection_changed = false;
@@ -5263,7 +5258,7 @@ pub(crate) async fn run_app_inner(
 
             // Deferred palette action — fires immediately when detail view is loaded
             _ = std::future::ready(()), if pending_action_ready => {
-                action_to_process = pending_palette_action.take();
+                action_to_process = pending_palette_action.take().map(|pending| pending.action);
                 needs_redraw = true;
             }
 
@@ -5544,14 +5539,24 @@ pub(crate) async fn run_app_inner(
                 AppAction::ApplyPreviousWorkspace => {
                     app.command_palette.close();
                     match app.cycle_saved_workspace_name(false) {
-                        Ok(name) => pending_palette_action = Some(AppAction::ApplyWorkspace(name)),
+                        Ok(name) => {
+                            pending_palette_action = Some(PendingPaletteAction::new(
+                                AppAction::ApplyWorkspace(name),
+                                None,
+                            ));
+                        }
                         Err(err) => app.set_error(err),
                     }
                 }
                 AppAction::ApplyNextWorkspace => {
                     app.command_palette.close();
                     match app.cycle_saved_workspace_name(true) {
-                        Ok(name) => pending_palette_action = Some(AppAction::ApplyWorkspace(name)),
+                        Ok(name) => {
+                            pending_palette_action = Some(PendingPaletteAction::new(
+                                AppAction::ApplyWorkspace(name),
+                                None,
+                            ));
+                        }
                         Err(err) => app.set_error(err),
                     }
                 }
@@ -5574,7 +5579,10 @@ pub(crate) async fn run_app_inner(
                         );
                     }
 
-                    pending_palette_action = Some(mapped);
+                    let expected_detail_resource =
+                        palette_action_requires_loaded_detail(&mapped).then(|| resource.clone());
+                    pending_palette_action =
+                        Some(PendingPaletteAction::new(mapped, expected_detail_resource));
                 }
                 AppAction::OpenRunbook { id, resource } => {
                     app.command_palette.close();
@@ -5649,14 +5657,15 @@ pub(crate) async fn run_app_inner(
                                 target.label(),
                                 name
                             ));
-                            pending_palette_action = Some(match target {
+                            let action = match target {
                                 kubectui::runbooks::RunbookWorkspaceTarget::SavedWorkspace => {
                                     AppAction::ApplyWorkspace(name)
                                 }
                                 kubectui::runbooks::RunbookWorkspaceTarget::WorkspaceBank => {
                                     AppAction::ActivateWorkspaceBank(name)
                                 }
-                            });
+                            };
+                            pending_palette_action = Some(PendingPaletteAction::new(action, None));
                         }
                         LoadedRunbookStepKind::DetailAction { action } => {
                             let Some(resource) = resource else {
@@ -5691,7 +5700,12 @@ pub(crate) async fn run_app_inner(
                             }
                             banner_message =
                                 Some(format!("{runbook_title}: running {}", action.label()));
-                            pending_palette_action = Some(map_palette_detail_action(detail_action));
+                            let action = map_palette_detail_action(detail_action);
+                            let expected_detail_resource =
+                                palette_action_requires_loaded_detail(&action)
+                                    .then(|| resource.clone());
+                            pending_palette_action =
+                                Some(PendingPaletteAction::new(action, expected_detail_resource));
                         }
                         LoadedRunbookStepKind::ExtensionAction { action_id } => {
                             let Some(resource) = resource else {
@@ -5712,10 +5726,13 @@ pub(crate) async fn run_app_inner(
                                 "{runbook_title}: running extension '{}'",
                                 action_id
                             ));
-                            pending_palette_action = Some(AppAction::ExecuteExtension {
-                                id: action_id,
-                                resource,
-                            });
+                            pending_palette_action = Some(PendingPaletteAction::new(
+                                AppAction::ExecuteExtension {
+                                    id: action_id,
+                                    resource,
+                                },
+                                None,
+                            ));
                         }
                         LoadedRunbookStepKind::AiWorkflow { workflow } => {
                             let Some(resource) = resource else {
@@ -5736,10 +5753,13 @@ pub(crate) async fn run_app_inner(
                                 "{runbook_title}: running AI workflow '{}'",
                                 workflow.default_title()
                             ));
-                            pending_palette_action = Some(AppAction::ExecuteAi {
-                                id: workflow.default_id().to_string(),
-                                resource,
-                            });
+                            pending_palette_action = Some(PendingPaletteAction::new(
+                                AppAction::ExecuteAi {
+                                    id: workflow.default_id().to_string(),
+                                    resource,
+                                },
+                                None,
+                            ));
                         }
                     }
 
@@ -5956,13 +5976,19 @@ pub(crate) async fn run_app_inner(
                         && app.current_context_name.as_deref() != Some(target_context.as_str())
                     {
                         app.pending_workspace_restore = Some(snapshot);
-                        pending_palette_action = Some(AppAction::SelectContext(target_context));
+                        pending_palette_action = Some(PendingPaletteAction::new(
+                            AppAction::SelectContext(target_context),
+                            None,
+                        ));
                         continue;
                     }
                     if snapshot.namespace != app.get_namespace() {
                         let target_namespace = snapshot.namespace.clone();
                         app.pending_workspace_restore = Some(snapshot);
-                        pending_palette_action = Some(AppAction::SelectNamespace(target_namespace));
+                        pending_palette_action = Some(PendingPaletteAction::new(
+                            AppAction::SelectNamespace(target_namespace),
+                            None,
+                        ));
                         continue;
                     }
                     let mut runtime = WorkspaceRestoreRuntime {
@@ -5997,13 +6023,19 @@ pub(crate) async fn run_app_inner(
                         && app.current_context_name.as_deref() != Some(target_context.as_str())
                     {
                         app.pending_workspace_restore = Some(snapshot);
-                        pending_palette_action = Some(AppAction::SelectContext(target_context));
+                        pending_palette_action = Some(PendingPaletteAction::new(
+                            AppAction::SelectContext(target_context),
+                            None,
+                        ));
                         continue;
                     }
                     if snapshot.namespace != app.get_namespace() {
                         let target_namespace = snapshot.namespace.clone();
                         app.pending_workspace_restore = Some(snapshot);
-                        pending_palette_action = Some(AppAction::SelectNamespace(target_namespace));
+                        pending_palette_action = Some(PendingPaletteAction::new(
+                            AppAction::SelectNamespace(target_namespace),
+                            None,
+                        ));
                         continue;
                     }
                     let mut runtime = WorkspaceRestoreRuntime {
@@ -7829,10 +7861,10 @@ pub(crate) async fn run_app_inner(
                 }
             }
 
-            // Clear stale deferred palette action if detail view was closed or errored
-            if pending_palette_action.is_some()
-                && (app.detail_view.is_none()
-                    || app.detail_view.as_ref().is_some_and(|d| d.error.is_some()))
+            // Clear stale deferred palette action if detail view changed, closed, or errored.
+            if pending_palette_action
+                .as_ref()
+                .is_some_and(|pending| pending_palette_action_stale(&app, pending))
             {
                 pending_palette_action = None;
             }

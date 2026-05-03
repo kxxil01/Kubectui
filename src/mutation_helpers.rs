@@ -213,6 +213,58 @@ pub fn palette_action_requires_loaded_detail(action: &AppAction) -> bool {
     )
 }
 
+/// Deferred palette action plus the detail resource it was prepared for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingPaletteAction {
+    pub action: AppAction,
+    pub expected_detail_resource: Option<ResourceRef>,
+}
+
+impl PendingPaletteAction {
+    pub fn new(action: AppAction, expected_detail_resource: Option<ResourceRef>) -> Self {
+        Self {
+            action,
+            expected_detail_resource,
+        }
+    }
+}
+
+/// Returns `true` once a deferred palette action can be dispatched.
+pub fn pending_palette_action_ready(app: &AppState, pending: &PendingPaletteAction) -> bool {
+    if !palette_action_requires_loaded_detail(&pending.action) {
+        return true;
+    }
+
+    app.detail_view.as_ref().is_some_and(|detail| {
+        !detail.loading
+            && detail.error.is_none()
+            && pending
+                .expected_detail_resource
+                .as_ref()
+                .is_some_and(|resource| detail.resource.as_ref() == Some(resource))
+    })
+}
+
+/// Returns `true` when a pending palette action cannot safely target its resource anymore.
+pub fn pending_palette_action_stale(app: &AppState, pending: &PendingPaletteAction) -> bool {
+    if !palette_action_requires_loaded_detail(&pending.action) {
+        return false;
+    }
+
+    let Some(detail) = app.detail_view.as_ref() else {
+        return true;
+    };
+
+    if detail.error.is_some() {
+        return true;
+    }
+
+    pending
+        .expected_detail_resource
+        .as_ref()
+        .is_none_or(|resource| detail.resource.as_ref() != Some(resource))
+}
+
 /// Returns `true` when the view does not appear in the primary/fast refresh set
 /// and should instead use its own targeted secondary refresh scope.
 pub fn view_prefers_secondary_refresh(view: AppView) -> bool {
@@ -415,11 +467,12 @@ pub fn queue_deferred_refreshes(
 #[cfg(test)]
 mod tests {
     use super::{
-        map_palette_detail_action, palette_action_requires_loaded_detail,
-        palette_detail_action_needs_resource_load,
+        PendingPaletteAction, map_palette_detail_action, palette_action_requires_loaded_detail,
+        palette_detail_action_needs_resource_load, pending_palette_action_ready,
+        pending_palette_action_stale,
     };
     use kubectui::{
-        app::{AppState, DetailViewState, ResourceRef},
+        app::{AppAction, AppState, DetailViewState, ResourceRef},
         policy::DetailAction,
     };
 
@@ -494,5 +547,56 @@ mod tests {
                 "{action:?} only needs the target resource identity"
             );
         }
+    }
+
+    #[test]
+    fn pending_palette_action_waits_for_expected_detail_resource() {
+        let target = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        let other = ResourceRef::Pod("api-1".to_string(), "default".to_string());
+        let pending = PendingPaletteAction::new(AppAction::DeleteResource, Some(target.clone()));
+
+        let loading_target = AppState {
+            detail_view: Some(DetailViewState {
+                resource: Some(target.clone()),
+                loading: true,
+                ..DetailViewState::default()
+            }),
+            ..AppState::default()
+        };
+        assert!(!pending_palette_action_ready(&loading_target, &pending));
+        assert!(!pending_palette_action_stale(&loading_target, &pending));
+
+        let loaded_other = AppState {
+            detail_view: Some(DetailViewState {
+                resource: Some(other),
+                loading: false,
+                ..DetailViewState::default()
+            }),
+            ..AppState::default()
+        };
+        assert!(!pending_palette_action_ready(&loaded_other, &pending));
+        assert!(pending_palette_action_stale(&loaded_other, &pending));
+
+        let loaded_target = AppState {
+            detail_view: Some(DetailViewState {
+                resource: Some(target),
+                loading: false,
+                ..DetailViewState::default()
+            }),
+            ..AppState::default()
+        };
+        assert!(pending_palette_action_ready(&loaded_target, &pending));
+        assert!(!pending_palette_action_stale(&loaded_target, &pending));
+    }
+
+    #[test]
+    fn pending_palette_action_without_detail_requirement_dispatches_immediately() {
+        let pending = PendingPaletteAction::new(AppAction::ApplyWorkspace("ops".into()), None);
+
+        assert!(pending_palette_action_ready(&AppState::default(), &pending));
+        assert!(!pending_palette_action_stale(
+            &AppState::default(),
+            &pending
+        ));
     }
 }
