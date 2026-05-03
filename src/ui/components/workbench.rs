@@ -2969,10 +2969,7 @@ fn render_extension_output_tab(
 
     if tab.loading {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                " Running extension command...",
-                theme.inactive_style(),
-            )),
+            Paragraph::new(loading_span("Running extension command...")),
             sections[1],
         );
         return;
@@ -4231,6 +4228,47 @@ mod tests {
         terminal
             .draw(|frame| render_extension_output_tab(frame, Rect::new(0, 0, 72, 10), &tab))
             .expect("extension output should render on narrow width");
+    }
+
+    #[test]
+    fn extension_output_running_body_animates() {
+        let backend = TestBackend::new(96, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let tab = ExtensionOutputTabState::new(
+            7,
+            "Describe Pod",
+            Some(ResourceRef::Pod("api-0".into(), "default".into())),
+            "BG",
+            "kubectl describe pod api-0",
+        );
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_extension_output_tab(frame, Rect::new(0, 0, 96, 10), &tab))
+            .expect("extension output should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_extension_output_tab(frame, Rect::new(0, 0, 96, 10), &tab))
+            .expect("extension output should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Running extension command..."));
+        assert!(after.contains("Running extension command..."));
+        assert_ne!(before, after);
     }
 
     #[test]
