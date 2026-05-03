@@ -31,6 +31,7 @@ impl Default for AppState {
             extension_instances: Vec::new(),
             extension_error: None,
             extension_selected_crd: None,
+            extension_instances_loading: false,
             extension_pending_selection: None,
             extension_in_instances: false,
             extension_instance_cursor: 0,

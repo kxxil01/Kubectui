@@ -54,10 +54,14 @@ pub fn render_extensions(
     custom_resources::render_custom_resources(
         frame,
         chunks[1],
-        &app.extension_instances,
-        app.extension_error.as_deref(),
-        app.extension_instance_cursor,
-        app.extension_in_instances,
+        custom_resources::CustomResourcesPane {
+            resources: &app.extension_instances,
+            error: app.extension_error.as_deref(),
+            is_loading: app.extension_instances_loading,
+            selected_crd: app.extension_selected_crd.as_deref(),
+            selected_idx: app.extension_instance_cursor,
+            is_focused: app.extension_in_instances,
+        },
     );
 }
 
