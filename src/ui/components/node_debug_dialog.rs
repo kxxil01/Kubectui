@@ -536,6 +536,18 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
             ),
         ]),
     ];
+    if state.pending_launch {
+        notes.push(Line::from(vec![
+            Span::styled(
+                format!("{} ", loading_spinner_char()),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                "Launching node debug shell. Action history will update when the debug pod is ready.",
+                Style::default().fg(Color::Gray),
+            ),
+        ]));
+    }
     if let Some(error) = &state.error_message {
         notes.push(Line::from(vec![
             Span::styled("Error: ", Style::default().fg(Color::Red)),
@@ -950,6 +962,42 @@ mod tests {
             state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
             NodeDebugDialogEvent::None
         );
+    }
+
+    #[test]
+    fn pending_launch_body_animates() {
+        let backend = ratatui::backend::TestBackend::new(120, 48);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.begin_launch(41);
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_node_debug_dialog(frame, frame.area(), &state))
+            .expect("node debug dialog should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_node_debug_dialog(frame, frame.area(), &state))
+            .expect("node debug dialog should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Launching node debug shell."));
+        assert!(after.contains("Launching node debug shell."));
+        assert_ne!(before, after);
     }
 
     #[test]
