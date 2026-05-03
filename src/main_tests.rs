@@ -345,6 +345,31 @@ fn ai_log_context_formatter_redacts_live_log_values() {
 }
 
 #[test]
+fn ai_live_log_context_keeps_gap_markers_before_log_payload() {
+    let lines = super::prioritize_ai_log_context_lines(
+        vec![
+            "pod prod/api-0 container main current logs unavailable: forbidden".to_string(),
+            "log fetch skipped 2 additional pod/container stream(s)".to_string(),
+        ],
+        (0..super::AI_LOG_MAX_LINES)
+            .map(|idx| format!("prod/api-0 main: line {idx}"))
+            .collect(),
+    );
+
+    let capped = super::cap_ai_lines(lines, super::AI_LOG_MAX_LINES, super::AI_LOG_MAX_CHARS);
+    let rendered = capped.join("\n");
+
+    assert!(
+        rendered
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains("unavailable")),
+        "{rendered}"
+    );
+    assert!(rendered.contains("log fetch skipped 2"), "{rendered}");
+}
+
+#[test]
 fn pod_ai_context_labels_selected_container_for_cached_logs() {
     let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
     let mut app = AppState::default();
