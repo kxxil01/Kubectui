@@ -1,5 +1,7 @@
 //! Native AI action configuration and palette registry.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::app::ResourceRef;
@@ -289,10 +291,13 @@ pub fn validate_ai_actions(config: Option<AiConfig>) -> AiActionLoadResult {
     }
 
     let provider_count = providers.len();
+    let mut seen_action_ids = BTreeSet::new();
     for (provider_idx, ai) in providers.into_iter().enumerate() {
         let namespaced = provider_count > 1;
         match build_custom_ai_action(ai.clone(), provider_idx, namespaced) {
-            Ok(action) => actions.push(action),
+            Ok(action) => {
+                push_unique_ai_action(action, &mut actions, &mut seen_action_ids, &mut warnings)
+            }
             Err(warning) => warnings.push(warning),
         }
         for workflow in [
@@ -301,18 +306,31 @@ pub fn validate_ai_actions(config: Option<AiConfig>) -> AiActionLoadResult {
             AiWorkflowKind::NetworkVerdict,
             AiWorkflowKind::TriageFindings,
         ] {
-            actions.push(build_default_ai_workflow_action(
-                ai.clone(),
-                workflow,
-                provider_idx,
-                namespaced,
-            ));
+            push_unique_ai_action(
+                build_default_ai_workflow_action(ai.clone(), workflow, provider_idx, namespaced),
+                &mut actions,
+                &mut seen_action_ids,
+                &mut warnings,
+            );
         }
     }
 
     AiActionLoadResult {
         registry: AiActionRegistry { actions },
         warnings,
+    }
+}
+
+fn push_unique_ai_action(
+    action: LoadedAiAction,
+    actions: &mut Vec<LoadedAiAction>,
+    seen_action_ids: &mut BTreeSet<String>,
+    warnings: &mut Vec<String>,
+) {
+    if seen_action_ids.insert(action.id.clone()) {
+        actions.push(action);
+    } else {
+        warnings.push(format!("AI action '{}' skipped: duplicate id", action.id));
     }
 }
 
@@ -720,5 +738,33 @@ mod tests {
                 .get("ai_explain_failure_claude_cli_1")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn duplicate_ai_action_ids_are_skipped_with_warning() {
+        let mut provider = cli_provider(AiProviderKind::CodexCli);
+        provider.action = Some(AiActionConfig {
+            id: "ai_explain_failure".into(),
+            title: "Custom Failure Explainer".into(),
+            description: None,
+            aliases: vec!["custom failure".into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            system_prompt: None,
+        });
+
+        let result = validate_ai_actions(Some(AiConfig::single(provider)));
+
+        assert_eq!(result.registry.actions().len(), 4);
+        assert_eq!(
+            result.warnings,
+            vec!["AI action 'ai_explain_failure' skipped: duplicate id"]
+        );
+        let action = result
+            .registry
+            .get("ai_explain_failure")
+            .expect("custom action keeps requested id");
+        assert_eq!(action.title, "Custom Failure Explainer");
+        assert_eq!(action.workflow, AiWorkflowKind::ResourceAnalysis);
     }
 }
