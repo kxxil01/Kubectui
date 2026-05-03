@@ -746,6 +746,10 @@ impl DetailViewState {
                 .node_debug_dialog
                 .as_ref()
                 .is_some_and(|dialog| dialog.pending_launch)
+            || self
+                .scale_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.pending)
     }
 
     pub fn has_confirmation_dialog(&self) -> bool {
@@ -846,6 +850,17 @@ mod tests {
             NodeDebugDialogState::new("node-a", "default", vec!["default".to_string()]);
         node_dialog.begin_launch(43);
         detail.node_debug_dialog = Some(node_dialog);
+        assert!(detail.has_loading_indicator());
+
+        detail.node_debug_dialog = None;
+        let mut scale_dialog = crate::ui::components::scale_dialog::ScaleDialogState::new(
+            crate::ui::components::scale_dialog::ScaleTargetKind::Deployment,
+            "api",
+            "default",
+            1,
+        );
+        scale_dialog.set_pending(true);
+        detail.scale_dialog = Some(scale_dialog);
         assert!(detail.has_loading_indicator());
     }
 

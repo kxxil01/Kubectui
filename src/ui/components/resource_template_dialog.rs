@@ -11,8 +11,9 @@ use ratatui::{
 use crate::resource_templates::{ResourceTemplateKind, ResourceTemplateValues};
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
-    delete_char_right_at_cursor, insert_char_at_cursor, move_cursor_end, move_cursor_home,
-    move_cursor_left, move_cursor_right, table_window, truncate_message, wrapped_line_count,
+    delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
+    move_cursor_home, move_cursor_left, move_cursor_right, table_window, truncate_message,
+    wrapped_line_count,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,7 +279,7 @@ pub fn render_resource_template_dialog(
 
     let footer = if state.pending {
         Line::from(Span::styled(
-            " Opening editor...",
+            format!(" {} Opening editor...", loading_spinner_char()),
             Style::default().fg(ratatui::style::Color::Yellow),
         ))
     } else if let Some(error) = &state.error_message {
@@ -520,7 +521,7 @@ fn render_compact_resource_template_dialog(
         _ => label,
     };
     let status = if state.pending {
-        "opening editor...".to_string()
+        format!("{} opening editor...", loading_spinner_char())
     } else if let Some(error) = &state.error_message {
         format!("err: {error}")
     } else {
