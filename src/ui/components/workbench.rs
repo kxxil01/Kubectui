@@ -1485,7 +1485,10 @@ fn render_helm_history_tab(
 ) {
     let theme = default_theme();
     let mode_badge = if tab.rollback_pending {
-        Span::styled(" rollback:running ", theme.badge_warning_style())
+        Span::styled(
+            format!(" {} rollback:running ", loading_spinner_char()),
+            theme.badge_warning_style(),
+        )
     } else if tab.confirm_rollback_revision.is_some() {
         Span::styled(" rollback:confirm ", theme.badge_warning_style())
     } else if tab.diff.is_some() {
@@ -3204,7 +3207,10 @@ fn render_ai_analysis_tab(
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
         if tab.loading {
-            Span::styled(" running ", theme.badge_warning_style())
+            Span::styled(
+                format!(" {} running ", loading_spinner_char()),
+                theme.badge_warning_style(),
+            )
         } else if tab.error.is_some() {
             Span::styled(" failed ", theme.badge_error_style())
         } else {
