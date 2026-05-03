@@ -114,7 +114,12 @@ pub async fn handle_node_debug_dialog_submit(
             }
             return true;
         }
-        None => unreachable!("node debug attempted review always includes authorization"),
+        None => {
+            app.set_error(
+                "Node debug access review did not return an authorization result.".to_string(),
+            );
+            return true;
+        }
     }
 
     let resource_label = format!("Node '{node_name}'");

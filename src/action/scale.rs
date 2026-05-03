@@ -92,6 +92,7 @@ pub async fn handle_scale_dialog_submit(
         match d.resource.as_ref()? {
             ResourceRef::Deployment(name, namespace) => Some((
                 ResourceRef::Deployment(name.clone(), namespace.clone()),
+                ScaleTargetKind::Deployment,
                 name.clone(),
                 namespace.clone(),
                 "Deployment",
@@ -99,6 +100,7 @@ pub async fn handle_scale_dialog_submit(
             )),
             ResourceRef::StatefulSet(name, namespace) => Some((
                 ResourceRef::StatefulSet(name.clone(), namespace.clone()),
+                ScaleTargetKind::StatefulSet,
                 name.clone(),
                 namespace.clone(),
                 "StatefulSet",
@@ -107,7 +109,7 @@ pub async fn handle_scale_dialog_submit(
             _ => None,
         }
     });
-    if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
+    if let Some((resource, target_kind, name, namespace, kind_label, replicas)) = scale_info {
         if redirect_blocked_detail_action_to_access_review(
             app,
             client,
@@ -137,14 +139,13 @@ pub async fn handle_scale_dialog_submit(
         let tx = scale_tx.clone();
         let c = client.clone();
         tokio::spawn(async move {
-            let result = match &resource {
-                ResourceRef::Deployment(..) => {
+            let result = match target_kind {
+                ScaleTargetKind::Deployment => {
                     c.scale_deployment(&name, &namespace, replicas).await
                 }
-                ResourceRef::StatefulSet(..) => {
+                ScaleTargetKind::StatefulSet => {
                     c.scale_statefulset(&name, &namespace, replicas).await
                 }
-                _ => unreachable!("validated scalable resource"),
             }
             .map_err(|e| format!("{e:#}"));
             let _ = tx
