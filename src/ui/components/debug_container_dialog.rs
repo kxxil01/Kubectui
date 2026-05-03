@@ -623,7 +623,18 @@ pub fn render_debug_container_dialog(
         " Ephemeral containers stay with the Pod until the Pod is recreated or restarted.",
         Style::default().fg(Color::Yellow),
     ))];
-    if let Some(error) = &state.error_message {
+    if state.pending_launch {
+        body.push(Line::from(vec![
+            Span::styled(
+                format!("{} ", loading_spinner_char()),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::styled(
+                "Launching ephemeral container. Action history will update when exec is ready.",
+                Style::default().fg(Color::Gray),
+            ),
+        ]));
+    } else if let Some(error) = &state.error_message {
         body.push(Line::from(Span::styled(
             format!(" Error: {error}"),
             Style::default().fg(Color::Red),
@@ -975,6 +986,44 @@ mod tests {
             state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
             DebugContainerDialogEvent::None
         );
+    }
+
+    #[test]
+    fn pending_launch_body_animates() {
+        let backend = ratatui::backend::TestBackend::new(120, 48);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.loading_targets = false;
+        state.target_containers = vec!["main".to_string()];
+        state.begin_launch(41);
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_debug_container_dialog(frame, frame.area(), &state))
+            .expect("debug container dialog should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_debug_container_dialog(frame, frame.area(), &state))
+            .expect("debug container dialog should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Launching ephemeral container."));
+        assert!(after.contains("Launching ephemeral container."));
+        assert_ne!(before, after);
     }
 
     #[test]
