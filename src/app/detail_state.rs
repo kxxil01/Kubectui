@@ -425,9 +425,20 @@ impl LogsViewerState {
         collected
     }
 
-    fn matches_visible_filters_at(&self, line: &LogEntry, now: crate::time::AppTimestamp) -> bool {
+    fn matches_base_filters_at(&self, line: &LogEntry, now: crate::time::AppTimestamp) -> bool {
         entry_matches_time_window(line, self.time_window, now)
             && entry_matches_correlation(line, self.correlation_request_id.as_deref())
+    }
+
+    fn matches_visible_filters_at(&self, line: &LogEntry, now: crate::time::AppTimestamp) -> bool {
+        self.matches_base_filters_at(line, now)
+            && entry_matches_query(
+                line,
+                &self.search_query,
+                self.search_mode,
+                self.compiled_search.as_ref(),
+                self.structured_view,
+            )
     }
 
     pub fn filtered_cursor(&self, filtered_indices: &[usize]) -> usize {
@@ -504,20 +515,36 @@ impl LogsViewerState {
     }
 
     fn restore_filtered_scroll(&mut self, preserved_line: Option<LogEntry>) {
+        let preserved_line = preserved_line.as_ref();
+        if self.restore_scroll_with_filter(preserved_line, |viewer, line, now| {
+            viewer.matches_visible_filters_at(line, now)
+        }) {
+            return;
+        }
+
+        let _ = self.restore_scroll_with_filter(preserved_line, |viewer, line, now| {
+            viewer.matches_base_filters_at(line, now)
+        });
+    }
+
+    fn restore_scroll_with_filter(
+        &mut self,
+        preserved_line: Option<&LogEntry>,
+        matches: impl Fn(&Self, &LogEntry, crate::time::AppTimestamp) -> bool,
+    ) -> bool {
         let now = crate::time::now();
         let target_scroll = self.scroll_offset;
-        let preserved_line = preserved_line.as_ref();
         let mut target_visible = None;
         let mut last_visible = None;
 
         for (index, line) in self.lines.iter().enumerate() {
-            if !self.matches_visible_filters_at(line, now) {
+            if !matches(self, line, now) {
                 continue;
             }
 
             if preserved_line.is_some_and(|preserved| line == preserved) {
                 self.scroll_offset = index;
-                return;
+                return true;
             }
 
             if target_visible.is_none() && index >= target_scroll {
@@ -527,7 +554,12 @@ impl LogsViewerState {
             last_visible = Some(index);
         }
 
-        self.scroll_offset = target_visible.or(last_visible).unwrap_or(0);
+        if let Some(index) = target_visible.or(last_visible) {
+            self.scroll_offset = index;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn scroll_filtered_up(&mut self) {
@@ -1114,6 +1146,44 @@ mod tests {
         assert_eq!(window.total, 3);
         assert_eq!(window.cursor, 1);
         assert_eq!(window.indices, vec![3, 4]);
+    }
+
+    #[test]
+    fn logs_viewer_filtered_window_applies_search_query() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("info boot"),
+            LogEntry::from_raw("warn retry one"),
+            LogEntry::from_raw("info ready"),
+            LogEntry::from_raw("warn retry two"),
+        ];
+        viewer.search_query = "warn".to_string();
+        viewer.compiled_search =
+            compile_query("warn", LogQueryMode::Substring).expect("substring query should compile");
+        viewer.scroll_offset = 0;
+
+        let window = viewer.filtered_window_indices(5);
+
+        assert_eq!(window.total, 2);
+        assert_eq!(window.cursor, 0);
+        assert_eq!(window.indices, vec![1, 3]);
+    }
+
+    #[test]
+    fn logs_viewer_no_match_search_keeps_empty_render_window() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("info boot"),
+            LogEntry::from_raw("info ready"),
+        ];
+        viewer.search_query = "warn".to_string();
+        viewer.compiled_search =
+            compile_query("warn", LogQueryMode::Substring).expect("substring query should compile");
+
+        let window = viewer.filtered_window_indices(5);
+
+        assert_eq!(window.total, 0);
+        assert!(window.indices.is_empty());
     }
 
     #[test]
