@@ -472,6 +472,7 @@ async fn apply_workspace_snapshot_and_refresh(
             app,
             runtime.cached_snapshot,
             runtime.extension_fetch_tx,
+            runtime.refresh_state.context_generation,
         );
     }
 }
@@ -3482,7 +3483,13 @@ pub(crate) async fn run_app_inner(
                                     needs_redraw = true;
                                 }
                                 snapshot_dirty = true;
-                                spawn_extensions_fetch(&client, &mut app, &global_state.snapshot(), &extension_fetch_tx);
+                                spawn_extensions_fetch(
+                                    &client,
+                                    &mut app,
+                                    &global_state.snapshot(),
+                                    &extension_fetch_tx,
+                                    refresh_state.context_generation,
+                                );
                             }
                             Err(err) => {
                                 consecutive_refresh_failures += 1;
@@ -4848,6 +4855,9 @@ pub(crate) async fn run_app_inner(
 
             result = extension_fetch_rx.recv() => {
                 if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     needs_redraw = true;
                     apply_extension_fetch_result(&mut app, result);
                     if app.command_palette.is_open() {
@@ -4858,6 +4868,16 @@ pub(crate) async fn run_app_inner(
 
             result = extension_command_rx.recv() => {
                 if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Extension command result was discarded because the active context changed.",
+                            true,
+                        );
+                        needs_redraw = true;
+                        continue;
+                    }
                     let resource_label = format!(
                         "{} on {} '{}'",
                         result.title,
@@ -5039,6 +5059,7 @@ pub(crate) async fn run_app_inner(
                                     &mut app,
                                     &cached_snapshot,
                                     &extension_fetch_tx,
+                                    refresh_state.context_generation,
                                 );
                             }
                         }
@@ -5803,6 +5824,7 @@ pub(crate) async fn run_app_inner(
 
                             let tx = extension_command_tx.clone();
                             let title = action.title.clone();
+                            let context_generation = refresh_state.context_generation;
                             tokio::spawn(async move {
                                 let result = match tokio::task::spawn_blocking(move || {
                                     run_extension_command(prepared)
@@ -5822,6 +5844,7 @@ pub(crate) async fn run_app_inner(
                                 let _ = tx
                                     .send(ExtensionCommandAsyncResult {
                                         action_history_id,
+                                        context_generation,
                                         resource,
                                         execution_id,
                                         title,
@@ -5948,6 +5971,7 @@ pub(crate) async fn run_app_inner(
                             &mut app,
                             &cached_snapshot,
                             &extension_fetch_tx,
+                            refresh_state.context_generation,
                         );
                     }
                 }
@@ -6090,6 +6114,7 @@ pub(crate) async fn run_app_inner(
                             &mut app,
                             &cached_snapshot,
                             &extension_fetch_tx,
+                            refresh_state.context_generation,
                         );
                     }
                 }
@@ -6103,6 +6128,7 @@ pub(crate) async fn run_app_inner(
                                     &mut app,
                                     &cached_snapshot,
                                     &extension_fetch_tx,
+                                    refresh_state.context_generation,
                                 );
                             }
                             open_detail_for_resource(
