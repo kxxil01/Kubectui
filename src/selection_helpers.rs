@@ -932,6 +932,7 @@ pub fn spawn_extensions_fetch(
     app: &mut AppState,
     snapshot: &ClusterSnapshot,
     tx: &tokio::sync::mpsc::Sender<ExtensionFetchResult>,
+    context_generation: u64,
 ) {
     if app.view() != AppView::Extensions {
         return;
@@ -966,6 +967,7 @@ pub fn spawn_extensions_fetch(
             .map_err(|e| e.to_string());
         let _ = tx
             .send(ExtensionFetchResult {
+                context_generation,
                 crd_name: crd.name.clone(),
                 result,
             })

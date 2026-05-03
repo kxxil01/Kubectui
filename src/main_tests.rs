@@ -3570,6 +3570,7 @@ fn stale_extension_fetch_results_are_ignored() {
     apply_extension_fetch_result(
         &mut app,
         ExtensionFetchResult {
+            context_generation: 1,
             crd_name: "gadgets.demo.io".to_string(),
             result: Ok(Vec::new()),
         },
@@ -3592,6 +3593,7 @@ fn namespace_switch_ignores_previous_extension_fetch_result() {
     apply_extension_fetch_result(
         &mut app,
         ExtensionFetchResult {
+            context_generation: 1,
             crd_name: "widgets.demo.io".to_string(),
             result: Ok(vec![CustomResourceInfo {
                 name: "stale-widget".to_string(),
