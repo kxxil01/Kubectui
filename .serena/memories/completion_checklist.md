@@ -1,1 +1,0 @@
-Before finishing code changes: cargo fmt --all, cargo clippy --all-targets --all-features -- -D warnings, cargo test --all-targets --all-features, and performance profiling for changed render paths. Avoid destructive git actions without explicit approval; ask before git push.
