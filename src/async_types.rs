@@ -255,6 +255,7 @@ pub struct AiAnalysisAsyncResult {
 #[derive(Debug)]
 pub struct DetailAsyncResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<DetailViewState, String>,
 }
@@ -262,6 +263,7 @@ pub struct DetailAsyncResult {
 #[derive(Debug)]
 pub struct ResourceDiffAsyncResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<String, String>,
 }
@@ -269,6 +271,7 @@ pub struct ResourceDiffAsyncResult {
 #[derive(Debug)]
 pub struct RolloutInspectionAsyncResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<RolloutInspection, String>,
 }
@@ -276,6 +279,7 @@ pub struct RolloutInspectionAsyncResult {
 #[derive(Debug)]
 pub struct HelmHistoryAsyncResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<HelmHistoryResult, String>,
 }
@@ -283,6 +287,7 @@ pub struct HelmHistoryAsyncResult {
 #[derive(Debug)]
 pub struct HelmValuesDiffAsyncResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<HelmValuesDiffResult, String>,
 }
@@ -308,6 +313,7 @@ pub struct EventsAsyncResult {
 #[derive(Debug)]
 pub struct RelationsAsyncResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<Vec<RelationNode>, String>,
 }
