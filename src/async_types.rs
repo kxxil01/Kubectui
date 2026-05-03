@@ -174,6 +174,7 @@ pub struct ExecBootstrapResult {
 #[derive(Debug)]
 pub struct DebugContainerDialogBootstrapResult {
     pub request_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub result: Result<Vec<String>, String>,
 }
