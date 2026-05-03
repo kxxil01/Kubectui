@@ -614,13 +614,41 @@ fn provider_error_looks_like_prompt_echo(message: &str) -> bool {
     {
         return true;
     }
+    if message.lines().any(|line| {
+        matches!(
+            line.trim(),
+            "Resource"
+                | "Cluster Context"
+                | "Resource State"
+                | "Metadata"
+                | "Workflow Context"
+                | "Failure Focus"
+                | "Rollout Context"
+                | "Network Context"
+                | "Triage Context"
+                | "Issues"
+                | "Events"
+                | "Probes"
+                | "Logs"
+                | "YAML Excerpt"
+        )
+    }) && message.lines().count() > 1
+    {
+        return true;
+    }
     let markers = [
         "cluster context",
         "resource state",
         "yaml excerpt",
         "workflow context",
         "failure focus",
-        "rollout focus",
+        "rollout context",
+        "network context",
+        "triage context",
+        "issues",
+        "events",
+        "probes",
+        "logs",
     ];
     markers
         .iter()
@@ -1021,6 +1049,33 @@ trailing note {also ignored}"#,
             "provider error output redacted because it included AI context"
         );
         assert!(!message.contains("registry-credentials"));
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_log_section_prompt_echoes() {
+        let message = sanitize_provider_error_message(
+            "invalid output\nLogs\n- pod prod/api current: session secret literal-value",
+        );
+
+        assert_eq!(
+            message,
+            "provider error output redacted because it included AI context"
+        );
+        assert!(!message.contains("literal-value"));
+        assert!(!message.contains("prod/api"));
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_specialized_context_prompt_echoes() {
+        let message = sanitize_provider_error_message(
+            "bad response\nRollout Context\n- deployment prod/api waiting on unavailable replicas",
+        );
+
+        assert_eq!(
+            message,
+            "provider error output redacted because it included AI context"
+        );
+        assert!(!message.contains("prod/api"));
     }
 
     #[test]
