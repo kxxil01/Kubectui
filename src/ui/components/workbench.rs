@@ -1223,7 +1223,10 @@ fn render_rollout_tab(
     } else if tab.confirm_undo_revision.is_some() {
         Span::styled(" undo:confirm ", theme.badge_warning_style())
     } else if tab.loading {
-        Span::styled(" loading ", theme.badge_warning_style())
+        Span::styled(
+            format!(" {} loading ", loading_spinner_char()),
+            theme.badge_warning_style(),
+        )
     } else {
         Span::styled(" mode:rollout ", theme.badge_success_style())
     };
@@ -2068,15 +2071,15 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
     let viewer = &tab_state.viewer;
 
     let status = if viewer.loading {
-        "loading"
+        format!("{} loading", loading_spinner_char())
     } else if viewer.previous_logs {
-        "previous"
+        "previous".to_string()
     } else if viewer.picking_container {
-        "select container"
+        "select container".to_string()
     } else if viewer.follow_mode {
-        "following"
+        "following".to_string()
     } else {
-        "paused"
+        "paused".to_string()
     };
 
     let container = if viewer.container_name.is_empty() {
@@ -2509,18 +2512,16 @@ fn render_workload_logs_tab(
     let theme = default_theme();
     let now = crate::time::now();
     let filter_summary = summarize_workload_log_filters(tab, now);
+    let status = if tab.loading {
+        format!("{} loading", loading_spinner_char())
+    } else if tab.follow_mode {
+        "following".to_string()
+    } else {
+        "paused".to_string()
+    };
     let mut header_groups = vec![
         vec![Span::styled(
-            format!(
-                " {} ",
-                if tab.loading {
-                    "loading"
-                } else if tab.follow_mode {
-                    "following"
-                } else {
-                    "paused"
-                }
-            ),
+            format!(" {status} "),
             theme.badge_warning_style(),
         )],
         vec![Span::raw(" ")],
@@ -2776,13 +2777,13 @@ fn render_workload_logs_tab(
 fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
     let theme = default_theme();
     let status = if tab.loading {
-        "loading"
+        format!("{} loading", loading_spinner_char())
     } else if tab.picking_container {
-        "select container"
+        "select container".to_string()
     } else if tab.exited {
-        "exited"
+        "exited".to_string()
     } else {
-        "connected"
+        "connected".to_string()
     };
     let header_lines = vec![
         Line::from(vec![
@@ -2913,7 +2914,10 @@ fn render_extension_output_tab(
 ) {
     let theme = default_theme();
     let status_badge = if tab.loading {
-        Span::styled(" running ", theme.badge_warning_style())
+        Span::styled(
+            format!(" {} running ", loading_spinner_char()),
+            theme.badge_warning_style(),
+        )
     } else if tab.success == Some(true) {
         Span::styled(" success ", theme.badge_success_style())
     } else {

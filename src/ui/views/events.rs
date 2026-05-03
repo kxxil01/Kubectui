@@ -21,8 +21,8 @@ use crate::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, render_centered_message, render_table_frame, responsive_table_widths,
-        table_viewport_rows, table_window, truncate_message,
+        format_small_int, loading_spinner_char, render_centered_message, render_table_frame,
+        responsive_table_widths, table_viewport_rows, table_window, truncate_message,
         views::filtering::filtered_event_indices,
     },
 };
@@ -221,9 +221,11 @@ pub fn render_events(
         .collect();
 
     let load_suffix = match cluster.view_load_state(AppView::Events) {
-        crate::state::ViewLoadState::Refreshing => " [refreshing]",
-        crate::state::ViewLoadState::Loading => " [loading]",
-        _ => "",
+        crate::state::ViewLoadState::Refreshing => {
+            format!(" [{} refreshing]", loading_spinner_char())
+        }
+        crate::state::ViewLoadState::Loading => format!(" [{} loading]", loading_spinner_char()),
+        _ => String::new(),
     };
     let icon = view_icon(AppView::Events).active();
     let title = if query.is_empty() {
