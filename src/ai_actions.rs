@@ -231,11 +231,12 @@ pub struct LoadedAiAction {
 
 impl LoadedAiAction {
     pub fn matches_resource(&self, resource: &ResourceRef) -> bool {
-        self.resource_kinds.is_empty()
-            || self
-                .resource_kinds
-                .iter()
-                .any(|kind| kind == "*" || kind.eq_ignore_ascii_case(resource.kind()))
+        !matches!(resource, ResourceRef::Secret(_, _))
+            && (self.resource_kinds.is_empty()
+                || self
+                    .resource_kinds
+                    .iter()
+                    .any(|kind| kind == "*" || kind.eq_ignore_ascii_case(resource.kind())))
     }
 
     pub fn badge_label(&self) -> String {
@@ -766,5 +767,37 @@ mod tests {
             .expect("custom action keeps requested id");
         assert_eq!(action.title, "Custom Failure Explainer");
         assert_eq!(action.workflow, AiWorkflowKind::ResourceAnalysis);
+    }
+
+    #[test]
+    fn wildcard_ai_actions_do_not_match_secret_resources() {
+        let mut provider = cli_provider(AiProviderKind::CodexCli);
+        provider.action = Some(AiActionConfig {
+            id: "ask_anything".into(),
+            title: "Ask Anything".into(),
+            description: None,
+            aliases: vec!["ask anything".into()],
+            resource_kinds: vec!["*".into()],
+            shortcut: None,
+            system_prompt: None,
+        });
+
+        let result = validate_ai_actions(Some(AiConfig::single(provider)));
+        let action = result.registry.get("ask_anything").expect("custom action");
+
+        assert!(action.matches_resource(&ResourceRef::Pod("api-0".into(), "prod".into())));
+        assert!(!action.matches_resource(&ResourceRef::Secret(
+            "database-password".into(),
+            "prod".into()
+        )));
+        assert!(
+            result
+                .registry
+                .palette_actions_for(&ResourceRef::Secret(
+                    "database-password".into(),
+                    "prod".into()
+                ))
+                .is_empty()
+        );
     }
 }
