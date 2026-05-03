@@ -2312,7 +2312,11 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
 
     if viewer.lines.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled(" No log lines yet", theme.inactive_style())),
+            Paragraph::new(if viewer.loading {
+                loading_span("Waiting for pod logs...")
+            } else {
+                Span::styled(" No log lines yet", theme.inactive_style())
+            }),
             log_area,
         );
         return;
@@ -3883,6 +3887,45 @@ mod tests {
         terminal
             .draw(|frame| render_logs_tab(frame, Rect::new(0, 0, 72, 12), &tab, 0))
             .expect("pod logs header should wrap on narrow width");
+    }
+
+    #[test]
+    fn empty_pod_logs_loading_body_animates() {
+        let backend = TestBackend::new(96, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab_state =
+            PodLogsTabState::new(ResourceRef::Pod("api-0".into(), "default".into()));
+        tab_state.viewer.loading = true;
+        tab_state.viewer.container_name = "main".into();
+        let tab = WorkbenchTab::new(1, WorkbenchTabState::PodLogs(tab_state));
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_logs_tab(frame, Rect::new(0, 0, 96, 12), &tab, 0))
+            .expect("pod logs tab should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_logs_tab(frame, Rect::new(0, 0, 96, 12), &tab, 0))
+            .expect("pod logs tab should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Waiting for pod logs..."));
+        assert!(after.contains("Waiting for pod logs..."));
+        assert_ne!(before, after);
     }
 
     #[test]
