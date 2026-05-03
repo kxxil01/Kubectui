@@ -113,7 +113,14 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: 
         app.workbench()
             .tabs
             .iter()
-            .map(|tab| Line::from(Span::raw(format!(" {} ", tab.state.title()))))
+            .map(|tab| {
+                let title = if tab.state.is_loading() {
+                    format!(" {} {} ", loading_spinner_char(), tab.state.title())
+                } else {
+                    format!(" {} ", tab.state.title())
+                };
+                Line::from(Span::raw(title))
+            })
             .collect()
     };
     let selected = app
