@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use kubectui::{
-    ai_actions::{AiProviderConfig, AiProviderKind, AiWorkflowKind},
+    ai_actions::{AiProviderConfig, AiProviderKind, AiWorkflowKind, ai_analysis_provider_label},
     app::ResourceRef,
 };
 
@@ -171,7 +171,7 @@ pub fn run_ai_analysis(
         serde_json::to_string(&structured).context("failed to encode sanitized AI response")?;
 
     Ok(AiAnalysisResult {
-        provider_label: provider.provider.label().to_string(),
+        provider_label: ai_analysis_provider_label(provider),
         model: provider.model.clone(),
         summary: structured.summary,
         likely_causes: structured.likely_causes,
