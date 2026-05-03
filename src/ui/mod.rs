@@ -608,10 +608,11 @@ pub(crate) fn render_centered_message(
     use ratatui::text::Line;
 
     let theme = default_theme();
-    let is_loading = matches!(
-        snapshot.view_load_state(view),
-        ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
-    );
+    let is_loading = match snapshot.view_load_state(view) {
+        ViewLoadState::Loading | ViewLoadState::Refreshing => true,
+        ViewLoadState::Idle => current_view_scope_is_unloaded(snapshot, view),
+        ViewLoadState::Ready => false,
+    };
 
     let line = if is_loading {
         Line::from(vec![
@@ -3481,6 +3482,21 @@ mod tests {
 
         assert!(after.contains("Loading pods..."));
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn centered_empty_message_uses_loaded_scope_even_when_view_state_is_idle() {
+        let app = app_with_view(AppView::Pods);
+        let snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            loaded_scope: RefreshScope::PODS,
+            view_load_states: [ViewLoadState::Idle; AppView::COUNT],
+            ..ClusterSnapshot::default()
+        };
+
+        let text = render_to_string(&app, &snapshot);
+        assert!(text.contains("No pods available"));
+        assert!(!text.contains("Loading pods..."));
     }
 
     #[test]
