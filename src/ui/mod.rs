@@ -876,6 +876,7 @@ struct ViewRenderKey {
     sort_variant: u64,
     bookmark_hash: u64,
     visible_columns_hash: u64,
+    app_view_state_hash: u64,
     phase: DataPhase,
     view_load_state: ViewLoadState,
     loading_spinner_tick: u8,
@@ -932,6 +933,26 @@ fn active_view_transient_hash(view: AppView, cluster: &ClusterSnapshot) -> u64 {
         AppView::Events => cluster.events_last_error.as_deref().map_or(0, hash_str),
         _ => 0,
     }
+}
+
+fn active_view_app_state_hash(view: AppView, app: &AppState) -> u64 {
+    if view != AppView::Extensions {
+        return 0;
+    }
+
+    let mut hasher = std::hash::DefaultHasher::new();
+    app.extension_in_instances.hash(&mut hasher);
+    app.extension_instances_loading.hash(&mut hasher);
+    app.extension_selected_crd.hash(&mut hasher);
+    app.extension_error.hash(&mut hasher);
+    app.extension_instance_cursor.hash(&mut hasher);
+    app.extension_instances.len().hash(&mut hasher);
+    for resource in &app.extension_instances {
+        resource.name.hash(&mut hasher);
+        resource.namespace.hash(&mut hasher);
+        resource.age.map(|age| age.as_secs()).hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 #[derive(Clone, Copy)]
@@ -1190,6 +1211,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .wrapping_add(app.pod_sort().map_or(0, |sort| sort.cache_variant()) << 8),
         bookmark_hash: bookmark_render_hash(app.bookmarks()),
         visible_columns_hash: visible_columns_signature(visible_columns.as_ref()),
+        app_view_state_hash: active_view_app_state_hash(app.view(), app),
         phase: cluster.phase,
         view_load_state,
         loading_spinner_tick,
@@ -4446,6 +4468,53 @@ mod tests {
         assert!(rendered.contains("CRDs"));
         assert!(rendered.contains("Custom Resources"));
         assert!(rendered.contains("sample"));
+    }
+
+    #[test]
+    fn extensions_render_cache_invalidates_when_instances_finish_loading() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot
+            .custom_resource_definitions
+            .push(CustomResourceDefinitionInfo {
+                name: "widgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 1,
+            });
+
+        let mut app = app_with_view(AppView::Extensions);
+        app.extension_selected_crd = Some("widgets.demo.io".to_string());
+        app.extension_instances_loading = true;
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(before.contains("Loading instances for widgets.demo.io..."));
+
+        app.extension_instances_loading = false;
+        app.extension_instances = vec![CustomResourceInfo {
+            name: "sample".to_string(),
+            namespace: Some("default".to_string()),
+            ..CustomResourceInfo::default()
+        }];
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+        assert!(after.contains("sample"));
+        assert_ne!(before, after);
     }
 
     /// Verifies detail modal overlay renders on top of list view without panic.
