@@ -3103,8 +3103,14 @@ mod tests {
             ..PodInfo::default()
         });
 
-        let loading_text = render_to_string(&app_with_view(AppView::Dashboard), &loading_snapshot);
-        assert!(loading_text.contains("Metrics   loading..."));
+        let mut app = app_with_view(AppView::Dashboard);
+        let loading_text = render_to_string(&app, &loading_snapshot);
+        assert!(loading_text.contains("loading..."));
+
+        app.advance_spinner();
+        let next_loading_text = render_to_string(&app, &loading_snapshot);
+        assert!(next_loading_text.contains("loading..."));
+        assert_ne!(loading_text, next_loading_text);
 
         let unavailable_snapshot = ClusterSnapshot {
             loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW
