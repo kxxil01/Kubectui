@@ -674,6 +674,10 @@ fn sanitize_provider_error_line(line: &str) -> String {
             state = ProviderErrorRedactionState::SeparatorOrValue;
             continue;
         }
+        if let Some(redacted_token) = redact_secret_path_token(token) {
+            redacted.push(redacted_token);
+            continue;
+        }
 
         redacted.push(sanitize_provider_error_token(token));
     }
@@ -710,6 +714,9 @@ fn sanitize_provider_error_token(token: &str) -> String {
     if token.contains("://") && token.contains('@') {
         return "[redacted-uri]".to_string();
     }
+    if let Some(redacted_token) = redact_secret_path_token(token) {
+        return redacted_token;
+    }
 
     for separator in ['=', ':'] {
         if let Some((key, _value)) = token.split_once(separator) {
@@ -721,6 +728,33 @@ fn sanitize_provider_error_token(token: &str) -> String {
     }
 
     token.to_string()
+}
+
+fn redact_secret_path_token(token: &str) -> Option<String> {
+    let lower = token.to_ascii_lowercase();
+    for marker in ["secret/", "secrets/"] {
+        if let Some(index) = lower.find(marker) {
+            let value_start = index + marker.len();
+            let value_len = token[value_start..]
+                .char_indices()
+                .find_map(|(idx, ch)| {
+                    (!matches!(ch, '-' | '_' | '.' | '/' | ':' | '@')
+                        && !ch.is_ascii_alphanumeric())
+                    .then_some(idx)
+                })
+                .unwrap_or_else(|| token[value_start..].len());
+            let value_end = value_start + value_len;
+            if value_end == value_start {
+                return None;
+            }
+            return Some(format!(
+                "{}<redacted>{}",
+                &token[..value_start],
+                &token[value_end..]
+            ));
+        }
+    }
+    None
 }
 
 fn is_sensitive_error_key(key: &str) -> bool {
@@ -837,7 +871,8 @@ trailing note {also ignored}"#,
                 "summary": "database password : hunter2 leaked",
                 "likely_causes": [
                     "client logged Authorization: Bearer live-token",
-                    "dsn=postgres://user:pass@db:5432/app"
+                    "dsn=postgres://user:pass@db:5432/app",
+                    "kubelet mentioned secret/prod-db-password and secrets/team/api-token"
                 ],
                 "next_steps": ["rotate api_key=sk-live"],
                 "uncertainty": ["secret: literal-value"]
@@ -855,11 +890,15 @@ trailing note {also ignored}"#,
         assert!(rendered.contains("password : [redacted]"), "{rendered}");
         assert!(rendered.contains("Authorization: [redacted]"), "{rendered}");
         assert!(rendered.contains("[redacted-uri]"), "{rendered}");
+        assert!(rendered.contains("secret/<redacted>"), "{rendered}");
+        assert!(rendered.contains("secrets/<redacted>"), "{rendered}");
         assert!(rendered.contains("api_key=<redacted>"), "{rendered}");
         assert!(rendered.contains("secret: [redacted]"), "{rendered}");
         assert!(!rendered.contains("hunter2"), "{rendered}");
         assert!(!rendered.contains("live-token"), "{rendered}");
         assert!(!rendered.contains("user:pass"), "{rendered}");
+        assert!(!rendered.contains("prod-db-password"), "{rendered}");
+        assert!(!rendered.contains("api-token"), "{rendered}");
         assert!(!rendered.contains("sk-live"), "{rendered}");
         assert!(!rendered.contains("literal-value"), "{rendered}");
     }
