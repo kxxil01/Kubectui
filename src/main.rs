@@ -835,6 +835,10 @@ fn ai_analysis_result_is_current(
     result.context_generation == refresh_state.context_generation
 }
 
+fn invalidate_context_generation(refresh_state: &mut RefreshRuntimeState) {
+    refresh_state.context_generation = refresh_state.context_generation.wrapping_add(1);
+}
+
 fn discard_stale_ai_analysis_result(
     app: &mut kubectui::app::AppState,
     result: AiAnalysisAsyncResult,
@@ -4937,8 +4941,7 @@ pub(crate) async fn run_app_inner(
                             port_forwarder =
                                 PortForwarderService::new(std::sync::Arc::new(client.clone()));
                             // Invalidate stale async results from the previous client/context.
-                            refresh_state.context_generation =
-                                refresh_state.context_generation.wrapping_add(1);
+                            invalidate_context_generation(&mut refresh_state);
                             abort_in_flight_refresh(&mut refresh_state);
                             abort_in_flight_events_fetch(&mut events_state);
                             events_state.queued_namespace = None;
@@ -5906,6 +5909,7 @@ pub(crate) async fn run_app_inner(
                     }
                     pending_flux_reconcile_verifications.clear();
                     // Show loading state immediately; TLS handshake runs in background.
+                    invalidate_context_generation(&mut refresh_state);
                     global_state.begin_loading_transition(true);
                     prepare_context_switch_ui(&mut app);
                     snapshot_dirty = true;
@@ -5934,8 +5938,7 @@ pub(crate) async fn run_app_inner(
                     app.needs_config_save = true;
                     watch_manager.stop_all();
                     // Invalidate stale async results from previous namespace selections.
-                    refresh_state.context_generation =
-                        refresh_state.context_generation.wrapping_add(1);
+                    invalidate_context_generation(&mut refresh_state);
                     abort_in_flight_refresh(&mut refresh_state);
                     abort_in_flight_events_fetch(&mut events_state);
                     events_state.queued_namespace = None;
