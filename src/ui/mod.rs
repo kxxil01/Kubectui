@@ -2656,7 +2656,7 @@ mod tests {
             helm::HelmHistoryResult,
             rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind},
         },
-        state::{ClusterSnapshot, DataPhase, ViewLoadState},
+        state::{ClusterSnapshot, DataPhase, RefreshScope, ViewLoadState},
         time::{now, now_unix_seconds},
     };
 
@@ -4492,6 +4492,24 @@ mod tests {
         assert!(rendered.contains("CRDs"));
         assert!(rendered.contains("Custom Resources"));
         assert!(rendered.contains("sample"));
+    }
+
+    #[test]
+    fn extensions_crd_picker_shows_loading_until_extension_scope_loaded() {
+        let app = app_with_view(AppView::Extensions);
+        let mut snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            ..ClusterSnapshot::default()
+        };
+
+        let loading = render_to_string(&app, &snapshot);
+        assert!(loading.contains("Loading CRDs..."));
+        assert!(!loading.contains("No CRDs found"));
+
+        snapshot.loaded_scope = snapshot.loaded_scope.union(RefreshScope::EXTENSIONS);
+        let empty = render_to_string(&app, &snapshot);
+        assert!(empty.contains("No CRDs found"));
+        assert!(!empty.contains("Loading CRDs..."));
     }
 
     #[test]
