@@ -2874,10 +2874,11 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
         let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
         if total == 0 {
             frame.render_widget(
-                Paragraph::new(vec![Line::from(Span::styled(
-                    " Waiting for shell output...",
-                    theme.inactive_style(),
-                ))])
+                Paragraph::new(vec![Line::from(if tab.loading {
+                    loading_span("Waiting for shell output...")
+                } else {
+                    Span::styled(" Waiting for shell output...", theme.inactive_style())
+                })])
                 .wrap(Wrap { trim: false }),
                 sections[1],
             );
@@ -3374,7 +3375,7 @@ fn scroll_window_scrollbar_position(
 mod tests {
     use super::{
         VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
-        render_decoded_secret_tab, render_events_tab, render_extension_output_tab,
+        render_decoded_secret_tab, render_events_tab, render_exec_tab, render_extension_output_tab,
         render_helm_values_diff, render_logs_tab, render_workload_logs_tab, render_yaml_tab,
         scroll_window, scroll_window_scrollbar_position,
     };
@@ -3393,8 +3394,9 @@ mod tests {
         ui::{components::default_theme, truncate_message, wrapped_line_count},
         workbench::{
             AccessReviewTabState, AttemptedActionReview, ConnectivityTabFocus,
-            ConnectivityTabState, ExtensionOutputTabState, HelmValuesDiffState, PodLogsTabState,
-            ResourceEventsTabState, WorkbenchTab, WorkbenchTabState, WorkloadLogsTabState,
+            ConnectivityTabState, ExecTabState, ExtensionOutputTabState, HelmValuesDiffState,
+            PodLogsTabState, ResourceEventsTabState, WorkbenchTab, WorkbenchTabState,
+            WorkloadLogsTabState,
         },
     };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, text::Line};
@@ -3964,6 +3966,48 @@ mod tests {
 
         assert!(rendered.contains("needle"));
         assert!(rendered.contains("No workload log lines match the current filters"));
+    }
+
+    #[test]
+    fn exec_waiting_for_output_uses_loading_spinner() {
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("api-0".into(), "default".into()),
+            1,
+            "api-0".into(),
+            "default".into(),
+        );
+        tab.loading = true;
+        tab.container_name = "main".into();
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_exec_tab(frame, Rect::new(0, 0, 100, 12), &tab))
+            .expect("exec tab should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_exec_tab(frame, Rect::new(0, 0, 100, 12), &tab))
+            .expect("exec tab should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Waiting for shell output..."));
+        assert!(after.contains("Waiting for shell output..."));
+        assert_ne!(before, after);
     }
 
     #[test]
