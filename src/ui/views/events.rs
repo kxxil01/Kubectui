@@ -6,7 +6,7 @@ use std::{
 };
 
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::{Alignment, Constraint, Rect},
     prelude::{Frame, Style},
     text::Span,
     widgets::{Cell, Paragraph, Row},
@@ -129,7 +129,8 @@ pub fn render_events(
     );
 
     if indices.is_empty() {
-        if cluster.events.is_empty()
+        if query.is_empty()
+            && cluster.events.is_empty()
             && let Some(error) = cluster.events_last_error.as_deref()
         {
             frame.render_widget(
@@ -137,7 +138,7 @@ pub fn render_events(
                     format!("Failed to load events: {error}"),
                     theme.inactive_style(),
                 ))
-                .alignment(ratatui::layout::Alignment::Center)
+                .alignment(Alignment::Center)
                 .block(crate::ui::components::content_block("Events", focused)),
                 area,
             );
@@ -256,7 +257,11 @@ pub fn render_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{k8s::dtos::K8sEventInfo, state::ClusterSnapshot};
+    use crate::{
+        k8s::dtos::K8sEventInfo,
+        state::{ClusterSnapshot, RefreshScope},
+    };
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn event_widths_switch_to_compact_profile() {
@@ -292,5 +297,54 @@ mod tests {
 
         assert_eq!(derived[0].message_truncated.len(), 60);
         assert!(derived[0].message_truncated.ends_with("..."));
+    }
+
+    fn render_events_to_string(snapshot: &ClusterSnapshot, search: &str) -> String {
+        let backend = TestBackend::new(96, 8);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_events(frame, frame.area(), snapshot, &[], 0, search, true);
+            })
+            .expect("render");
+
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn events_empty_state_shows_fetch_error_without_search() {
+        let snapshot = ClusterSnapshot {
+            events_last_error: Some("forbidden by RBAC".to_string()),
+            loaded_scope: RefreshScope::EVENTS,
+            ..ClusterSnapshot::default()
+        };
+
+        let out = render_events_to_string(&snapshot, "");
+
+        assert!(out.contains("Failed to load events: forbidden by RBAC"));
+        assert!(!out.contains("No events match the search query"));
+    }
+
+    #[test]
+    fn events_empty_state_keeps_search_no_match_over_fetch_error() {
+        let snapshot = ClusterSnapshot {
+            events_last_error: Some("forbidden by RBAC".to_string()),
+            loaded_scope: RefreshScope::EVENTS,
+            ..ClusterSnapshot::default()
+        };
+
+        let out = render_events_to_string(&snapshot, "crash");
+
+        assert!(out.contains("No events match the search query"));
+        assert!(!out.contains("Failed to load events: forbidden by RBAC"));
     }
 }
