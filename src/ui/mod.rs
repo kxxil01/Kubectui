@@ -936,23 +936,47 @@ fn active_view_transient_hash(view: AppView, cluster: &ClusterSnapshot) -> u64 {
 }
 
 fn active_view_app_state_hash(view: AppView, app: &AppState) -> u64 {
-    if view != AppView::Extensions {
-        return 0;
-    }
-
     let mut hasher = std::hash::DefaultHasher::new();
-    app.extension_in_instances.hash(&mut hasher);
-    app.extension_instances_loading.hash(&mut hasher);
-    app.extension_selected_crd.hash(&mut hasher);
-    app.extension_error.hash(&mut hasher);
-    app.extension_instance_cursor.hash(&mut hasher);
-    app.extension_instances.len().hash(&mut hasher);
-    for resource in &app.extension_instances {
-        resource.name.hash(&mut hasher);
-        resource.namespace.hash(&mut hasher);
-        resource.age.map(|age| age.as_secs()).hash(&mut hasher);
+    match view {
+        AppView::Extensions => {
+            app.extension_in_instances.hash(&mut hasher);
+            app.extension_instances_loading.hash(&mut hasher);
+            app.extension_selected_crd.hash(&mut hasher);
+            app.extension_error.hash(&mut hasher);
+            app.extension_instance_cursor.hash(&mut hasher);
+            app.extension_instances.len().hash(&mut hasher);
+            for resource in &app.extension_instances {
+                resource.name.hash(&mut hasher);
+                resource.namespace.hash(&mut hasher);
+                resource.age.map(|age| age.as_secs()).hash(&mut hasher);
+            }
+        }
+        AppView::PortForwarding => {
+            app.tunnel_registry.selected_index().hash(&mut hasher);
+            let tunnels = app.tunnel_registry.ordered_tunnels();
+            tunnels.len().hash(&mut hasher);
+            for tunnel in tunnels {
+                tunnel.id.hash(&mut hasher);
+                tunnel.target.namespace.hash(&mut hasher);
+                tunnel.target.pod_name.hash(&mut hasher);
+                tunnel.target.remote_port.hash(&mut hasher);
+                tunnel.local_addr.hash(&mut hasher);
+                tunnel_state_hash_value(tunnel.state).hash(&mut hasher);
+            }
+        }
+        _ => {}
     }
     hasher.finish()
+}
+
+fn tunnel_state_hash_value(state: crate::k8s::portforward::TunnelState) -> u8 {
+    match state {
+        crate::k8s::portforward::TunnelState::Starting => 0,
+        crate::k8s::portforward::TunnelState::Active => 1,
+        crate::k8s::portforward::TunnelState::Error => 2,
+        crate::k8s::portforward::TunnelState::Closing => 3,
+        crate::k8s::portforward::TunnelState::Closed => 4,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -4514,6 +4538,40 @@ mod tests {
         draw_in_terminal(&mut terminal, &app, &snapshot);
         let after = terminal_to_string(&terminal);
         assert!(after.contains("sample"));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn port_forward_render_cache_invalidates_when_tunnel_registry_changes() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::PortForwarding);
+        let snapshot = ClusterSnapshot::default();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(before.contains("No active port forwards"));
+
+        app.tunnel_registry
+            .add_tunnel(crate::k8s::portforward::PortForwardTunnelInfo {
+                id: "default/api-0/8080".to_string(),
+                target: crate::k8s::portforward::PortForwardTarget::new("default", "api-0", 8080),
+                local_addr: "127.0.0.1:18080".parse().expect("socket addr"),
+                state: crate::k8s::portforward::TunnelState::Active,
+            });
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+        assert!(after.contains("api-0"));
         assert_ne!(before, after);
     }
 
