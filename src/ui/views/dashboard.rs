@@ -24,8 +24,8 @@ use crate::{
     },
     time::format_local,
     ui::{
-        SplitPaneFocus, components::default_theme, theme::Theme, truncate_line_content,
-        utilization_style, wrapped_line_count,
+        SplitPaneFocus, components::default_theme, loading_spinner_char, theme::Theme,
+        truncate_line_content, utilization_style, wrapped_line_count,
     },
 };
 
@@ -389,11 +389,14 @@ fn render_cluster_info(
         .map(|t| format_local(t, "%H:%M:%S"))
         .unwrap_or_else(|| "—".to_string());
     let (metrics_label, metrics_style) = if !snapshot.scope_loaded(RefreshScope::METRICS) {
-        ("loading...", theme.badge_warning_style())
+        (
+            format!("{} loading...", loading_spinner_char()),
+            theme.badge_warning_style(),
+        )
     } else if snapshot.node_metrics.is_empty() && snapshot.pod_metrics.is_empty() {
-        ("unavailable", theme.badge_error_style())
+        ("unavailable".to_string(), theme.badge_error_style())
     } else {
-        ("ready", theme.badge_success_style())
+        ("ready".to_string(), theme.badge_success_style())
     };
 
     let lines = vec![
