@@ -331,6 +331,20 @@ fn ai_context_redacts_sensitive_pod_log_values() {
 }
 
 #[test]
+fn ai_log_context_formatter_redacts_live_log_values() {
+    let rendered = super::format_ai_log_context_line(
+        "prod/api-0 main: Authorization: Bearer live-token password=literal-secret dsn=postgres://super:db-pass@db.example:5432/app",
+    );
+
+    assert!(rendered.contains("Authorization: [redacted]"), "{rendered}");
+    assert!(rendered.contains("password=<redacted>"), "{rendered}");
+    assert!(rendered.contains("[redacted-uri]"), "{rendered}");
+    assert!(!rendered.contains("live-token"), "{rendered}");
+    assert!(!rendered.contains("literal-secret"), "{rendered}");
+    assert!(!rendered.contains("db-pass"), "{rendered}");
+}
+
+#[test]
 fn pod_ai_context_labels_selected_container_for_cached_logs() {
     let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
     let mut app = AppState::default();
