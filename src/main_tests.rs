@@ -779,6 +779,7 @@ fn ai_context_summary_marks_unavailable_context_gaps() {
         probe_lines: Vec::new(),
         log_lines: vec![
             "current logs unavailable for pod api-0 container main: request timed out".to_string(),
+            "live pod logs unavailable: failed to fetch Pod 'api-0': not found".to_string(),
         ],
         yaml_excerpt: None,
     };
@@ -787,7 +788,7 @@ fn ai_context_summary_marks_unavailable_context_gaps() {
 
     assert!(summary.contains("Resource state unavailable"), "{summary}");
     assert!(summary.contains("Events 1"), "{summary}");
-    assert!(summary.contains("Logs 1"), "{summary}");
+    assert!(summary.contains("Logs 2"), "{summary}");
     assert!(summary.contains("YAML unavailable"), "{summary}");
     assert!(summary.contains("event gaps noted"), "{summary}");
     assert!(summary.contains("log gaps noted"), "{summary}");
