@@ -136,32 +136,57 @@ impl ValidatedResourceTemplate {
     pub fn render_yaml(&self) -> Result<String> {
         let deployment_labels = json!({ "app": self.name });
         match self.kind {
-            ResourceTemplateKind::Deployment => serde_yaml::to_string(&json!({
-                "apiVersion": "apps/v1",
-                "kind": "Deployment",
-                "metadata": {
-                    "name": self.name,
-                    "namespace": self.namespace,
-                },
-                "spec": {
-                    "replicas": self.replicas.expect("validated replicas"),
-                    "selector": { "matchLabels": deployment_labels.clone() },
-                    "template": {
-                        "metadata": { "labels": deployment_labels.clone() },
-                        "spec": {
-                            "containers": [{
-                                "name": self.name,
-                                "image": self.image.as_deref().expect("validated image"),
-                                "ports": [{
-                                    "containerPort": self.container_port.expect("validated port")
+            ResourceTemplateKind::Deployment => {
+                let image = self
+                    .image
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("deployment template missing image"))?;
+                let replicas = self
+                    .replicas
+                    .ok_or_else(|| anyhow!("deployment template missing replicas"))?;
+                let container_port = self
+                    .container_port
+                    .ok_or_else(|| anyhow!("deployment template missing container port"))?;
+                serde_yaml::to_string(&json!({
+                    "apiVersion": "apps/v1",
+                    "kind": "Deployment",
+                    "metadata": {
+                        "name": self.name,
+                        "namespace": self.namespace,
+                    },
+                    "spec": {
+                        "replicas": replicas,
+                        "selector": { "matchLabels": deployment_labels.clone() },
+                        "template": {
+                            "metadata": { "labels": deployment_labels.clone() },
+                            "spec": {
+                                "containers": [{
+                                    "name": self.name,
+                                    "image": image,
+                                    "ports": [{
+                                        "containerPort": container_port
+                                    }]
                                 }]
-                            }]
+                            }
                         }
                     }
-                }
-            }))
-            .map_err(Into::into),
+                }))
+                .map_err(Into::into)
+            }
             ResourceTemplateKind::DeploymentService => {
+                let image = self
+                    .image
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("deployment service template missing image"))?;
+                let replicas = self
+                    .replicas
+                    .ok_or_else(|| anyhow!("deployment service template missing replicas"))?;
+                let container_port = self
+                    .container_port
+                    .ok_or_else(|| anyhow!("deployment service template missing container port"))?;
+                let service_port = self
+                    .service_port
+                    .ok_or_else(|| anyhow!("deployment service template missing service port"))?;
                 let deployment = serde_yaml::to_string(&json!({
                     "apiVersion": "apps/v1",
                     "kind": "Deployment",
@@ -170,16 +195,16 @@ impl ValidatedResourceTemplate {
                         "namespace": self.namespace,
                     },
                     "spec": {
-                        "replicas": self.replicas.expect("validated replicas"),
+                        "replicas": replicas,
                         "selector": { "matchLabels": deployment_labels.clone() },
                         "template": {
                             "metadata": { "labels": deployment_labels.clone() },
                             "spec": {
                                 "containers": [{
                                     "name": self.name,
-                                    "image": self.image.as_deref().expect("validated image"),
+                                    "image": image,
                                     "ports": [{
-                                        "containerPort": self.container_port.expect("validated port")
+                                        "containerPort": container_port
                                     }]
                                 }]
                             }
@@ -196,25 +221,35 @@ impl ValidatedResourceTemplate {
                     "spec": {
                         "selector": deployment_labels,
                         "ports": [{
-                            "port": self.service_port.expect("validated service port"),
-                            "targetPort": self.container_port.expect("validated container port")
+                            "port": service_port,
+                            "targetPort": container_port
                         }]
                     }
                 }))?;
                 Ok(format!("{deployment}---\n{service}"))
             }
-            ResourceTemplateKind::ConfigMap => serde_yaml::to_string(&json!({
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {
-                    "name": self.name,
-                    "namespace": self.namespace,
-                },
-                "data": {
-                    self.config_key.as_deref().expect("validated key"): self.config_value.as_deref().expect("validated value")
-                }
-            }))
-            .map_err(Into::into),
+            ResourceTemplateKind::ConfigMap => {
+                let config_key = self
+                    .config_key
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("configmap template missing config key"))?;
+                let config_value = self
+                    .config_value
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("configmap template missing config value"))?;
+                serde_yaml::to_string(&json!({
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "metadata": {
+                        "name": self.name,
+                        "namespace": self.namespace,
+                    },
+                    "data": {
+                        config_key: config_value
+                    }
+                }))
+                .map_err(Into::into)
+            }
         }
     }
 }
@@ -354,6 +389,25 @@ mod tests {
         .expect("deployment names support dns subdomains");
 
         assert_eq!(validated.name, "api.v2");
+    }
+
+    #[test]
+    fn render_yaml_returns_error_for_invalid_validated_template() {
+        let err = ValidatedResourceTemplate {
+            kind: ResourceTemplateKind::Deployment,
+            name: "api".into(),
+            namespace: "default".into(),
+            image: None,
+            replicas: Some(1),
+            container_port: Some(80),
+            service_port: None,
+            config_key: None,
+            config_value: None,
+        }
+        .render_yaml()
+        .expect_err("missing image should return an error");
+
+        assert!(err.to_string().contains("missing image"));
     }
 
     #[test]
