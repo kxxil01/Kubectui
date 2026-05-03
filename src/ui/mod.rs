@@ -37,7 +37,7 @@ use crate::{
     icons::view_icon,
     policy::ViewAction,
     state::{
-        ClusterSnapshot, DataPhase, RefreshScope, ViewLoadState,
+        ClusterSnapshot, DataPhase, GlobalState, RefreshScope, ViewLoadState,
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
     time::{AppTimestamp, age_seconds_since, now_unix_seconds},
@@ -678,8 +678,16 @@ fn current_view_activity(
     match snapshot.view_load_state(view) {
         ViewLoadState::Loading => Some(format!("{spinner} {} loading...", view.label())),
         ViewLoadState::Refreshing => Some(format!("{spinner} {} refreshing...", view.label())),
+        ViewLoadState::Idle if current_view_scope_is_unloaded(snapshot, view) => {
+            Some(format!("{spinner} {} loading...", view.label()))
+        }
         ViewLoadState::Idle | ViewLoadState::Ready => None,
     }
+}
+
+fn current_view_scope_is_unloaded(snapshot: &ClusterSnapshot, view: AppView) -> bool {
+    let scope = GlobalState::view_ready_scope(view);
+    !scope.is_empty() && !snapshot.scope_loaded(scope)
 }
 
 /// Returns (header_text, is_active_sort_column).
@@ -4510,6 +4518,22 @@ mod tests {
         let empty = render_to_string(&app, &snapshot);
         assert!(empty.contains("No CRDs found"));
         assert!(!empty.contains("Loading CRDs..."));
+    }
+
+    #[test]
+    fn status_bar_reports_scoped_idle_view_loading() {
+        let app = app_with_view(AppView::Extensions);
+        let mut snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            ..ClusterSnapshot::default()
+        };
+
+        let loading = render_to_string(&app, &snapshot);
+        assert!(loading.contains("Definitions loading..."));
+
+        snapshot.loaded_scope = snapshot.loaded_scope.union(RefreshScope::EXTENSIONS);
+        let empty = render_to_string(&app, &snapshot);
+        assert!(!empty.contains("Definitions loading..."));
     }
 
     #[test]
