@@ -1037,6 +1037,10 @@ fn redact_ai_inline_secrets(value: &str) -> String {
             redacted.push("[redacted-uri]".to_string());
             continue;
         }
+        if let Some(redacted_token) = redact_ai_secret_path_token(token) {
+            redacted.push(redacted_token);
+            continue;
+        }
         if token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic") {
             redacted.push(token.to_string());
             state = AiInlineRedactionState::Value;
@@ -1070,6 +1074,33 @@ fn token_contains_credential_uri(token: &str) -> bool {
         return false;
     };
     after_scheme[..at_idx].contains(':')
+}
+
+fn redact_ai_secret_path_token(token: &str) -> Option<String> {
+    let lower = token.to_ascii_lowercase();
+    for marker in ["secret/", "secrets/"] {
+        if let Some(index) = lower.find(marker) {
+            let value_start = index + marker.len();
+            let value_len = token[value_start..]
+                .char_indices()
+                .find_map(|(idx, ch)| {
+                    (!matches!(ch, '-' | '_' | '.' | '/' | ':' | '@')
+                        && !ch.is_ascii_alphanumeric())
+                    .then_some(idx)
+                })
+                .unwrap_or_else(|| token[value_start..].len());
+            let value_end = value_start + value_len;
+            if value_end == value_start {
+                return None;
+            }
+            return Some(format!(
+                "{}<redacted>{}",
+                &token[..value_start],
+                &token[value_end..]
+            ));
+        }
+    }
+    None
 }
 
 fn token_looks_sensitive_key(token: &str) -> bool {
@@ -1165,14 +1196,7 @@ fn redact_ai_event_secret_refs(message: &str) -> String {
 }
 
 fn redact_ai_event_secret_path(token: &str) -> Option<String> {
-    let lower = token.to_ascii_lowercase();
-    for marker in ["secret/", "secrets/"] {
-        if let Some(index) = lower.find(marker) {
-            let end = index + marker.len();
-            return Some(format!("{}<redacted>", &token[..end]));
-        }
-    }
-    None
+    redact_ai_secret_path_token(token)
 }
 
 fn redact_ai_event_secret_token(token: &str) -> String {
