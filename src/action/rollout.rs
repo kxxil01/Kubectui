@@ -137,7 +137,10 @@ pub async fn handle_rollout_restart(
     {
         return true;
     }
-    let (kind, name, namespace) = workload_identity(&resource);
+    let Some((kind, name, namespace)) = workload_identity(&resource) else {
+        app.set_error("Restart is unavailable for the selected resource.".to_string());
+        return true;
+    };
     let resource_label = format!("{kind} '{name}' in namespace '{namespace}'");
     let origin_view = app.view();
     let action_history_id = app.record_action_pending(
@@ -213,7 +216,10 @@ pub async fn handle_toggle_rollout_pause_resume(
     {
         return true;
     }
-    let (_, name, namespace) = workload_identity(&resource);
+    let Some((_, name, namespace)) = workload_identity(&resource) else {
+        app.set_error("Pause/resume is only available from a Deployment rollout tab.".to_string());
+        return true;
+    };
     let action_kind = if next_paused {
         ActionKind::Pause
     } else {
@@ -324,7 +330,14 @@ pub async fn handle_execute_rollout_undo(
         clear_rollout_undo_confirm(app, &resource);
         return true;
     }
-    let (kind, name, namespace) = workload_identity(&resource);
+    let Some((kind, name, namespace)) = workload_identity(&resource) else {
+        clear_rollout_undo_confirm(app, &resource);
+        app.set_error(
+            "Rollout undo is only available for Deployments, StatefulSets, and DaemonSets."
+                .to_string(),
+        );
+        return true;
+    };
     let resource_label = format!("{kind} '{name}' in namespace '{namespace}'");
     let origin_view = app.view();
     let action_history_id = app.record_action_pending(
@@ -407,14 +420,18 @@ fn rollout_tab_mut<'a>(
         })
 }
 
-fn workload_identity(resource: &ResourceRef) -> (&'static str, String, String) {
+fn workload_identity(resource: &ResourceRef) -> Option<(&'static str, String, String)> {
     match resource {
-        ResourceRef::Deployment(name, namespace) => ("deployment", name.clone(), namespace.clone()),
-        ResourceRef::StatefulSet(name, namespace) => {
-            ("statefulset", name.clone(), namespace.clone())
+        ResourceRef::Deployment(name, namespace) => {
+            Some(("deployment", name.clone(), namespace.clone()))
         }
-        ResourceRef::DaemonSet(name, namespace) => ("daemonset", name.clone(), namespace.clone()),
-        _ => unreachable!("validated rollout resource"),
+        ResourceRef::StatefulSet(name, namespace) => {
+            Some(("statefulset", name.clone(), namespace.clone()))
+        }
+        ResourceRef::DaemonSet(name, namespace) => {
+            Some(("daemonset", name.clone(), namespace.clone()))
+        }
+        _ => None,
     }
 }
 
@@ -439,5 +456,29 @@ mod tests {
             panic!("expected rollout tab");
         };
         assert!(tab.confirm_undo_revision.is_none());
+    }
+
+    #[test]
+    fn workload_identity_accepts_rollout_workloads() {
+        assert_eq!(
+            workload_identity(&ResourceRef::Deployment("api".into(), "default".into())),
+            Some(("deployment", "api".into(), "default".into()))
+        );
+        assert_eq!(
+            workload_identity(&ResourceRef::StatefulSet("db".into(), "data".into())),
+            Some(("statefulset", "db".into(), "data".into()))
+        );
+        assert_eq!(
+            workload_identity(&ResourceRef::DaemonSet("agent".into(), "ops".into())),
+            Some(("daemonset", "agent".into(), "ops".into()))
+        );
+    }
+
+    #[test]
+    fn workload_identity_rejects_non_rollout_resources() {
+        assert_eq!(
+            workload_identity(&ResourceRef::Pod("api-123".into(), "default".into())),
+            None
+        );
     }
 }
