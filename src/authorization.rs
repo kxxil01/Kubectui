@@ -403,13 +403,16 @@ impl ResourceRef {
                 _ => Vec::new(),
             },
             DetailAction::Drain => match self {
-                ResourceRef::Node(_) => vec![
-                    self.base_resource_check("patch"),
-                    ResourceAccessCheck::resource("list", None, "pods", None, None),
-                    ResourceAccessCheck::subresource(
+                ResourceRef::Node(_) => {
+                    let mut checks = self.base_access_checks("patch");
+                    checks.push(ResourceAccessCheck::resource(
+                        "list", None, "pods", None, None,
+                    ));
+                    checks.push(ResourceAccessCheck::subresource(
                         "create", None, "pods", "eviction", None, None,
-                    ),
-                ],
+                    ));
+                    checks
+                }
                 _ => Vec::new(),
             },
             DetailAction::ToggleBookmark
@@ -431,19 +434,6 @@ impl ResourceRef {
                 )]
             })
             .unwrap_or_default()
-    }
-
-    fn base_resource_check(&self, verb: &str) -> ResourceAccessCheck {
-        let target = self
-            .base_access_target()
-            .expect("base resource check requires a concrete Kubernetes resource");
-        ResourceAccessCheck::resource(
-            verb,
-            target.group.as_deref(),
-            &target.resource,
-            target.namespace.as_deref(),
-            Some(&target.name),
-        )
     }
 
     fn base_access_target(&self) -> Option<ResourceAccessTarget> {
