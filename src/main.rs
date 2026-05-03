@@ -2490,6 +2490,7 @@ fn ai_context_line_has_availability_gap(line: &str) -> bool {
         || lower.contains("forbidden")
         || lower.contains("denied")
         || lower.contains("rbac")
+        || lower.contains("not found")
         || lower.contains("timeout")
         || lower.contains("timed out")
 }
