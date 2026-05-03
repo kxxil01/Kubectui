@@ -8,7 +8,10 @@ use ratatui::{
     prelude::Frame,
 };
 
-use crate::{app::AppState, state::ClusterSnapshot};
+use crate::{
+    app::{AppState, AppView},
+    state::{ClusterSnapshot, DataPhase, RefreshScope, ViewLoadState},
+};
 
 const STACKED_EXTENSIONS_WIDTH: u16 = 72;
 
@@ -38,14 +41,18 @@ pub fn render_extensions(
         })
         .split(area);
 
+    let crds_loading = matches!(snapshot.phase, DataPhase::Loading | DataPhase::Idle)
+        || (!snapshot.scope_loaded(RefreshScope::EXTENSIONS)
+            && matches!(
+                snapshot.view_load_state(AppView::Extensions),
+                ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
+            ));
+
     crds::render_crd_picker(
         frame,
         chunks[0],
         &snapshot.custom_resource_definitions,
-        matches!(
-            snapshot.phase,
-            crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
-        ),
+        crds_loading,
         app.selected_idx(),
         app.search_query(),
         !app.extension_in_instances,
