@@ -2987,6 +2987,7 @@ pub(crate) async fn run_app_inner(
         });
 
         let mut action_to_process: Option<AppAction> = None;
+        let mut extension_selection_changed = false;
 
         // Wait concurrently on: tick, input event, coordinator update, detail fetch, or auto-refresh.
         // `biased` ensures coordinator messages and detail results are drained before blocking on input.
@@ -5220,6 +5221,13 @@ pub(crate) async fn run_app_inner(
                     _ => continue,
                 };
                 needs_redraw = true;
+                let previous_extension_crd =
+                    (app.view() == AppView::Extensions && app.focus == kubectui::app::Focus::Content)
+                        .then(|| {
+                            selected_extension_crd(&app, &cached_snapshot)
+                                .map(|crd| crd.name.clone())
+                        })
+                        .flatten();
 
                 let action = if should_handle_root_enter(key, &app) {
                     if app.focus == kubectui::app::Focus::Content
@@ -5261,6 +5269,14 @@ pub(crate) async fn run_app_inner(
                 } else {
                     app.handle_key_event(key)
                 };
+                let current_extension_crd =
+                    (app.view() == AppView::Extensions && app.focus == kubectui::app::Focus::Content)
+                        .then(|| {
+                            selected_extension_crd(&app, &cached_snapshot)
+                                .map(|crd| crd.name.clone())
+                        })
+                        .flatten();
+                extension_selection_changed = previous_extension_crd != current_extension_crd;
 
                 action_to_process = Some(action);
             }
@@ -5270,7 +5286,15 @@ pub(crate) async fn run_app_inner(
         if let Some(action) = action_to_process {
             match action {
                 AppAction::None => {
-                    // No-op — don't call sync_extensions_instances on every unrecognized key
+                    if extension_selection_changed {
+                        spawn_extensions_fetch(
+                            &client,
+                            &mut app,
+                            &cached_snapshot,
+                            &extension_fetch_tx,
+                            refresh_state.context_generation,
+                        );
+                    }
                 }
                 AppAction::Quit => break,
                 AppAction::RefreshData => {

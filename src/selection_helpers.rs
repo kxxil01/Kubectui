@@ -939,13 +939,11 @@ pub fn spawn_extensions_fetch(
     }
 
     let Some(crd) = selected_extension_crd(app, snapshot).cloned() else {
-        app.extension_instances.clear();
-        app.extension_error = None;
-        app.extension_selected_crd = None;
+        app.clear_extension_state();
         return;
     };
 
-    if app.extension_selected_crd.as_deref() == Some(crd.name.as_str()) {
+    if should_skip_extension_fetch(app, crd.name.as_str()) {
         return;
     }
 
@@ -975,6 +973,10 @@ pub fn spawn_extensions_fetch(
     });
 }
 
+fn should_skip_extension_fetch(app: &AppState, crd_name: &str) -> bool {
+    app.extension_selected_crd.as_deref() == Some(crd_name) && app.extension_instances_loading
+}
+
 /// Applies the result of an extension CRD instance fetch to app state.
 pub fn apply_extension_fetch_result(app: &mut AppState, result: ExtensionFetchResult) {
     if app.extension_selected_crd.as_deref() != Some(result.crd_name.as_str()) {
@@ -991,7 +993,7 @@ pub fn apply_extension_fetch_result(app: &mut AppState, result: ExtensionFetchRe
 mod tests {
     use super::{
         prepare_resource_target, prepare_resource_target_for_view,
-        resolve_detail_action_authorization, selected_resource,
+        resolve_detail_action_authorization, selected_resource, should_skip_extension_fetch,
     };
     use kubectui::{
         app::{AppState, AppView, ResourceRef},
@@ -1016,6 +1018,19 @@ mod tests {
             ),
             Some(DetailActionAuthorization::Denied)
         );
+    }
+
+    #[test]
+    fn extension_fetch_skip_only_blocks_duplicate_in_flight_request() {
+        let mut app = AppState::default();
+        app.begin_extension_instances_load("widgets.demo.io".to_string());
+
+        assert!(should_skip_extension_fetch(&app, "widgets.demo.io"));
+        assert!(!should_skip_extension_fetch(&app, "gadgets.demo.io"));
+
+        app.set_extension_instances("widgets.demo.io".to_string(), Vec::new(), None);
+
+        assert!(!should_skip_extension_fetch(&app, "widgets.demo.io"));
     }
 
     #[test]
