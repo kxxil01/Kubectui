@@ -886,9 +886,40 @@ fn ai_context_summary_marks_unavailable_context_gaps() {
     let summary = super::summarize_ai_context_for_tab(&context).join("\n");
 
     assert!(summary.contains("Resource state unavailable"), "{summary}");
-    assert!(summary.contains("Events 1"), "{summary}");
-    assert!(summary.contains("Logs 2"), "{summary}");
+    assert!(summary.contains("Events unavailable"), "{summary}");
+    assert!(summary.contains("Logs unavailable"), "{summary}");
     assert!(summary.contains("YAML unavailable"), "{summary}");
+    assert!(summary.contains("event gaps noted"), "{summary}");
+    assert!(summary.contains("log gaps noted"), "{summary}");
+}
+
+#[test]
+fn ai_context_summary_counts_signals_without_gap_markers() {
+    let context = AiAnalysisContext {
+        resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),
+        cluster_context: None,
+        resource_state_lines: Vec::new(),
+        metadata_lines: Vec::new(),
+        workflow_title: None,
+        workflow_lines: Vec::new(),
+        issue_lines: Vec::new(),
+        event_lines: vec![
+            "Events unavailable: forbidden".to_string(),
+            "Warning BackOff count=2: restart".to_string(),
+        ],
+        probe_lines: Vec::new(),
+        log_lines: vec![
+            "current logs unavailable for pod api-0 container main: request timed out".to_string(),
+            "pod prod/api-0 container main current: panic".to_string(),
+            "skipped current logs for pod api-0 container sidecar: RBAC denied".to_string(),
+        ],
+        yaml_excerpt: None,
+    };
+
+    let summary = super::summarize_ai_context_for_tab(&context).join("\n");
+
+    assert!(summary.contains("Events 1"), "{summary}");
+    assert!(summary.contains("Logs 1"), "{summary}");
     assert!(summary.contains("event gaps noted"), "{summary}");
     assert!(summary.contains("log gaps noted"), "{summary}");
 }

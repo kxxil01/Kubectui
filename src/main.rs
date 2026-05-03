@@ -2522,6 +2522,14 @@ fn ai_context_count_label(label: &str, count: usize) -> String {
     }
 }
 
+fn ai_context_signal_count_label(label: &str, lines: &[String]) -> String {
+    let signal_count = lines
+        .iter()
+        .filter(|line| !ai_context_line_has_availability_gap(line))
+        .count();
+    ai_context_count_label(label, signal_count)
+}
+
 fn ai_context_yaml_label(context: &AiAnalysisContext) -> &'static str {
     match context.yaml_excerpt.as_deref() {
         Some(yaml) if yaml.contains("unavailable") => "YAML unavailable",
@@ -2562,8 +2570,8 @@ fn ai_context_line_has_availability_gap(line: &str) -> bool {
 fn summarize_ai_context_for_tab(context: &AiAnalysisContext) -> Vec<String> {
     let mut parts = vec![
         ai_context_count_label("Resource state", context.resource_state_lines.len()),
-        ai_context_count_label("Events", context.event_lines.len()),
-        ai_context_count_label("Logs", context.log_lines.len()),
+        ai_context_signal_count_label("Events", &context.event_lines),
+        ai_context_signal_count_label("Logs", &context.log_lines),
         ai_context_yaml_label(context).to_string(),
     ];
     if let Some(label) = ai_context_event_gap_label(context) {
