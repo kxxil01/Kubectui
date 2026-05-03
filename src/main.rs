@@ -5055,6 +5055,10 @@ pub(crate) async fn run_app_inner(
                 if matches!(phase, DataPhase::Loading | DataPhase::Idle)
                     || refresh_state.in_flight_id.is_some()
                     || app.workbench().has_loading_tab()
+                    || app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_loading_indicator)
                 {
                     app.advance_spinner();
                     needs_redraw = true;

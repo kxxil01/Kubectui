@@ -4376,6 +4376,52 @@ mod tests {
     }
 
     #[test]
+    fn detail_loading_badge_animates_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+
+        let mut app = app_with_view(AppView::Pods);
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("p1".to_string(), "default".to_string())),
+            metadata: DetailMetadata {
+                name: "p1".to_string(),
+                namespace: Some("default".to_string()),
+                ..DetailMetadata::default()
+            },
+            yaml: Some("kind: Pod\nmetadata:\n  name: p1\n".to_string()),
+            loading: true,
+            ..DetailViewState::default()
+        });
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+
+        app.advance_spinner();
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(before.contains("Loading..."));
+        assert!(after.contains("Loading..."));
+        assert_ne!(before, after);
+    }
+
+    #[test]
     fn closing_help_overlay_repaints_underlying_view() {
         let snapshot = pods_snapshot_for_render_tests();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
