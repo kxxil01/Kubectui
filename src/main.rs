@@ -5054,6 +5054,7 @@ pub(crate) async fn run_app_inner(
                 let phase = cached_snapshot.phase;
                 if matches!(phase, DataPhase::Loading | DataPhase::Idle)
                     || refresh_state.in_flight_id.is_some()
+                    || app.workbench().has_loading_tab()
                 {
                     app.advance_spinner();
                     needs_redraw = true;

@@ -2467,6 +2467,32 @@ impl WorkbenchTabState {
         }
     }
 
+    pub fn is_loading(&self) -> bool {
+        match self {
+            Self::ResourceYaml(tab) => tab.loading,
+            Self::ResourceDiff(tab) => tab.loading,
+            Self::Rollout(tab) => tab.loading,
+            Self::HelmHistory(tab) => {
+                tab.loading || tab.diff.as_ref().is_some_and(|diff| diff.loading)
+            }
+            Self::DecodedSecret(tab) => tab.loading,
+            Self::ResourceEvents(tab) => tab.loading,
+            Self::PodLogs(tab) => tab.viewer.loading,
+            Self::WorkloadLogs(tab) => tab.loading,
+            Self::Exec(tab) => tab.loading,
+            Self::ExtensionOutput(tab) => tab.loading,
+            Self::AiAnalysis(tab) => tab.loading,
+            Self::Relations(tab) => tab.loading,
+            Self::NetworkPolicy(tab) => tab.loading,
+            Self::ActionHistory(_)
+            | Self::AccessReview(_)
+            | Self::Runbook(_)
+            | Self::PortForward(_)
+            | Self::Connectivity(_)
+            | Self::TrafficDebug(_) => false,
+        }
+    }
+
     pub fn key(&self) -> WorkbenchTabKey {
         match self {
             Self::ActionHistory(_) => WorkbenchTabKey::ActionHistory,
@@ -2734,6 +2760,10 @@ impl WorkbenchState {
         self.tabs.iter().any(|tab| tab.state.key() == *key)
     }
 
+    pub fn has_loading_tab(&self) -> bool {
+        self.tabs.iter().any(|tab| tab.state.is_loading())
+    }
+
     pub fn close_tab_by_key(&mut self, key: &WorkbenchTabKey) -> bool {
         let Some(index) = self.tabs.iter().position(|tab| tab.state.key() == *key) else {
             return false;
@@ -2838,6 +2868,25 @@ mod tests {
         assert!(!state.open);
         assert!(state.tabs.is_empty());
         assert_eq!(state.active_tab, 0);
+        assert!(!state.has_loading_tab());
+    }
+
+    #[test]
+    fn workbench_reports_loading_tabs_for_animation_ticks() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
+            pod("pod-0"),
+        )));
+
+        assert!(state.has_loading_tab());
+
+        if let Some(tab) = state.active_tab_mut()
+            && let WorkbenchTabState::ResourceYaml(tab) = &mut tab.state
+        {
+            tab.update_content(Some("kind: Pod".into()), None, None);
+        }
+
+        assert!(!state.has_loading_tab());
     }
 
     #[test]

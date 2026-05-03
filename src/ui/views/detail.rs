@@ -17,7 +17,8 @@ use crate::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
             render_node_debug_dialog, render_vertical_scrollbar, scale_dialog::render_scale_dialog,
         },
-        format_age, table_window, truncate_line_content, wrap_span_groups, wrapped_line_count,
+        format_age, loading_spinner_char, table_window, truncate_line_content, wrap_span_groups,
+        wrapped_line_count,
     },
 };
 
@@ -882,7 +883,10 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
                 Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
             ),
             if detail_state.loading {
-                Span::styled("  ⟳ Loading…", theme.badge_warning_style())
+                Span::styled(
+                    format!("  {} Loading...", loading_spinner_char()),
+                    theme.badge_warning_style(),
+                )
             } else {
                 Span::raw("")
             },
