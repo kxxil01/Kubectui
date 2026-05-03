@@ -21,8 +21,8 @@ use crate::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        render_centered_message, render_table_frame, resource_table_title, table_viewport_rows,
-        table_window,
+        render_centered_message, render_table_frame, resource_table_title,
+        resource_table_title_suffix, table_viewport_rows, table_window,
         views::filtering::{filtered_ingress_class_indices, filtered_ingress_indices},
     },
 };
@@ -235,13 +235,14 @@ pub fn render_ingresses(
         })
         .collect();
 
+    let title_suffix = resource_table_title_suffix(cluster, AppView::Ingresses, "");
     let title = resource_table_title(
         view_icon(AppView::Ingresses).active(),
         "Ingresses",
         total,
         cluster.ingresses.len(),
         query,
-        "",
+        &title_suffix,
     );
     let widths = ingress_widths(area);
 
@@ -346,13 +347,14 @@ pub fn render_ingress_classes(
         })
         .collect();
 
+    let title_suffix = resource_table_title_suffix(cluster, AppView::IngressClasses, "");
     let title = resource_table_title(
         view_icon(AppView::IngressClasses).active(),
         "IngressClasses",
         total,
         cluster.ingress_classes.len(),
         query,
-        "",
+        &title_suffix,
     );
     let widths = ingress_class_widths(area);
 

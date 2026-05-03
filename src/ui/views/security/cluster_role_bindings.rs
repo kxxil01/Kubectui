@@ -18,8 +18,8 @@ use crate::{
         components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, responsive_table_widths, sort_header_cell, table_viewport_rows,
-        table_window,
+        resource_table_title, resource_table_title_suffix, responsive_table_widths,
+        sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_cluster_role_binding_indices,
         workload_sort_suffix,
     },
@@ -246,13 +246,15 @@ pub(crate) fn render_cluster_role_bindings(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
+    let title_suffix =
+        resource_table_title_suffix(cluster, AppView::ClusterRoleBindings, &sort_suffix);
     let title = resource_table_title(
         view_icon(AppView::ClusterRoleBindings).active(),
         "ClusterRoleBindings",
         total,
         cluster.cluster_role_bindings.len(),
         query,
-        &sort_suffix,
+        &title_suffix,
     );
     let widths = cluster_role_binding_widths(table_area);
 

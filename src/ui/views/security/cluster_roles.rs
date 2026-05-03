@@ -36,7 +36,8 @@ use crate::{
         components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        resource_table_title, resource_table_title_suffix, sort_header_cell, table_viewport_rows,
+        table_window,
         views::filtering::filtered_cluster_role_indices,
         workload_sort_suffix,
     },
@@ -223,13 +224,14 @@ pub(crate) fn render_cluster_roles(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
+    let title_suffix = resource_table_title_suffix(cluster, AppView::ClusterRoles, &sort_suffix);
     let title = resource_table_title(
         view_icon(AppView::ClusterRoles).active(),
         "ClusterRoles",
         total,
         cluster.cluster_roles.len(),
         query,
-        &sort_suffix,
+        &title_suffix,
     );
     let widths = cluster_role_widths(table_area);
     render_table_frame(
