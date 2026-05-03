@@ -3813,6 +3813,45 @@ mod tests {
     }
 
     #[test]
+    fn background_loading_workbench_tab_title_animates_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        app.open_ai_analysis_tab(
+            11,
+            "Explain Failure",
+            resource,
+            "Codex CLI",
+            "codex-cli",
+            Vec::new(),
+        );
+        app.open_action_history_tab(true);
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &ClusterSnapshot::default());
+        let before = terminal_to_string(&terminal);
+
+        app.advance_spinner();
+        draw_in_terminal(&mut terminal, &app, &ClusterSnapshot::default());
+        let after = terminal_to_string(&terminal);
+
+        assert!(before.contains("AI Explain Failure"));
+        assert!(after.contains("AI Explain Failure"));
+        assert!(!before.contains("Running AI analysis..."));
+        assert!(!after.contains("Running AI analysis..."));
+        assert_ne!(before, after);
+    }
+
+    #[test]
     fn render_runbook_workbench_smoke() {
         let mut app = app_with_view(AppView::Pods);
         let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
