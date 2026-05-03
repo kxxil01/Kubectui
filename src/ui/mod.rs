@@ -652,7 +652,7 @@ pub(crate) fn render_centered_message(
     );
 }
 
-fn active_view_fetch_error(snapshot: &ClusterSnapshot, view: AppView) -> Option<&str> {
+pub(crate) fn active_view_fetch_error(snapshot: &ClusterSnapshot, view: AppView) -> Option<&str> {
     let error = snapshot.last_error.as_deref()?;
     view_fetch_error_labels(view).iter().find_map(|label| {
         error.split(" | ").map(str::trim).find_map(|part| {
@@ -4699,6 +4699,22 @@ mod tests {
         let empty = render_to_string(&app, &snapshot);
         assert!(empty.contains("No CRDs found"));
         assert!(!empty.contains("Loading CRDs..."));
+    }
+
+    #[test]
+    fn extensions_crd_picker_surfaces_fetch_error_when_empty() {
+        let app = app_with_view(AppView::Extensions);
+        let snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            loaded_scope: RefreshScope::EXTENSIONS,
+            last_error: Some("crds: forbidden by RBAC".to_string()),
+            ..ClusterSnapshot::default()
+        };
+
+        let rendered = render_to_string(&app, &snapshot);
+
+        assert!(rendered.contains("Failed to load CRDs: forbidden by RBAC"));
+        assert!(!rendered.contains("No CRDs found"));
     }
 
     #[test]
