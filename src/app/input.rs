@@ -225,7 +225,7 @@ impl AppState {
 
         match &mut tab.state {
             WorkbenchTabState::ActionHistory(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.select_next(&action_history_ids);
                     AppAction::None
@@ -261,7 +261,7 @@ impl AppState {
                 let max_scroll = tab.line_count().saturating_sub(1);
                 match tab.focus {
                     AccessReviewFocus::Summary => match key.code {
-                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                         KeyCode::Tab | KeyCode::Char('s') | KeyCode::Char('/')
                             if plain_shortcut(key) =>
                         {
@@ -353,7 +353,7 @@ impl AppState {
                     .map(|yaml| yaml.lines().count().saturating_sub(1))
                     .unwrap_or(0);
                 match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
                         AppAction::None
@@ -384,7 +384,7 @@ impl AppState {
             WorkbenchTabState::ResourceDiff(tab) => {
                 let max_scroll = tab.lines.len().saturating_sub(1);
                 match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
                         AppAction::None
@@ -413,7 +413,7 @@ impl AppState {
                 }
             }
             WorkbenchTabState::ExtensionOutput(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(1);
                     AppAction::None
@@ -441,7 +441,7 @@ impl AppState {
                 _ => AppAction::None,
             },
             WorkbenchTabState::AiAnalysis(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(1);
                     AppAction::None
@@ -469,7 +469,7 @@ impl AppState {
                 _ => AppAction::None,
             },
             WorkbenchTabState::Runbook(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down if ctrl_shortcut(key) => {
                     tab.scroll_detail_down(1);
                     AppAction::None
@@ -623,7 +623,7 @@ impl AppState {
                 }
 
                 match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.select_next();
                         AppAction::None
@@ -728,7 +728,7 @@ impl AppState {
                 }
 
                 match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.select_next();
                         AppAction::None
@@ -832,7 +832,7 @@ impl AppState {
                     }
                 } else {
                     match key.code {
-                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                         KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.select_next();
                             tab.scroll = tab.scroll.max(tab.selected.saturating_sub(1));
@@ -877,7 +877,7 @@ impl AppState {
                 }
             }
             WorkbenchTabState::ResourceEvents(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(1);
                     AppAction::None
@@ -1021,7 +1021,7 @@ impl AppState {
                     }
                 } else {
                     match key.code {
-                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                         KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             if tab.viewer.picking_container {
                                 AppAction::LogsViewerPickerUp
@@ -1253,7 +1253,7 @@ impl AppState {
                     }
                 } else {
                     match key.code {
-                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                         KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             let filtered_len = tab.filtered_len();
                             if filtered_len <= 1 {
@@ -1401,7 +1401,7 @@ impl AppState {
                     }
                 } else {
                     match key.code {
-                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ExecSendInput,
                         KeyCode::Backspace => {
                             delete_char_left_at_cursor(&mut tab.input, &mut tab.input_cursor);
@@ -1526,7 +1526,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 _ => AppAction::None,
             },
             WorkbenchTabState::NetworkPolicy(tab) => match key.code {
@@ -1595,7 +1595,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 _ => AppAction::None,
             },
             WorkbenchTabState::TrafficDebug(tab) => match key.code {
@@ -1662,12 +1662,12 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                 _ => AppAction::None,
             },
             WorkbenchTabState::Connectivity(tab) => match tab.focus {
                 ConnectivityTabFocus::Filter => match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Tab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Targets;
                         AppAction::None
@@ -1719,7 +1719,7 @@ impl AppState {
                     _ => AppAction::None,
                 },
                 ConnectivityTabFocus::Targets => match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Tab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Result;
                         AppAction::None
@@ -1752,7 +1752,7 @@ impl AppState {
                     _ => AppAction::None,
                 },
                 ConnectivityTabFocus::Result => match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Tab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Filter;
                         AppAction::None
@@ -2167,7 +2167,7 @@ impl AppState {
                     .and_then(|detail| detail.scale_dialog.as_ref())
                     .map(|scale| scale.focus_field);
                 return match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Enter
                         if plain_shortcut(key) && scale_focus == Some(ScaleField::CancelBtn) =>
                     {
@@ -2195,7 +2195,7 @@ impl AppState {
             }
             ActiveComponent::ProbePanel => {
                 return match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                     KeyCode::Enter | KeyCode::Char(' ') if plain_shortcut(key) => {
                         AppAction::ProbeToggleExpand
                     }
@@ -2266,12 +2266,14 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Esc if self.detail_view.is_some() => AppAction::CloseDetail,
-            KeyCode::Esc if self.focus == Focus::Content => {
+            KeyCode::Esc if self.detail_view.is_some() && plain_shortcut(key) => {
+                AppAction::CloseDetail
+            }
+            KeyCode::Esc if self.focus == Focus::Content && plain_shortcut(key) => {
                 self.focus = Focus::Sidebar;
                 AppAction::None
             }
-            KeyCode::Esc if self.focus == Focus::Workbench => {
+            KeyCode::Esc if self.focus == Focus::Workbench && plain_shortcut(key) => {
                 self.focus = Focus::Content;
                 AppAction::None
             }
