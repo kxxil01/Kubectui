@@ -301,7 +301,7 @@ impl NamespacePicker {
             ]
         } else {
             vec![
-                vec![Span::styled(" [↑↓/jk] ", theme.keybind_key_style())],
+                vec![Span::styled(" [↑↓] ", theme.keybind_key_style())],
                 vec![Span::styled("navigate  ", theme.keybind_desc_style())],
                 vec![Span::styled("[Enter] ", theme.keybind_key_style())],
                 vec![Span::styled("select  ", theme.keybind_desc_style())],
@@ -454,6 +454,22 @@ fn namespace_picker_offset(total: usize, selected: usize, area: Rect) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn rendered_text(picker: &NamespacePicker, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        terminal
+            .draw(|frame| picker.render(frame, frame.area()))
+            .expect("namespace picker should render");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
 
     #[test]
     fn test_namespace_picker_navigation() {
@@ -526,6 +542,21 @@ mod tests {
         // 'k' should filter to "kube-system", not navigate
         let filtered = picker.filtered_namespaces();
         assert!(filtered.iter().any(|ns| ns.contains("kube")));
+    }
+
+    #[test]
+    fn namespace_picker_footer_does_not_advertise_jk_navigation_because_jk_filter_query() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "default".to_string(),
+            "kube-system".to_string(),
+        ]);
+        picker.open();
+
+        let rendered = rendered_text(&picker, 120, 40);
+
+        assert!(rendered.contains("↑↓"));
+        assert!(!rendered.contains("↑↓/jk"));
     }
 
     #[test]

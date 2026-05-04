@@ -292,7 +292,7 @@ impl ContextPicker {
             ]
         } else {
             vec![
-                vec![Span::styled(" [↑↓/jk] ", theme.keybind_key_style())],
+                vec![Span::styled(" [↑↓] ", theme.keybind_key_style())],
                 vec![Span::styled("navigate  ", theme.keybind_desc_style())],
                 vec![Span::styled("[Enter] ", theme.keybind_key_style())],
                 vec![Span::styled("connect  ", theme.keybind_desc_style())],
@@ -462,6 +462,22 @@ fn context_picker_offset(total: usize, selected: usize, area: Rect) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn rendered_text(picker: &ContextPicker, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        terminal
+            .draw(|frame| picker.render(frame, frame.area()))
+            .expect("context picker should render");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
 
     #[test]
     fn context_picker_navigation_wraps() {
@@ -544,6 +560,20 @@ mod tests {
         picker.handle_key(KeyEvent::from(KeyCode::Char('k')));
         assert_eq!(picker.search_query, "k");
         assert_eq!(picker.selected_index, 0);
+    }
+
+    #[test]
+    fn context_picker_footer_does_not_advertise_jk_navigation_because_jk_filter_query() {
+        let mut picker = ContextPicker::new(
+            vec!["ctx-a".to_string(), "ctx-b".to_string()],
+            Some("ctx-a".to_string()),
+        );
+        picker.open();
+
+        let rendered = rendered_text(&picker, 120, 40);
+
+        assert!(rendered.contains("↑↓"));
+        assert!(!rendered.contains("↑↓/jk"));
     }
 
     #[test]

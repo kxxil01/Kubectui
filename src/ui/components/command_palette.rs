@@ -1570,7 +1570,7 @@ impl CommandPalette {
             ]
         } else {
             vec![
-                vec![Span::styled(" [↑↓/jk] ", theme.keybind_key_style())],
+                vec![Span::styled(" [↑↓] ", theme.keybind_key_style())],
                 vec![Span::styled("navigate  ", theme.keybind_desc_style())],
                 vec![Span::styled("[Enter] ", theme.keybind_key_style())],
                 vec![Span::styled("select  ", theme.keybind_desc_style())],
@@ -1721,6 +1721,22 @@ mod tests {
     use crate::policy::ResourceActionContext;
     use crate::workbench::{PodLogsTabState, WorkbenchTabState};
     use crossterm::event::KeyModifiers;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn rendered_text(palette: &CommandPalette, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        terminal
+            .draw(|frame| palette.render(frame, frame.area()))
+            .expect("command palette should render");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
 
     fn ctx(resource: ResourceRef, node_unschedulable: Option<bool>) -> ResourceActionContext {
         ResourceActionContext {
@@ -1919,6 +1935,17 @@ mod tests {
         p.handle_key(KeyEvent::from(KeyCode::Char('k')));
         assert_eq!(p.query, "jk");
         assert_eq!(p.selected_index, 0);
+    }
+
+    #[test]
+    fn footer_does_not_advertise_jk_navigation_because_jk_filter_query() {
+        let mut p = CommandPalette::default();
+        p.open();
+
+        let rendered = rendered_text(&p, 120, 40);
+
+        assert!(rendered.contains("↑↓"));
+        assert!(!rendered.contains("↑↓/jk"));
     }
 
     #[test]
