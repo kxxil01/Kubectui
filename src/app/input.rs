@@ -43,6 +43,35 @@ fn app_supports_selected_resource_action_shortcut(app: &AppState) -> bool {
             && view_supports_selected_resource_shortcut(app.view, app.extension_in_instances))
 }
 
+fn workbench_control_action(
+    key: KeyEvent,
+    workbench_open: bool,
+    include_maximize: bool,
+) -> Option<AppAction> {
+    match key.code {
+        KeyCode::Char('z') if include_maximize && plain_shortcut(key) => {
+            Some(AppAction::WorkbenchToggleMaximize)
+        }
+        KeyCode::Char('b') if plain_shortcut(key) => Some(AppAction::ToggleWorkbench),
+        KeyCode::Char(',') if workbench_open && plain_shortcut(key) => {
+            Some(AppAction::WorkbenchPreviousTab)
+        }
+        KeyCode::Char('.') if workbench_open && plain_shortcut(key) => {
+            Some(AppAction::WorkbenchNextTab)
+        }
+        KeyCode::Char('w') if workbench_open && ctrl_shortcut(key) => {
+            Some(AppAction::WorkbenchCloseActiveTab)
+        }
+        KeyCode::Up if workbench_open && ctrl_shortcut(key) => {
+            Some(AppAction::WorkbenchIncreaseHeight)
+        }
+        KeyCode::Down if workbench_open && ctrl_shortcut(key) => {
+            Some(AppAction::WorkbenchDecreaseHeight)
+        }
+        _ => None,
+    }
+}
+
 fn view_supports_resource_events_shortcut(view: AppView) -> bool {
     matches!(
         view,
@@ -168,31 +197,8 @@ impl AppState {
 
         let local_editor_active = self.workbench_local_editor_active();
         // Common workbench keys (apply to all tab types)
-        if !local_editor_active {
-            match key.code {
-                KeyCode::Char('z') if plain_shortcut(key) => {
-                    return AppAction::WorkbenchToggleMaximize;
-                }
-                KeyCode::Char('b') if plain_shortcut(key) => {
-                    return AppAction::ToggleWorkbench;
-                }
-                KeyCode::Char(',') if plain_shortcut(key) => {
-                    return AppAction::WorkbenchPreviousTab;
-                }
-                KeyCode::Char('.') if plain_shortcut(key) => {
-                    return AppAction::WorkbenchNextTab;
-                }
-                KeyCode::Char('w') if ctrl_shortcut(key) => {
-                    return AppAction::WorkbenchCloseActiveTab;
-                }
-                KeyCode::Up if ctrl_shortcut(key) => {
-                    return AppAction::WorkbenchIncreaseHeight;
-                }
-                KeyCode::Down if ctrl_shortcut(key) => {
-                    return AppAction::WorkbenchDecreaseHeight;
-                }
-                _ => {}
-            }
+        if !local_editor_active && let Some(action) = workbench_control_action(key, true, true) {
+            return action;
         }
 
         let action_history_ids = self
@@ -2877,33 +2883,10 @@ impl AppState {
             KeyCode::Char('}') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::ApplyNextWorkspace
             }
-            KeyCode::Char('b') if self.detail_view.is_none() && plain_shortcut(key) => {
-                AppAction::ToggleWorkbench
-            }
-            KeyCode::Char(',')
-                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
+            _ if self.detail_view.is_none()
+                && workbench_control_action(key, self.workbench.open, false).is_some() =>
             {
-                AppAction::WorkbenchPreviousTab
-            }
-            KeyCode::Char('.')
-                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
-            {
-                AppAction::WorkbenchNextTab
-            }
-            KeyCode::Char('w')
-                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
-            {
-                AppAction::WorkbenchCloseActiveTab
-            }
-            KeyCode::Up
-                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
-            {
-                AppAction::WorkbenchIncreaseHeight
-            }
-            KeyCode::Down
-                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
-            {
-                AppAction::WorkbenchDecreaseHeight
+                workbench_control_action(key, self.workbench.open, false).unwrap_or(AppAction::None)
             }
             KeyCode::Char('c') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::OpenContextPicker
