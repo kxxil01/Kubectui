@@ -33,10 +33,6 @@ fn ctrl_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
 }
 
-fn ctrl_shift_shortcut(key: KeyEvent) -> bool {
-    ctrl_shortcut(key) && key.modifiers.contains(KeyModifiers::SHIFT)
-}
-
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
 }
@@ -183,16 +179,6 @@ impl AppState {
         use crate::ui::components::port_forward_dialog::PortForwardAction;
 
         let local_editor_active = self.workbench_local_editor_active();
-        let reserve_bracket_shortcuts = self.workbench.active_tab().is_some_and(|tab| {
-            matches!(
-                &tab.state,
-                WorkbenchTabState::PodLogs(logs_tab) if !logs_tab.viewer.picking_container
-            ) || matches!(
-                &tab.state,
-                WorkbenchTabState::WorkloadLogs(logs_tab) if !logs_tab.editing_text_filter
-            )
-        });
-
         // Common workbench keys (apply to all tab types)
         if !local_editor_active {
             match key.code {
@@ -202,25 +188,10 @@ impl AppState {
                 KeyCode::Char('b') if plain_shortcut(key) => {
                     return AppAction::ToggleWorkbench;
                 }
-                KeyCode::Tab if ctrl_shift_shortcut(key) => {
-                    return AppAction::WorkbenchPreviousTab;
-                }
-                KeyCode::BackTab if ctrl_shortcut(key) => {
-                    return AppAction::WorkbenchPreviousTab;
-                }
-                KeyCode::Tab if ctrl_shortcut(key) => {
-                    return AppAction::WorkbenchNextTab;
-                }
                 KeyCode::Char(',') if plain_shortcut(key) => {
                     return AppAction::WorkbenchPreviousTab;
                 }
                 KeyCode::Char('.') if plain_shortcut(key) => {
-                    return AppAction::WorkbenchNextTab;
-                }
-                KeyCode::Char('[') if plain_shortcut(key) && !reserve_bracket_shortcuts => {
-                    return AppAction::WorkbenchPreviousTab;
-                }
-                KeyCode::Char(']') if plain_shortcut(key) && !reserve_bracket_shortcuts => {
                     return AppAction::WorkbenchNextTab;
                 }
                 KeyCode::Char('w') if ctrl_shortcut(key) => {
@@ -2947,39 +2918,12 @@ impl AppState {
             KeyCode::Char('b') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::ToggleWorkbench
             }
-            KeyCode::Tab
-                if self.detail_view.is_none()
-                    && self.workbench.open
-                    && ctrl_shift_shortcut(key) =>
-            {
-                AppAction::WorkbenchPreviousTab
-            }
-            KeyCode::BackTab
-                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
-            {
-                AppAction::WorkbenchPreviousTab
-            }
-            KeyCode::Tab
-                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
-            {
-                AppAction::WorkbenchNextTab
-            }
             KeyCode::Char(',')
                 if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
             {
                 AppAction::WorkbenchPreviousTab
             }
             KeyCode::Char('.')
-                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
-            {
-                AppAction::WorkbenchNextTab
-            }
-            KeyCode::Char('[')
-                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
-            {
-                AppAction::WorkbenchPreviousTab
-            }
-            KeyCode::Char(']')
                 if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
             {
                 AppAction::WorkbenchNextTab

@@ -78,10 +78,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("T", "Cycle theme"),
             ("I", "Cycle icon mode"),
             ("b", "Toggle workbench"),
-            (
-                "[ / ] or Ctrl+Shift+Tab / Ctrl+Tab",
-                "Previous / next workbench tab (except pod/workload logs tabs)",
-            ),
+            (", / .", "Previous / next workbench tab"),
             ("Ctrl+W", "Close workbench tab"),
             ("Ctrl+Up / Ctrl+Down", "Resize workbench"),
         ],
@@ -127,8 +124,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Workbench (focused)",
         &[
             ("z", "Maximize / restore"),
-            (". / ,", "Next / previous workbench tab"),
-            ("Ctrl+Tab / Ctrl+Shift+Tab", "Next / previous workbench tab"),
+            (", / .", "Previous / next workbench tab"),
             ("Ctrl+W", "Close active workbench tab"),
             ("j / k", "Scroll down / up"),
             ("g / G", "Jump to top / bottom"),
@@ -252,7 +248,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("n / N", "Next / previous match"),
             ("y", "Copy log content"),
             ("S / s", "Save logs to file"),
-            ("Ctrl+Tab / Ctrl+Shift+Tab", "Switch workbench tabs"),
+            (", / .", "Previous / next workbench tab"),
         ],
     ),
     (
@@ -274,7 +270,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+U", "Clear text filter input"),
             ("y", "Copy log content"),
             ("S / s", "Save logs to file"),
-            ("Ctrl+Tab / Ctrl+Shift+Tab", "Switch workbench tabs"),
+            (", / .", "Previous / next workbench tab"),
         ],
     ),
 ];
@@ -749,7 +745,7 @@ mod tests {
     }
 
     #[test]
-    fn global_bracket_shortcut_help_mentions_logs_tab_exception() {
+    fn help_lists_canonical_workbench_tab_keys() {
         let global = SECTIONS
             .iter()
             .find(|(title, _)| *title == "Global")
@@ -757,12 +753,28 @@ mod tests {
             .1;
 
         assert!(
-            global.iter().any(|(key, desc)| {
-                *key == "[ / ] or Ctrl+Shift+Tab / Ctrl+Tab"
-                    && desc.contains("except pod/workload logs tabs")
-            }),
-            "global bracket shortcut note must mention logs-tab exception"
+            global
+                .iter()
+                .any(|(key, desc)| { *key == ", / ." && *desc == "Previous / next workbench tab" }),
+            "global help must list canonical terminal-safe workbench tab keys"
         );
+        for (section, bindings) in SECTIONS {
+            for (key, desc) in *bindings {
+                let is_workbench_tab_switch = desc.contains("Previous / next workbench tab");
+                if is_workbench_tab_switch {
+                    assert_eq!(
+                        *key, ", / .",
+                        "{section} must use canonical workbench tab keys"
+                    );
+                    assert!(
+                        !key.contains("Ctrl+Tab")
+                            && !key.contains("Ctrl+Shift+Tab")
+                            && !key.contains("[ / ]"),
+                        "{section} must not advertise ambiguous workbench tab keys"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
