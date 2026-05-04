@@ -19,6 +19,14 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn ctrl_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && key
+            .modifiers
+            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+            .is_empty()
+}
+
 /// Actions emitted by context picker keyboard handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextPickerAction {
@@ -187,7 +195,7 @@ impl ContextPicker {
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
                 ContextPickerAction::None
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') if ctrl_shortcut(key) => {
                 if !self.search_query.is_empty() {
                     let selected_context = self
                         .selected_context_from_indices(&filtered)
@@ -595,10 +603,16 @@ mod tests {
             Some("ctx-a".to_string()),
         );
         picker.open();
+        picker.search_query = "ctx".to_string();
+        picker.search_cursor = picker.search_query.len();
 
         picker.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT));
+        picker.handle_key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
 
-        assert!(picker.search_query.is_empty());
+        assert_eq!(picker.search_query, "ctx");
         assert_eq!(picker.selected_index, 0);
     }
 

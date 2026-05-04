@@ -18,6 +18,14 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn ctrl_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && key
+            .modifiers
+            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+            .is_empty()
+}
+
 /// Actions emitted by namespace picker keyboard handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespacePickerAction {
@@ -195,7 +203,7 @@ impl NamespacePicker {
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
                 NamespacePickerAction::None
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') if ctrl_shortcut(key) => {
                 if !self.search_query.is_empty() {
                     let selected_namespace = self
                         .selected_namespace_from_indices(&filtered)
@@ -574,10 +582,16 @@ mod tests {
         let mut picker =
             NamespacePicker::new(vec!["default".to_string(), "kube-system".to_string()]);
         picker.open();
+        picker.search_query = "kube".to_string();
+        picker.search_cursor = picker.search_query.len();
 
         picker.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT));
+        picker.handle_key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
 
-        assert_eq!(picker.search_query(), "");
+        assert_eq!(picker.search_query(), "kube");
         assert_eq!(picker.selected_index(), 0);
     }
 

@@ -38,6 +38,14 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn ctrl_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && key
+            .modifiers
+            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+            .is_empty()
+}
+
 fn command_palette_popup(area: Rect) -> Rect {
     let preferred_width = (area.width * 2 / 5).clamp(44, 60);
     let preferred_height = (area.height / 2).clamp(16, 24);
@@ -1305,11 +1313,7 @@ impl CommandPalette {
                 move_cursor_end(&mut self.query_cursor, &self.query);
                 CommandPaletteAction::None
             }
-            KeyCode::Char('u')
-                if key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('u') if ctrl_shortcut(key) => {
                 if !self.query.is_empty() {
                     let selected_entry = self.selected_entry_anchor();
                     clear_input_at_cursor(&mut self.query, &mut self.query_cursor);
@@ -1947,9 +1951,11 @@ mod tests {
     fn modified_chars_do_not_edit_query() {
         let mut p = CommandPalette::default();
         p.open();
+        p.query = "seed".to_string();
+        p.query_cursor = p.query.len();
         p.handle_key(KeyEvent::new(
             KeyCode::Char('u'),
-            crossterm::event::KeyModifiers::CONTROL,
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::ALT,
         ));
         p.handle_key(KeyEvent::new(
             KeyCode::Char('j'),
@@ -1963,7 +1969,7 @@ mod tests {
             KeyCode::Char('m'),
             crossterm::event::KeyModifiers::META,
         ));
-        assert!(p.query.is_empty());
+        assert_eq!(p.query, "seed");
     }
 
     #[test]
