@@ -19,6 +19,31 @@ fn removed_workbench_tab_keys() -> [KeyEvent; 5] {
     ]
 }
 
+fn modified_edit_key_events() -> Vec<KeyEvent> {
+    let codes = [
+        KeyCode::Backspace,
+        KeyCode::Delete,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Home,
+        KeyCode::End,
+    ];
+    let modifiers = [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+    ];
+    modifiers
+        .into_iter()
+        .flat_map(|modifier| {
+            codes
+                .into_iter()
+                .map(move |code| KeyEvent::new(code, modifier))
+        })
+        .collect()
+}
+
 /// Verifies full forward tab cycle across all views and wraps to Dashboard.
 #[test]
 fn tab_cycles_all_views_forward() {
@@ -416,6 +441,21 @@ fn search_mode_modified_escape_does_not_clear_or_exit() {
     }
 }
 
+#[test]
+fn search_mode_modified_edit_keys_do_not_mutate_query_or_cursor() {
+    for key in modified_edit_key_events() {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('c')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Left));
+
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+        assert_eq!(app.search_query(), "ac", "{key:?}");
+        assert_eq!(app.search_cursor, 1, "{key:?}");
+    }
+}
+
 /// Verifies refresh actions are emitted for `r` and Ctrl+R.
 #[test]
 fn refresh_action_transitions() {
@@ -637,6 +677,25 @@ fn resource_template_dialog_alt_modified_chars_do_not_edit_fields() {
             .name,
         "sample-app"
     );
+}
+
+#[test]
+fn resource_template_dialog_modified_edit_keys_do_not_mutate_fields_or_cursor() {
+    for key in modified_edit_key_events() {
+        let mut app = AppState::default();
+        app.resource_template_dialog =
+            Some(crate::ui::components::ResourceTemplateDialogState::new(
+                ResourceTemplateKind::Deployment,
+                "default",
+            ));
+        let dialog = app.resource_template_dialog.as_mut().unwrap();
+        dialog.values.name = "sample-app".into();
+
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+
+        let dialog = app.resource_template_dialog.as_ref().unwrap();
+        assert_eq!(dialog.values.name, "sample-app", "{key:?}");
+    }
 }
 
 #[test]
@@ -1818,6 +1877,40 @@ fn connectivity_filter_ignores_alt_modified_chars() {
     };
     assert_eq!(connectivity_tab.filter.value, "api");
     assert_eq!(connectivity_tab.filter.cursor_pos, 3);
+}
+
+#[test]
+fn connectivity_filter_modified_edit_keys_do_not_mutate_filter_or_cursor() {
+    for key in modified_edit_key_events() {
+        let mut app = AppState::default();
+        app.workbench.open_tab(WorkbenchTabState::Connectivity(
+            crate::workbench::ConnectivityTabState::new(
+                ResourceRef::Pod("pod-1".into(), "default".into()),
+                Vec::new(),
+            ),
+        ));
+        app.focus_workbench();
+
+        let Some(tab) = app.workbench.active_tab_mut() else {
+            panic!("expected active workbench tab");
+        };
+        let WorkbenchTabState::Connectivity(connectivity_tab) = &mut tab.state else {
+            panic!("expected connectivity tab");
+        };
+        connectivity_tab.focus = crate::workbench::ConnectivityTabFocus::Filter;
+        connectivity_tab.filter.value = "api".into();
+        connectivity_tab.filter.cursor_pos = 2;
+
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+
+        let WorkbenchTabState::Connectivity(connectivity_tab) =
+            &app.workbench.active_tab().unwrap().state
+        else {
+            panic!("expected connectivity tab");
+        };
+        assert_eq!(connectivity_tab.filter.value, "api", "{key:?}");
+        assert_eq!(connectivity_tab.filter.cursor_pos, 2, "{key:?}");
+    }
 }
 
 #[test]
@@ -3978,6 +4071,37 @@ fn access_review_subject_modified_escape_does_not_stop_input() {
 }
 
 #[test]
+fn access_review_subject_modified_edit_keys_do_not_mutate_input_or_cursor() {
+    use crate::workbench::{AccessReviewTabState, WorkbenchTabState};
+
+    for key in modified_edit_key_events() {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        let mut tab = AccessReviewTabState::new(
+            ResourceRef::Pod("pod-0".to_string(), "ns".to_string()),
+            Some("prod".to_string()),
+            "ns".to_string(),
+            Vec::new(),
+            None,
+            None,
+        );
+        tab.start_subject_input();
+        tab.subject_input.value = "User/alice".to_string();
+        tab.subject_input.cursor_pos = 4;
+        app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+
+        let WorkbenchTabState::AccessReview(tab) = &app.workbench.active_tab().unwrap().state
+        else {
+            panic!("expected access review tab");
+        };
+        assert_eq!(tab.subject_input.value, "User/alice", "{key:?}");
+        assert_eq!(tab.subject_input.cursor_pos, 4, "{key:?}");
+    }
+}
+
+#[test]
 fn access_review_subject_delete_removes_character_at_cursor() {
     use crate::workbench::{AccessReviewTabState, WorkbenchTabState};
 
@@ -4919,6 +5043,41 @@ fn decoded_secret_modified_escape_does_not_cancel_unmasked_edit() {
 }
 
 #[test]
+fn decoded_secret_modified_edit_keys_do_not_mutate_input_or_cursor() {
+    use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
+    use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
+
+    for key in modified_edit_key_events() {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        let mut tab =
+            DecodedSecretTabState::new(ResourceRef::Secret("app-secret".into(), "prod".into()));
+        tab.entries = vec![DecodedSecretEntry {
+            key: "TOKEN".into(),
+            value: DecodedSecretValue::Text {
+                current: "new-value".into(),
+                original: "old-value".into(),
+            },
+        }];
+        tab.masked = false;
+        tab.editing = true;
+        tab.edit_input = "new-value".into();
+        tab.edit_cursor = 3;
+        app.workbench
+            .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+
+        let WorkbenchTabState::DecodedSecret(tab) = &app.workbench.active_tab().unwrap().state
+        else {
+            panic!("expected decoded secret tab");
+        };
+        assert_eq!(tab.edit_input, "new-value", "{key:?}");
+        assert_eq!(tab.edit_cursor, 3, "{key:?}");
+    }
+}
+
+#[test]
 fn reopen_clean_decoded_secret_tab_tracks_new_pending_fetch() {
     use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
     use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
@@ -5493,6 +5652,41 @@ fn pod_logs_modified_escape_does_not_cancel_search_or_time_jump() {
 }
 
 #[test]
+fn pod_logs_modified_edit_keys_do_not_mutate_search_or_time_jump() {
+    use crate::workbench::{PodLogsTabState, WorkbenchTabState};
+
+    for key in modified_edit_key_events() {
+        let mut search = AppState::default();
+        search.focus = Focus::Workbench;
+        let mut tab = PodLogsTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+        tab.viewer.searching = true;
+        tab.viewer.search_input = "error".into();
+        tab.viewer.search_cursor = 2;
+        search.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+        assert_eq!(search.handle_key_event(key), AppAction::None, "{key:?}");
+        let WorkbenchTabState::PodLogs(tab) = &search.workbench.active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert_eq!(tab.viewer.search_input, "error", "{key:?}");
+        assert_eq!(tab.viewer.search_cursor, 2, "{key:?}");
+
+        let mut jump = AppState::default();
+        jump.focus = Focus::Workbench;
+        let mut tab = PodLogsTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+        tab.viewer.jumping_to_time = true;
+        tab.viewer.time_jump_input = "10:30".into();
+        tab.viewer.time_jump_cursor = 2;
+        jump.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+        assert_eq!(jump.handle_key_event(key), AppAction::None, "{key:?}");
+        let WorkbenchTabState::PodLogs(tab) = &jump.workbench.active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert_eq!(tab.viewer.time_jump_input, "10:30", "{key:?}");
+        assert_eq!(tab.viewer.time_jump_cursor, 2, "{key:?}");
+    }
+}
+
+#[test]
 fn workload_logs_modified_escape_does_not_cancel_filter_or_time_jump() {
     use crate::workbench::{WorkbenchTabState, WorkloadLogsTabState};
 
@@ -5546,6 +5740,48 @@ fn workload_logs_modified_escape_does_not_cancel_filter_or_time_jump() {
         };
         assert!(tab.jumping_to_time, "{modifiers:?}");
         assert_eq!(tab.time_jump_input, "10:30", "{modifiers:?}");
+    }
+}
+
+#[test]
+fn workload_logs_modified_edit_keys_do_not_mutate_filter_or_time_jump() {
+    use crate::workbench::{WorkbenchTabState, WorkloadLogsTabState};
+
+    for key in modified_edit_key_events() {
+        let mut filter = AppState::default();
+        filter.focus = Focus::Workbench;
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "prod".into()), 7);
+        tab.editing_text_filter = true;
+        tab.filter_input = "timeout".into();
+        tab.filter_input_cursor = 3;
+        filter
+            .workbench
+            .open_tab(WorkbenchTabState::WorkloadLogs(tab));
+        assert_eq!(filter.handle_key_event(key), AppAction::None, "{key:?}");
+        let WorkbenchTabState::WorkloadLogs(tab) = &filter.workbench.active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert_eq!(tab.filter_input, "timeout", "{key:?}");
+        assert_eq!(tab.filter_input_cursor, 3, "{key:?}");
+
+        let mut jump = AppState::default();
+        jump.focus = Focus::Workbench;
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "prod".into()), 7);
+        tab.jumping_to_time = true;
+        tab.time_jump_input = "10:30".into();
+        tab.time_jump_cursor = 2;
+        jump.workbench
+            .open_tab(WorkbenchTabState::WorkloadLogs(tab));
+        assert_eq!(jump.handle_key_event(key), AppAction::None, "{key:?}");
+        let WorkbenchTabState::WorkloadLogs(tab) = &jump.workbench.active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert_eq!(tab.time_jump_input, "10:30", "{key:?}");
+        assert_eq!(tab.time_jump_cursor, 2, "{key:?}");
     }
 }
 
@@ -5654,6 +5890,37 @@ fn exec_picker_modified_escape_does_not_cancel_container_picker() {
         };
         assert!(tab.picking_container, "{modifiers:?}");
         assert_eq!(tab.container_cursor, 1, "{modifiers:?}");
+    }
+}
+
+#[test]
+fn exec_input_modified_edit_keys_do_not_mutate_input_cursor_or_scroll() {
+    use crate::workbench::{ExecTabState, WorkbenchTabState};
+
+    let keys = modified_edit_key_events().into_iter().chain([
+        KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL),
+        KeyEvent::new(KeyCode::Down, KeyModifiers::ALT),
+    ]);
+
+    for key in keys {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        let resource = ResourceRef::Pod("api".into(), "prod".into());
+        let mut tab = ExecTabState::new(resource.clone(), 7, "api".into(), "prod".into());
+        tab.input = "kubectl".into();
+        tab.input_cursor = 3;
+        tab.lines = vec!["one".into(), "two".into(), "three".into()];
+        tab.scroll = 1;
+        app.workbench.open_tab(WorkbenchTabState::Exec(tab));
+
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+
+        let WorkbenchTabState::Exec(tab) = &app.workbench.active_tab().unwrap().state else {
+            panic!("expected exec tab");
+        };
+        assert_eq!(tab.input, "kubectl", "{key:?}");
+        assert_eq!(tab.input_cursor, 3, "{key:?}");
+        assert_eq!(tab.scroll, 1, "{key:?}");
     }
 }
 

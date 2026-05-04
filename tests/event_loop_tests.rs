@@ -482,6 +482,34 @@ fn test_scale_dialog_backspace() {
 }
 
 #[test]
+fn test_scale_dialog_modified_backspace_does_not_edit() {
+    let mut app = AppState::default();
+    app.detail_view = Some(deployment_detail());
+    app.open_scale_dialog();
+
+    for digit in "42".chars() {
+        let action = route_keyboard_input(KeyEvent::from(KeyCode::Char(digit)), &mut app);
+        apply_action(action, &mut app);
+    }
+
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+    ] {
+        let action = route_keyboard_input(KeyEvent::new(KeyCode::Backspace, modifiers), &mut app);
+        apply_action(action, &mut app);
+
+        if let Some(detail) = &app.detail_view
+            && let Some(scale) = &detail.scale_dialog
+        {
+            assert_eq!(scale.desired_replicas, "42", "{modifiers:?}");
+        }
+    }
+}
+
+#[test]
 fn test_scale_dialog_tab_navigation_routes_to_focus_fields() {
     let mut app = AppState::default();
     app.detail_view = Some(deployment_detail());

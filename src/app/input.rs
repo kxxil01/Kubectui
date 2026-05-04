@@ -24,6 +24,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn edit_key(key: KeyEvent) -> bool {
+    key.modifiers.is_empty()
+}
+
 fn copy_resource_name_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && key
@@ -303,29 +307,29 @@ impl AppState {
                             tab.stop_subject_input();
                             AppAction::None
                         }
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if edit_key(key) => {
                             tab.subject_input.backspace_char();
                             tab.subject_input_error = None;
                             AppAction::None
                         }
-                        KeyCode::Delete => {
+                        KeyCode::Delete if edit_key(key) => {
                             tab.subject_input.delete_char();
                             tab.subject_input_error = None;
                             AppAction::None
                         }
-                        KeyCode::Left => {
+                        KeyCode::Left if edit_key(key) => {
                             tab.subject_input.cursor_left();
                             AppAction::None
                         }
-                        KeyCode::Right => {
+                        KeyCode::Right if edit_key(key) => {
                             tab.subject_input.cursor_right();
                             AppAction::None
                         }
-                        KeyCode::Home => {
+                        KeyCode::Home if edit_key(key) => {
                             tab.subject_input.cursor_home();
                             AppAction::None
                         }
-                        KeyCode::End => {
+                        KeyCode::End if edit_key(key) => {
                             tab.subject_input.cursor_end();
                             AppAction::None
                         }
@@ -796,27 +800,27 @@ impl AppState {
                             tab.edit_cursor = 0;
                             AppAction::None
                         }
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
                             AppAction::None
                         }
-                        KeyCode::Delete => {
+                        KeyCode::Delete if edit_key(key) => {
                             delete_char_right_at_cursor(&mut tab.edit_input, tab.edit_cursor);
                             AppAction::None
                         }
-                        KeyCode::Left => {
+                        KeyCode::Left if edit_key(key) => {
                             move_cursor_left(&mut tab.edit_cursor);
                             AppAction::None
                         }
-                        KeyCode::Right => {
+                        KeyCode::Right if edit_key(key) => {
                             move_cursor_right(&mut tab.edit_cursor, &tab.edit_input);
                             AppAction::None
                         }
-                        KeyCode::Home => {
+                        KeyCode::Home if edit_key(key) => {
                             tab.edit_cursor = 0;
                             AppAction::None
                         }
-                        KeyCode::End => {
+                        KeyCode::End if edit_key(key) => {
                             move_cursor_end(&mut tab.edit_cursor, &tab.edit_input);
                             AppAction::None
                         }
@@ -909,36 +913,36 @@ impl AppState {
                     match key.code {
                         KeyCode::Esc if plain_shortcut(key) => AppAction::LogsViewerSearchCancel,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::LogsViewerSearchClose,
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(
                                 &mut tab.viewer.search_input,
                                 &mut tab.viewer.search_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Delete => {
+                        KeyCode::Delete if edit_key(key) => {
                             delete_char_right_at_cursor(
                                 &mut tab.viewer.search_input,
                                 tab.viewer.search_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Left => {
+                        KeyCode::Left if edit_key(key) => {
                             move_cursor_left(&mut tab.viewer.search_cursor);
                             AppAction::None
                         }
-                        KeyCode::Right => {
+                        KeyCode::Right if edit_key(key) => {
                             move_cursor_right(
                                 &mut tab.viewer.search_cursor,
                                 &tab.viewer.search_input,
                             );
                             AppAction::None
                         }
-                        KeyCode::Home => {
+                        KeyCode::Home if edit_key(key) => {
                             move_cursor_home(&mut tab.viewer.search_cursor);
                             AppAction::None
                         }
-                        KeyCode::End => {
+                        KeyCode::End if edit_key(key) => {
                             move_cursor_end(
                                 &mut tab.viewer.search_cursor,
                                 &tab.viewer.search_input,
@@ -966,36 +970,36 @@ impl AppState {
                     match key.code {
                         KeyCode::Esc if plain_shortcut(key) => AppAction::CancelLogTimeJump,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 &mut tab.viewer.time_jump_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Delete => {
+                        KeyCode::Delete if edit_key(key) => {
                             delete_char_right_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 tab.viewer.time_jump_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Left => {
+                        KeyCode::Left if edit_key(key) => {
                             move_cursor_left(&mut tab.viewer.time_jump_cursor);
                             AppAction::None
                         }
-                        KeyCode::Right => {
+                        KeyCode::Right if edit_key(key) => {
                             move_cursor_right(
                                 &mut tab.viewer.time_jump_cursor,
                                 &tab.viewer.time_jump_input,
                             );
                             AppAction::None
                         }
-                        KeyCode::Home => {
+                        KeyCode::Home if edit_key(key) => {
                             tab.viewer.time_jump_cursor = 0;
                             AppAction::None
                         }
-                        KeyCode::End => {
+                        KeyCode::End if edit_key(key) => {
                             move_cursor_end(
                                 &mut tab.viewer.time_jump_cursor,
                                 &tab.viewer.time_jump_input,
@@ -1153,33 +1157,33 @@ impl AppState {
                             tab.commit_text_filter();
                             AppAction::None
                         }
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(
                                 &mut tab.filter_input,
                                 &mut tab.filter_input_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Delete => {
+                        KeyCode::Delete if edit_key(key) => {
                             delete_char_right_at_cursor(
                                 &mut tab.filter_input,
                                 tab.filter_input_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Left => {
+                        KeyCode::Left if edit_key(key) => {
                             move_cursor_left(&mut tab.filter_input_cursor);
                             AppAction::None
                         }
-                        KeyCode::Right => {
+                        KeyCode::Right if edit_key(key) => {
                             move_cursor_right(&mut tab.filter_input_cursor, &tab.filter_input);
                             AppAction::None
                         }
-                        KeyCode::Home => {
+                        KeyCode::Home if edit_key(key) => {
                             tab.filter_input_cursor = 0;
                             AppAction::None
                         }
-                        KeyCode::End => {
+                        KeyCode::End if edit_key(key) => {
                             move_cursor_end(&mut tab.filter_input_cursor, &tab.filter_input);
                             AppAction::None
                         }
@@ -1204,33 +1208,33 @@ impl AppState {
                     match key.code {
                         KeyCode::Esc if plain_shortcut(key) => AppAction::CancelLogTimeJump,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(
                                 &mut tab.time_jump_input,
                                 &mut tab.time_jump_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Delete => {
+                        KeyCode::Delete if edit_key(key) => {
                             delete_char_right_at_cursor(
                                 &mut tab.time_jump_input,
                                 tab.time_jump_cursor,
                             );
                             AppAction::None
                         }
-                        KeyCode::Left => {
+                        KeyCode::Left if edit_key(key) => {
                             move_cursor_left(&mut tab.time_jump_cursor);
                             AppAction::None
                         }
-                        KeyCode::Right => {
+                        KeyCode::Right if edit_key(key) => {
                             move_cursor_right(&mut tab.time_jump_cursor, &tab.time_jump_input);
                             AppAction::None
                         }
-                        KeyCode::Home => {
+                        KeyCode::Home if edit_key(key) => {
                             tab.time_jump_cursor = 0;
                             AppAction::None
                         }
-                        KeyCode::End => {
+                        KeyCode::End if edit_key(key) => {
                             move_cursor_end(&mut tab.time_jump_cursor, &tab.time_jump_input);
                             AppAction::None
                         }
@@ -1403,35 +1407,35 @@ impl AppState {
                     match key.code {
                         KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ExecSendInput,
-                        KeyCode::Backspace => {
+                        KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(&mut tab.input, &mut tab.input_cursor);
                             AppAction::None
                         }
-                        KeyCode::Delete => {
+                        KeyCode::Delete if edit_key(key) => {
                             delete_char_right_at_cursor(&mut tab.input, tab.input_cursor);
                             AppAction::None
                         }
-                        KeyCode::Left => {
+                        KeyCode::Left if edit_key(key) => {
                             move_cursor_left(&mut tab.input_cursor);
                             AppAction::None
                         }
-                        KeyCode::Right => {
+                        KeyCode::Right if edit_key(key) => {
                             move_cursor_right(&mut tab.input_cursor, &tab.input);
                             AppAction::None
                         }
-                        KeyCode::Home => {
+                        KeyCode::Home if edit_key(key) => {
                             tab.input_cursor = 0;
                             AppAction::None
                         }
-                        KeyCode::End => {
+                        KeyCode::End if edit_key(key) => {
                             move_cursor_end(&mut tab.input_cursor, &tab.input);
                             AppAction::None
                         }
-                        KeyCode::Up => {
+                        KeyCode::Up if edit_key(key) => {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::Down => {
+                        KeyCode::Down if edit_key(key) => {
                             tab.scroll = (tab.scroll + 1).min(tab.lines.len().saturating_sub(1));
                             AppAction::None
                         }
@@ -1676,29 +1680,29 @@ impl AppState {
                         tab.focus = ConnectivityTabFocus::Result;
                         AppAction::None
                     }
-                    KeyCode::Backspace => {
+                    KeyCode::Backspace if edit_key(key) => {
                         tab.filter.backspace_char();
                         tab.refresh_filter();
                         AppAction::None
                     }
-                    KeyCode::Delete => {
+                    KeyCode::Delete if edit_key(key) => {
                         tab.filter.delete_char();
                         tab.refresh_filter();
                         AppAction::None
                     }
-                    KeyCode::Left => {
+                    KeyCode::Left if edit_key(key) => {
                         tab.filter.cursor_left();
                         AppAction::None
                     }
-                    KeyCode::Right => {
+                    KeyCode::Right if edit_key(key) => {
                         tab.filter.cursor_right();
                         AppAction::None
                     }
-                    KeyCode::Home => {
+                    KeyCode::Home if edit_key(key) => {
                         tab.filter.cursor_home();
                         AppAction::None
                     }
-                    KeyCode::End => {
+                    KeyCode::End if edit_key(key) => {
                         tab.filter.cursor_end();
                         AppAction::None
                     }
@@ -2044,27 +2048,27 @@ impl AppState {
                     dialog.prev_field();
                     AppAction::None
                 }
-                KeyCode::Left => {
+                KeyCode::Left if edit_key(key) => {
                     dialog.cursor_left();
                     AppAction::None
                 }
-                KeyCode::Right => {
+                KeyCode::Right if edit_key(key) => {
                     dialog.cursor_right();
                     AppAction::None
                 }
-                KeyCode::Home => {
+                KeyCode::Home if edit_key(key) => {
                     dialog.cursor_home();
                     AppAction::None
                 }
-                KeyCode::End => {
+                KeyCode::End if edit_key(key) => {
                     dialog.cursor_end();
                     AppAction::None
                 }
-                KeyCode::Backspace => {
+                KeyCode::Backspace if edit_key(key) => {
                     dialog.backspace();
                     AppAction::None
                 }
-                KeyCode::Delete => {
+                KeyCode::Delete if edit_key(key) => {
                     dialog.delete_char();
                     AppAction::None
                 }
@@ -2176,7 +2180,7 @@ impl AppState {
                     KeyCode::Enter if plain_shortcut(key) => AppAction::ScaleDialogSubmit,
                     KeyCode::Tab if plain_shortcut(key) => AppAction::ScaleDialogNextField,
                     KeyCode::BackTab if plain_shortcut(key) => AppAction::ScaleDialogPrevField,
-                    KeyCode::Backspace => AppAction::ScaleDialogBackspace,
+                    KeyCode::Backspace if edit_key(key) => AppAction::ScaleDialogBackspace,
                     KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up
                         if plain_shortcut(key) =>
                     {
@@ -3090,22 +3094,22 @@ impl AppState {
             KeyCode::Enter if plain_shortcut(key) => {
                 self.is_search_mode = false;
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if edit_key(key) => {
                 delete_char_left_at_cursor(&mut self.search_query, &mut self.search_cursor);
             }
-            KeyCode::Delete => {
+            KeyCode::Delete if edit_key(key) => {
                 delete_char_right_at_cursor(&mut self.search_query, self.search_cursor);
             }
-            KeyCode::Left => {
+            KeyCode::Left if edit_key(key) => {
                 move_cursor_left(&mut self.search_cursor);
             }
-            KeyCode::Right => {
+            KeyCode::Right if edit_key(key) => {
                 move_cursor_right(&mut self.search_cursor, &self.search_query);
             }
-            KeyCode::Home => {
+            KeyCode::Home if edit_key(key) => {
                 move_cursor_home(&mut self.search_cursor);
             }
-            KeyCode::End => {
+            KeyCode::End if edit_key(key) => {
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
             }
             KeyCode::Char('u') if ctrl_shortcut(key) => {
