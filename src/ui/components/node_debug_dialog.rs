@@ -12,28 +12,13 @@ use crate::k8s::{
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
 use crate::ui::components::render_vertical_scrollbar;
+use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
     delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
     move_cursor_home, move_cursor_left, move_cursor_right, truncate_line_content, truncate_message,
     wrap_span_groups, wrapped_line_count,
 };
-
-fn plain_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
-}
-
-fn edit_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty()
-}
-
-fn ctrl_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && key
-            .modifiers
-            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-            .is_empty()
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {

@@ -32,14 +32,16 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crossterm::event::{Event, EventStream, KeyCode, KeyModifiers};
+use crossterm::event::{Event, EventStream, KeyCode};
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
+use kubectui::ui::{
+    components::port_forward_dialog::PortForwardDialog, keybindings::plain_shortcut,
+};
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
     ai_actions::{
@@ -88,10 +90,6 @@ type AllContainerLogsInfo = (
     ResourceRef,
 );
 
-fn plain_shortcut(key: crossterm::event::KeyEvent) -> bool {
-    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
-}
-
 fn should_handle_root_enter(key: crossterm::event::KeyEvent, app: &AppState) -> bool {
     key.code == KeyCode::Enter
         && plain_shortcut(key)
@@ -102,6 +100,15 @@ fn should_handle_root_enter(key: crossterm::event::KeyEvent, app: &AppState) -> 
         && !app.confirm_quit
         && app.detail_view.is_none()
         && app.focus != kubectui::app::Focus::Workbench
+}
+
+fn should_exit_extension_instances(key: crossterm::event::KeyEvent, app: &AppState) -> bool {
+    key.code == KeyCode::Esc
+        && plain_shortcut(key)
+        && app.view() == AppView::Extensions
+        && app.extension_in_instances
+        && app.detail_view.is_none()
+        && !app.is_search_mode()
 }
 
 fn watch_update_needs_flux_refresh(update: &WatchUpdate) -> bool {
@@ -5324,12 +5331,7 @@ pub(crate) async fn run_app_inner(
                     } else {
                         app.sidebar_activate()
                     }
-                } else if key.code == KeyCode::Esc
-                    && app.view() == AppView::Extensions
-                    && app.extension_in_instances
-                    && app.detail_view.is_none()
-                    && !app.is_search_mode()
-                {
+                } else if should_exit_extension_instances(key, &app) {
                     // Return from instances pane to CRD picker
                     app.extension_in_instances = false;
                     AppAction::None

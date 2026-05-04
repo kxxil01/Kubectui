@@ -1,6 +1,8 @@
 //! Port forward dialog and tunnel list UI with enhanced form validation
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+#[cfg(test)]
+use crossterm::event::KeyModifiers;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
@@ -10,25 +12,10 @@ use ratatui::{
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
 use crate::ui::components::{input_field::InputFieldWidget, render_vertical_scrollbar};
+use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
 use crate::ui::{
     bounded_popup_rect, table_window, truncate_message, wrap_span_groups, wrapped_line_count,
 };
-
-fn plain_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
-}
-
-fn edit_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty()
-}
-
-fn ctrl_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && key
-            .modifiers
-            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-            .is_empty()
-}
 
 /// Port forward dialog modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

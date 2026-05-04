@@ -2,6 +2,7 @@
 
 pub mod components;
 mod filter_cache;
+pub mod keybindings;
 pub mod profiling;
 mod render_cache;
 pub mod theme;

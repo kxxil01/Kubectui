@@ -1,6 +1,6 @@
 //! Command palette — fuzzy-search jump to any view with `:`.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Style},
@@ -18,6 +18,7 @@ use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
 use crate::ui::components::render_vertical_scrollbar;
+use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
 use crate::ui::theme::Theme;
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
@@ -33,22 +34,6 @@ const MAX_ACTIVITY_RESULTS: usize = 16;
 const MAX_RESOURCE_RESULTS: usize = 40;
 const COMPACT_PALETTE_WIDTH: u16 = 48;
 const COMPACT_PALETTE_HEIGHT: u16 = 12;
-
-fn plain_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
-}
-
-fn edit_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty()
-}
-
-fn ctrl_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && key
-            .modifiers
-            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-            .is_empty()
-}
 
 fn command_palette_popup(area: Rect) -> Rect {
     let preferred_width = (area.width * 2 / 5).clamp(44, 60);
