@@ -131,7 +131,7 @@ Press `?` in-app for the full list. Summary:
 | `W` | Save current workspace |
 | `{` / `}` | Previous / next saved workspace |
 | `Ctrl+y` / `Y` | Copy name / namespace+name |
-| `q` | Quit |
+| `Esc then Enter` | Quit |
 
 ### Resource actions
 
