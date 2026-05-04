@@ -20,8 +20,7 @@ use crate::ui::{
 };
 
 fn plain_shortcut(key: KeyEvent) -> bool {
-    !key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
 fn ctrl_shortcut(key: KeyEvent) -> bool {
@@ -189,7 +188,7 @@ impl NodeDebugDialogState {
                     self.error_message = None;
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char(c) if plain_shortcut(key) => {
                     insert_char_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor, c);
                     self.error_message = None;
                     return NodeDebugDialogEvent::None;
@@ -838,6 +837,21 @@ mod tests {
         state.handle_key(KeyEvent::from(KeyCode::Char('k')));
         state.handle_key(KeyEvent::from(KeyCode::Char('l')));
         assert_eq!(state.custom_image, "hjkl");
+    }
+
+    #[test]
+    fn custom_image_edit_ignores_alt_modified_chars() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = NodeDebugField::CustomImage;
+        state.custom_image = "busybox".to_string();
+        state.custom_image_cursor = state.custom_image.len();
+
+        let event = state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
+
+        assert_eq!(event, NodeDebugDialogEvent::None);
+        assert_eq!(state.custom_image, "busybox");
+        assert_eq!(state.custom_image_cursor, "busybox".len());
     }
 
     #[test]
