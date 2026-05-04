@@ -21,7 +21,11 @@ fn plain_shortcut(key: KeyEvent) -> bool {
 }
 
 fn ctrl_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && key
+            .modifiers
+            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+            .is_empty()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -925,25 +929,28 @@ mod tests {
     fn ctrl_alt_scroll_shortcuts_do_not_update_body_scroll() {
         let mut state = DebugContainerDialogState::new("api-0", "default");
 
-        for code in [
-            KeyCode::Char('j'),
-            KeyCode::Char('k'),
-            KeyCode::Char('d'),
-            KeyCode::Char('u'),
-            KeyCode::Down,
-            KeyCode::Up,
-            KeyCode::PageDown,
-            KeyCode::PageUp,
+        for modifiers in [
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+            KeyModifiers::CONTROL | KeyModifiers::META,
+            KeyModifiers::CONTROL | KeyModifiers::SUPER,
         ] {
-            assert_eq!(
-                state.handle_key(KeyEvent::new(
-                    code,
-                    KeyModifiers::CONTROL | KeyModifiers::ALT
-                )),
-                DebugContainerDialogEvent::None,
-                "{code:?}"
-            );
-            assert_eq!(state.body_scroll, 0, "{code:?}");
+            for code in [
+                KeyCode::Char('j'),
+                KeyCode::Char('k'),
+                KeyCode::Char('d'),
+                KeyCode::Char('u'),
+                KeyCode::Down,
+                KeyCode::Up,
+                KeyCode::PageDown,
+                KeyCode::PageUp,
+            ] {
+                assert_eq!(
+                    state.handle_key(KeyEvent::new(code, modifiers)),
+                    DebugContainerDialogEvent::None,
+                    "{code:?} {modifiers:?}"
+                );
+                assert_eq!(state.body_scroll, 0, "{code:?} {modifiers:?}");
+            }
         }
     }
 
