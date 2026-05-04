@@ -76,7 +76,7 @@ fn palette_resource_context(resource: ResourceRef) -> ResourceActionContext {
 }
 
 #[test]
-fn root_enter_shortcut_rejects_control_alt_modifiers() {
+fn root_enter_shortcut_rejects_modified_keys() {
     let mut app = AppState {
         focus: Focus::Content,
         view: AppView::Pods,
@@ -93,6 +93,14 @@ fn root_enter_shortcut_rejects_control_alt_modifiers() {
     ));
     assert!(!super::should_handle_root_enter(
         KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+        &app
+    ));
+    assert!(!super::should_handle_root_enter(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::SUPER),
+        &app
+    ));
+    assert!(!super::should_handle_root_enter(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::META),
         &app
     ));
 

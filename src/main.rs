@@ -89,8 +89,7 @@ type AllContainerLogsInfo = (
 );
 
 fn plain_shortcut(key: crossterm::event::KeyEvent) -> bool {
-    !key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
 fn should_handle_root_enter(key: crossterm::event::KeyEvent, app: &AppState) -> bool {

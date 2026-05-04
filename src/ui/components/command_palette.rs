@@ -35,8 +35,7 @@ const COMPACT_PALETTE_WIDTH: u16 = 48;
 const COMPACT_PALETTE_HEIGHT: u16 = 12;
 
 fn plain_shortcut(key: KeyEvent) -> bool {
-    !key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
 fn command_palette_popup(area: Rect) -> Rect {
@@ -1318,11 +1317,7 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Char(c)
-                if !key
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char(c) if plain_shortcut(key) => {
                 let selected_entry = self.selected_entry_anchor();
                 insert_char_at_cursor(&mut self.query, &mut self.query_cursor, c);
                 self.restore_selected_entry(selected_entry);
@@ -1949,7 +1944,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_modified_chars_do_not_edit_query() {
+    fn modified_chars_do_not_edit_query() {
         let mut p = CommandPalette::default();
         p.open();
         p.handle_key(KeyEvent::new(
@@ -1959,6 +1954,14 @@ mod tests {
         p.handle_key(KeyEvent::new(
             KeyCode::Char('j'),
             crossterm::event::KeyModifiers::CONTROL,
+        ));
+        p.handle_key(KeyEvent::new(
+            KeyCode::Char('k'),
+            crossterm::event::KeyModifiers::ALT,
+        ));
+        p.handle_key(KeyEvent::new(
+            KeyCode::Char('m'),
+            crossterm::event::KeyModifiers::META,
         ));
         assert!(p.query.is_empty());
     }

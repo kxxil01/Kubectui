@@ -21,8 +21,7 @@ use crate::{
 };
 
 fn plain_shortcut(key: KeyEvent) -> bool {
-    !key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
 fn copy_resource_name_shortcut(key: KeyEvent) -> bool {
@@ -330,7 +329,7 @@ impl AppState {
                             tab.subject_input_error = None;
                             AppAction::None
                         }
-                        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(ch) if plain_shortcut(key) => {
                             tab.subject_input.add_char(ch);
                             tab.subject_input_error = None;
                             AppAction::None
@@ -817,7 +816,7 @@ impl AppState {
                             clear_input_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
                             AppAction::None
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(c) if plain_shortcut(key) => {
                             insert_char_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor, c);
                             AppAction::None
                         }
@@ -945,7 +944,7 @@ impl AppState {
                             );
                             AppAction::None
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(c) if plain_shortcut(key) => {
                             insert_char_at_cursor(
                                 &mut tab.viewer.search_input,
                                 &mut tab.viewer.search_cursor,
@@ -1002,7 +1001,7 @@ impl AppState {
                             );
                             AppAction::None
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(c) if plain_shortcut(key) => {
                             insert_char_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 &mut tab.viewer.time_jump_cursor,
@@ -1183,7 +1182,7 @@ impl AppState {
                             );
                             AppAction::None
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(c) if plain_shortcut(key) => {
                             insert_char_at_cursor(
                                 &mut tab.filter_input,
                                 &mut tab.filter_input_cursor,
@@ -1234,7 +1233,7 @@ impl AppState {
                             );
                             AppAction::None
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(c) if plain_shortcut(key) => {
                             insert_char_at_cursor(
                                 &mut tab.time_jump_input,
                                 &mut tab.time_jump_cursor,
@@ -1436,7 +1435,7 @@ impl AppState {
                             tab.scroll = (tab.scroll + 10).min(tab.lines.len().saturating_sub(1));
                             AppAction::None
                         }
-                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char(c) if plain_shortcut(key) => {
                             insert_char_at_cursor(&mut tab.input, &mut tab.input_cursor, c);
                             AppAction::None
                         }
@@ -1704,7 +1703,7 @@ impl AppState {
                         tab.refresh_filter();
                         AppAction::None
                     }
-                    KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    KeyCode::Char(ch) if plain_shortcut(key) => {
                         tab.filter.add_char(ch);
                         tab.refresh_filter();
                         AppAction::None
@@ -2063,7 +2062,7 @@ impl AppState {
                     dialog.clear_active();
                     AppAction::None
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char(c) if plain_shortcut(key) => {
                     dialog.add_char(c);
                     AppAction::None
                 }
@@ -3097,7 +3096,7 @@ impl AppState {
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.clear_search_query();
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char(c) if plain_shortcut(key) => {
                 insert_char_at_cursor(&mut self.search_query, &mut self.search_cursor, c);
             }
             _ => {}

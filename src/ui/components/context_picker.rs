@@ -16,8 +16,7 @@ use ratatui::{
 };
 
 fn plain_shortcut(key: KeyEvent) -> bool {
-    !key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
 /// Actions emitted by context picker keyboard handling.
@@ -199,7 +198,7 @@ impl ContextPicker {
                 }
                 ContextPickerAction::None
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char(c) if plain_shortcut(key) => {
                 let selected_context = self
                     .selected_context_from_indices(&filtered)
                     .map(ToOwned::to_owned)
@@ -587,6 +586,20 @@ mod tests {
         picker.handle_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
 
         assert_eq!(picker.search_query, ":");
+    }
+
+    #[test]
+    fn context_picker_alt_modified_chars_do_not_edit_search() {
+        let mut picker = ContextPicker::new(
+            vec!["ctx-a".to_string(), "ctx-b".to_string()],
+            Some("ctx-a".to_string()),
+        );
+        picker.open();
+
+        picker.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT));
+
+        assert!(picker.search_query.is_empty());
+        assert_eq!(picker.selected_index, 0);
     }
 
     #[test]
