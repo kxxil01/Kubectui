@@ -2149,7 +2149,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             "[T] jump-to-time  ",
             "[C] correlate  ",
             "[J] json  ",
-            "[ / ] presets  ",
+            "[[]/[]] presets  ",
             "[M] save preset  ",
             "[n/N] next/prev  ",
             "[S] save",
@@ -2606,7 +2606,10 @@ fn render_workload_logs_tab(
                 vec![Span::styled("[J] json  ", theme.keybind_desc_style())],
                 vec![Span::styled("[p] pod  ", theme.keybind_desc_style())],
                 vec![Span::styled("[c] container  ", theme.keybind_desc_style())],
-                vec![Span::styled("[ / ] presets  ", theme.keybind_desc_style())],
+                vec![Span::styled(
+                    "[[]/[]] presets  ",
+                    theme.keybind_desc_style(),
+                )],
                 vec![Span::styled(
                     "[M] save preset  ",
                     theme.keybind_desc_style(),
@@ -4155,6 +4158,55 @@ mod tests {
         assert!(rendered.contains("[repaired] ****"));
         assert!(!rendered.contains("ff fe fd 00"));
         assert!(!rendered.contains("literal-secret"));
+    }
+
+    #[test]
+    fn pod_log_footer_names_bracket_preset_keys() {
+        let backend = TestBackend::new(120, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let tab = WorkbenchTab::new(
+            1,
+            WorkbenchTabState::PodLogs(PodLogsTabState::new(ResourceRef::Pod(
+                "api-0".into(),
+                "default".into(),
+            ))),
+        );
+
+        terminal
+            .draw(|frame| render_logs_tab(frame, Rect::new(0, 0, 120, 12), &tab, 0))
+            .expect("pod logs tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("[[]/[]] presets"));
+        assert!(!rendered.contains("[ / ] presets"));
+    }
+
+    #[test]
+    fn workload_log_footer_names_bracket_preset_keys() {
+        let backend = TestBackend::new(120, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 7);
+
+        terminal
+            .draw(|frame| render_workload_logs_tab(frame, Rect::new(0, 0, 120, 12), &tab))
+            .expect("workload logs tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("[[]/[]] presets"));
+        assert!(!rendered.contains("[ / ] presets"));
     }
 
     #[test]
