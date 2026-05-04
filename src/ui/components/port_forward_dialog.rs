@@ -18,6 +18,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn edit_key(key: KeyEvent) -> bool {
+    key.modifiers.is_empty()
+}
+
 fn ctrl_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && key
@@ -178,29 +182,29 @@ impl PortForwardDialog {
                     PortForwardAction::None
                 }
             },
-            KeyCode::Backspace => {
+            KeyCode::Backspace if edit_key(key) => {
                 self.current_field_mut().backspace_char();
                 self.error = None;
                 PortForwardAction::None
             }
-            KeyCode::Delete => {
+            KeyCode::Delete if edit_key(key) => {
                 self.current_field_mut().delete_char();
                 self.error = None;
                 PortForwardAction::None
             }
-            KeyCode::Home => {
+            KeyCode::Home if edit_key(key) => {
                 self.current_field_mut().cursor_home();
                 PortForwardAction::None
             }
-            KeyCode::End => {
+            KeyCode::End if edit_key(key) => {
                 self.current_field_mut().cursor_end();
                 PortForwardAction::None
             }
-            KeyCode::Left => {
+            KeyCode::Left if edit_key(key) => {
                 self.current_field_mut().cursor_left();
                 PortForwardAction::None
             }
-            KeyCode::Right => {
+            KeyCode::Right if edit_key(key) => {
                 self.current_field_mut().cursor_right();
                 PortForwardAction::None
             }
@@ -914,7 +918,7 @@ mod tests {
         let mut dialog = PortForwardDialog::new();
         dialog.focus = FormField::PodName;
         dialog.pod_name_field.value = "api".to_string();
-        dialog.pod_name_field.cursor_pos = dialog.pod_name_field.value.chars().count();
+        dialog.pod_name_field.cursor_pos = 2;
 
         dialog.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
         dialog.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
@@ -922,8 +926,20 @@ mod tests {
             KeyCode::Char('u'),
             KeyModifiers::CONTROL | KeyModifiers::ALT,
         ));
+        for code in [
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Home,
+            KeyCode::End,
+        ] {
+            dialog.handle_key(KeyEvent::new(code, KeyModifiers::ALT));
+            dialog.handle_key(KeyEvent::new(code, KeyModifiers::CONTROL));
+        }
 
         assert_eq!(dialog.pod_name_field.value, "api");
+        assert_eq!(dialog.pod_name_field.cursor_pos, 2);
     }
 
     #[test]

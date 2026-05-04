@@ -23,6 +23,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn edit_key(key: KeyEvent) -> bool {
+    key.modifiers.is_empty()
+}
+
 fn ctrl_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && key
@@ -161,29 +165,29 @@ impl NodeDebugDialogState {
                     return NodeDebugDialogEvent::None;
                 }
                 KeyCode::Enter if plain_shortcut(key) => return self.activate_focused(),
-                KeyCode::Backspace => {
+                KeyCode::Backspace if edit_key(key) => {
                     self.delete_custom_image_left();
                     self.error_message = None;
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Delete => {
+                KeyCode::Delete if edit_key(key) => {
                     self.delete_custom_image_right();
                     self.error_message = None;
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Left => {
+                KeyCode::Left if edit_key(key) => {
                     move_cursor_left(&mut self.custom_image_cursor);
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Right => {
+                KeyCode::Right if edit_key(key) => {
                     move_cursor_right(&mut self.custom_image_cursor, &self.custom_image);
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Home => {
+                KeyCode::Home if edit_key(key) => {
                     move_cursor_home(&mut self.custom_image_cursor);
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::End => {
+                KeyCode::End if edit_key(key) => {
                     move_cursor_end(&mut self.custom_image_cursor, &self.custom_image);
                     return NodeDebugDialogEvent::None;
                 }
@@ -1112,6 +1116,36 @@ mod tests {
 
         assert_eq!(state.custom_image, "ab");
         assert_eq!(state.custom_image_cursor, 1);
+    }
+
+    #[test]
+    fn custom_image_editor_ignores_modified_edit_keys() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = NodeDebugField::CustomImage;
+        state.custom_image = "busybox".to_string();
+        state.custom_image_cursor = 4;
+
+        for code in [
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Home,
+            KeyCode::End,
+        ] {
+            assert_eq!(
+                state.handle_key(KeyEvent::new(code, KeyModifiers::ALT)),
+                NodeDebugDialogEvent::None
+            );
+            assert_eq!(
+                state.handle_key(KeyEvent::new(code, KeyModifiers::CONTROL)),
+                NodeDebugDialogEvent::None
+            );
+        }
+
+        assert_eq!(state.custom_image, "busybox");
+        assert_eq!(state.custom_image_cursor, 4);
     }
 
     #[test]

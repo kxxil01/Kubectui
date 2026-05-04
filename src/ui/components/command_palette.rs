@@ -38,6 +38,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn edit_key(key: KeyEvent) -> bool {
+    key.modifiers.is_empty()
+}
+
 fn ctrl_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && key
@@ -1280,7 +1284,7 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if edit_key(key) => {
                 if self.query_cursor > 0 {
                     let selected_entry = self.selected_entry_anchor();
                     delete_char_left_at_cursor(&mut self.query, &mut self.query_cursor);
@@ -1288,7 +1292,7 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Delete => {
+            KeyCode::Delete if edit_key(key) => {
                 let previous_len = self.query.len();
                 let selected_entry = self.selected_entry_anchor();
                 delete_char_right_at_cursor(&mut self.query, self.query_cursor);
@@ -1297,19 +1301,19 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Left => {
+            KeyCode::Left if edit_key(key) => {
                 move_cursor_left(&mut self.query_cursor);
                 CommandPaletteAction::None
             }
-            KeyCode::Right => {
+            KeyCode::Right if edit_key(key) => {
                 move_cursor_right(&mut self.query_cursor, &self.query);
                 CommandPaletteAction::None
             }
-            KeyCode::Home => {
+            KeyCode::Home if edit_key(key) => {
                 move_cursor_home(&mut self.query_cursor);
                 CommandPaletteAction::None
             }
-            KeyCode::End => {
+            KeyCode::End if edit_key(key) => {
                 move_cursor_end(&mut self.query_cursor, &self.query);
                 CommandPaletteAction::None
             }
@@ -1974,7 +1978,7 @@ mod tests {
         let mut p = CommandPalette::default();
         p.open();
         p.query = "seed".to_string();
-        p.query_cursor = p.query.len();
+        p.query_cursor = 2;
         p.handle_key(KeyEvent::new(
             KeyCode::Char('u'),
             crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::ALT,
@@ -1991,7 +1995,19 @@ mod tests {
             KeyCode::Char('m'),
             crossterm::event::KeyModifiers::META,
         ));
+        for code in [
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Home,
+            KeyCode::End,
+        ] {
+            p.handle_key(KeyEvent::new(code, KeyModifiers::ALT));
+            p.handle_key(KeyEvent::new(code, KeyModifiers::CONTROL));
+        }
         assert_eq!(p.query, "seed");
+        assert_eq!(p.query_cursor, 2);
     }
 
     #[test]
