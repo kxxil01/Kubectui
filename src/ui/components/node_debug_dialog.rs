@@ -187,7 +187,7 @@ impl NodeDebugDialogState {
                     move_cursor_end(&mut self.custom_image_cursor, &self.custom_image);
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('u') if ctrl_shortcut(key) => {
                     clear_input_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor);
                     self.error_message = None;
                     return NodeDebugDialogEvent::None;
@@ -852,8 +852,13 @@ mod tests {
         state.custom_image_cursor = state.custom_image.len();
 
         let event = state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
+        let clear_event = state.handle_key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
 
         assert_eq!(event, NodeDebugDialogEvent::None);
+        assert_eq!(clear_event, NodeDebugDialogEvent::None);
         assert_eq!(state.custom_image, "busybox");
         assert_eq!(state.custom_image_cursor, "busybox".len());
     }

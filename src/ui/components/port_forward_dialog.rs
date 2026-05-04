@@ -18,6 +18,14 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn ctrl_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && key
+            .modifiers
+            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+            .is_empty()
+}
+
 /// Port forward dialog modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortForwardMode {
@@ -196,7 +204,7 @@ impl PortForwardDialog {
                 self.current_field_mut().cursor_right();
                 PortForwardAction::None
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') if ctrl_shortcut(key) => {
                 self.current_field_mut().clear();
                 self.error = None;
                 PortForwardAction::None
@@ -910,6 +918,10 @@ mod tests {
 
         dialog.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
         dialog.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
+        dialog.handle_key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
 
         assert_eq!(dialog.pod_name_field.value, "api");
     }
