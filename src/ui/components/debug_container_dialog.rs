@@ -9,7 +9,9 @@ use ratatui::{
 
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
+use crate::ui::keybindings::{
+    CtrlScrollAction, ctrl_scroll_action, ctrl_shortcut, edit_key, plain_shortcut,
+};
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
     delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
@@ -187,26 +189,18 @@ impl DebugContainerDialogState {
             }
         }
 
-        if ctrl_shortcut(key) {
-            match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
-                    self.body_scroll = self.body_scroll.saturating_add(1);
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    self.body_scroll = self.body_scroll.saturating_sub(1);
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::Char('d') | KeyCode::PageDown => {
+        if let Some(action) = ctrl_scroll_action(key) {
+            match action {
+                CtrlScrollAction::LineDown => self.body_scroll = self.body_scroll.saturating_add(1),
+                CtrlScrollAction::LineUp => self.body_scroll = self.body_scroll.saturating_sub(1),
+                CtrlScrollAction::PageDown => {
                     self.body_scroll = self.body_scroll.saturating_add(10);
-                    return DebugContainerDialogEvent::None;
                 }
-                KeyCode::Char('u') | KeyCode::PageUp => {
+                CtrlScrollAction::PageUp => {
                     self.body_scroll = self.body_scroll.saturating_sub(10);
-                    return DebugContainerDialogEvent::None;
                 }
-                _ => {}
             }
+            return DebugContainerDialogEvent::None;
         }
 
         match key.code {

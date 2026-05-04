@@ -12,7 +12,9 @@ use crate::k8s::{
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
+use crate::ui::keybindings::{
+    CtrlScrollAction, ctrl_scroll_action, ctrl_shortcut, edit_key, plain_shortcut,
+};
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
     delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
@@ -193,26 +195,22 @@ impl NodeDebugDialogState {
             }
         }
 
-        if ctrl_shortcut(key) {
-            match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
+        if let Some(action) = ctrl_scroll_action(key) {
+            match action {
+                CtrlScrollAction::LineDown => {
                     self.notes_scroll = self.notes_scroll.saturating_add(1);
-                    return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                CtrlScrollAction::LineUp => {
                     self.notes_scroll = self.notes_scroll.saturating_sub(1);
-                    return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Char('d') | KeyCode::PageDown => {
+                CtrlScrollAction::PageDown => {
                     self.notes_scroll = self.notes_scroll.saturating_add(10);
-                    return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Char('u') | KeyCode::PageUp => {
+                CtrlScrollAction::PageUp => {
                     self.notes_scroll = self.notes_scroll.saturating_sub(10);
-                    return NodeDebugDialogEvent::None;
                 }
-                _ => {}
             }
+            return NodeDebugDialogEvent::None;
         }
 
         match key.code {
