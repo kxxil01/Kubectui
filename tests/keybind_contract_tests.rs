@@ -510,6 +510,19 @@ fn readme_lists_canonical_workbench_tab_keys() {
 }
 
 #[test]
+fn readme_lists_exact_quit_sequence() {
+    let readme = include_str!("../README.md");
+    assert!(
+        readme.contains("| `Esc then Enter` | Quit |"),
+        "README must list runtime quit sequence"
+    );
+    assert!(
+        !readme.contains("| `q` | Quit |"),
+        "README must not imply q exits"
+    );
+}
+
+#[test]
 fn workspace_hotkey_targets_route_expected_actions() {
     let mut app = AppState::default();
     app.focus = Focus::Content;
