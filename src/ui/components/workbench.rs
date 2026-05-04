@@ -2476,6 +2476,12 @@ struct WorkloadLogFilterSummary {
     correlated_pods: Vec<String>,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WorkloadLogRenderWindow {
+    start: usize,
+    indices: Vec<usize>,
+}
+
 fn summarize_workload_log_filters(
     tab: &crate::workbench::WorkloadLogsTabState,
     now: crate::time::AppTimestamp,
@@ -2500,6 +2506,40 @@ fn summarize_workload_log_filters(
     }
 
     summary
+}
+
+fn workload_log_render_window(
+    tab: &crate::workbench::WorkloadLogsTabState,
+    now: crate::time::AppTimestamp,
+    total: usize,
+    viewport_rows: usize,
+) -> WorkloadLogRenderWindow {
+    if total == 0 {
+        return WorkloadLogRenderWindow::default();
+    }
+
+    let visible = viewport_rows.max(1).min(total);
+    let start = tab.scroll.min(total.saturating_sub(visible));
+    let end = start + visible;
+    let mut indices = Vec::with_capacity(end - start);
+    let mut ordinal = 0usize;
+
+    for (index, line) in tab.lines.iter().enumerate() {
+        if !tab.matches_filter_at(line, now) {
+            continue;
+        }
+
+        if ordinal >= start && ordinal < end {
+            indices.push(index);
+        }
+        ordinal += 1;
+
+        if ordinal >= end {
+            break;
+        }
+    }
+
+    WorkloadLogRenderWindow { start, indices }
 }
 
 fn workload_correlation_summary(summary: &WorkloadLogFilterSummary) -> Option<String> {
@@ -2745,13 +2785,11 @@ fn render_workload_logs_tab(
     }
 
     let viewport_rows = content_area.height.saturating_sub(1) as usize;
-    let window = scroll_window(total, tab.scroll, viewport_rows);
-    let lines: Vec<Line> = tab
-        .lines
+    let window = workload_log_render_window(tab, now, total, viewport_rows);
+    let lines: Vec<Line> = window
+        .indices
         .iter()
-        .filter(|line| tab.matches_filter_at(line, now))
-        .skip(window.start)
-        .take(window.end.saturating_sub(window.start))
+        .filter_map(|index| tab.lines.get(*index))
         .map(|line| {
             let badge = if line.is_stderr {
                 theme.badge_warning_style()
@@ -3388,6 +3426,7 @@ mod tests {
         render_decoded_secret_tab, render_events_tab, render_exec_tab, render_extension_output_tab,
         render_helm_history_tab, render_helm_values_diff, render_logs_tab, render_rollout_tab,
         render_workload_logs_tab, render_yaml_tab, scroll_window, scroll_window_scrollbar_position,
+        summarize_workload_log_filters, workload_log_render_window,
     };
     use crate::{
         action_history::{ActionKind, ActionStatus},
@@ -4018,6 +4057,59 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("needle"));
+    }
+
+    #[test]
+    fn workload_log_render_window_collects_only_visible_filtered_rows() {
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 1);
+        tab.lines = vec![
+            crate::workbench::WorkloadLogLine {
+                pod_name: "api-0".into(),
+                container_name: "main".into(),
+                entry: LogEntry::from_raw("skip one"),
+                is_stderr: false,
+            },
+            crate::workbench::WorkloadLogLine {
+                pod_name: "api-1".into(),
+                container_name: "main".into(),
+                entry: LogEntry::from_raw("ready first"),
+                is_stderr: false,
+            },
+            crate::workbench::WorkloadLogLine {
+                pod_name: "api-0".into(),
+                container_name: "main".into(),
+                entry: LogEntry::from_raw("skip two"),
+                is_stderr: false,
+            },
+            crate::workbench::WorkloadLogLine {
+                pod_name: "api-2".into(),
+                container_name: "main".into(),
+                entry: LogEntry::from_raw("ready second"),
+                is_stderr: false,
+            },
+            crate::workbench::WorkloadLogLine {
+                pod_name: "api-3".into(),
+                container_name: "main".into(),
+                entry: LogEntry::from_raw("ready third"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".into();
+        tab.compiled_text_filter = crate::log_investigation::compile_query(
+            "ready",
+            crate::log_investigation::LogQueryMode::Substring,
+        )
+        .expect("substring filter should compile");
+        tab.scroll = 1;
+        let now = crate::time::now();
+
+        let summary = summarize_workload_log_filters(&tab, now);
+        let window = workload_log_render_window(&tab, now, summary.total, 2);
+
+        assert_eq!(summary.total, 3);
+        assert_eq!(window.start, 1);
+        assert_eq!(window.indices, vec![3, 4]);
     }
 
     #[test]
