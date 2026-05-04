@@ -58,7 +58,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("r", "Refresh data"),
             ("T", "Cycle theme"),
             ("b", "Toggle workbench"),
-            ("[ / ]", "Previous / next workbench tab"),
+            (", / .", "Previous / next workbench tab"),
             ("Ctrl+W", "Close workbench tab"),
             ("Ctrl+↑ / Ctrl+↓", "Resize workbench"),
         ],
