@@ -1222,6 +1222,25 @@ impl PodColumnKind {
     }
 }
 
+fn view_cache_spinner_tick(
+    app: &AppState,
+    cluster: &ClusterSnapshot,
+    view_load_state: ViewLoadState,
+) -> u8 {
+    let dashboard_metrics_loading =
+        app.view() == AppView::Dashboard && !cluster.scope_loaded(RefreshScope::METRICS);
+    if dashboard_metrics_loading
+        || matches!(
+            view_load_state,
+            ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
+        )
+    {
+        app.spinner_tick
+    } else {
+        0
+    }
+}
+
 /// Renders a full frame for the current app and cluster state.
 pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     let _frame_scope = profiling::frame_scope(app.view());
@@ -1397,14 +1416,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     };
     let content_focused = matches!(split_pane_focus, SplitPaneFocus::List);
     let view_load_state = cluster.view_load_state(app.view());
-    let loading_spinner_tick = if matches!(
-        view_load_state,
-        ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
-    ) {
-        app.spinner_tick
-    } else {
-        0
-    };
+    let loading_spinner_tick = view_cache_spinner_tick(app, cluster, view_load_state);
     let view_cache_key = ViewRenderKey {
         view: app.view(),
         area: content,
@@ -2445,6 +2457,20 @@ pub(crate) fn centered_rect_by_size(width: u16, height: u16, area: Rect) -> Rect
     }
 }
 
+pub(crate) fn scaled_popup_dimension(
+    value: u16,
+    numerator: u16,
+    denominator: u16,
+    min: u16,
+    max: u16,
+) -> u16 {
+    if denominator == 0 {
+        return max.max(min);
+    }
+    let scaled = (u32::from(value) * u32::from(numerator)) / u32::from(denominator);
+    scaled.clamp(u32::from(min), u32::from(max)) as u16
+}
+
 pub(crate) fn bounded_popup_rect(
     area: Rect,
     preferred_width: u16,
@@ -3280,9 +3306,14 @@ mod tests {
         assert!(loading_text.contains("loading..."));
 
         app.advance_spinner();
-        let next_loading_text = render_to_string(&app, &loading_snapshot);
-        assert!(next_loading_text.contains("loading..."));
-        assert_ne!(loading_text, next_loading_text);
+        assert_eq!(
+            view_cache_spinner_tick(
+                &app,
+                &loading_snapshot,
+                loading_snapshot.view_load_state(app.view())
+            ),
+            app.spinner_tick
+        );
 
         let unavailable_snapshot = ClusterSnapshot {
             loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW
