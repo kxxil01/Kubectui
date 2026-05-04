@@ -231,6 +231,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             ),
             Line::from(""),
             Line::from("  [H] opens action history."),
+            Line::from("  [.] next tab, [,] previous tab."),
             Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
         ]),
         area,

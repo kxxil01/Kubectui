@@ -127,6 +127,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Workbench (focused)",
         &[
             ("z", "Maximize / restore"),
+            (". / ,", "Next / previous workbench tab"),
             ("Ctrl+Tab / Ctrl+Shift+Tab", "Next / previous workbench tab"),
             ("Ctrl+W", "Close active workbench tab"),
             ("j / k", "Scroll down / up"),
