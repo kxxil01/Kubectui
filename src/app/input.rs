@@ -2556,7 +2556,8 @@ impl AppState {
                     .as_ref()
                     .filter(|detail| !detail.has_confirmation_dialog())
                     .and_then(DetailViewState::selected_detail_resource)
-                    .is_some() =>
+                    .is_some()
+                    && plain_shortcut(key) =>
             {
                 self.detail_view
                     .as_ref()

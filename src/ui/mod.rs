@@ -2445,6 +2445,20 @@ pub(crate) fn centered_rect_by_size(width: u16, height: u16, area: Rect) -> Rect
     }
 }
 
+pub(crate) fn scaled_popup_dimension(
+    value: u16,
+    numerator: u16,
+    denominator: u16,
+    min: u16,
+    max: u16,
+) -> u16 {
+    if denominator == 0 {
+        return max.max(min);
+    }
+    let scaled = (u32::from(value) * u32::from(numerator)) / u32::from(denominator);
+    scaled.clamp(u32::from(min), u32::from(max)) as u16
+}
+
 pub(crate) fn bounded_popup_rect(
     area: Rect,
     preferred_width: u16,

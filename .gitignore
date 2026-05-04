@@ -30,6 +30,7 @@ debug/
 
 # Serena (local cache, overlays, and ad-hoc memories)
 .serena/cache/
+.serena/logs/
 .serena/project.yml
 .serena/project.local.yml
 .serena/memories/**

@@ -36,7 +36,7 @@ const COMPACT_PALETTE_WIDTH: u16 = 48;
 const COMPACT_PALETTE_HEIGHT: u16 = 12;
 
 fn command_palette_popup(area: Rect) -> Rect {
-    let preferred_width = (area.width * 2 / 5).clamp(44, 60);
+    let preferred_width = crate::ui::scaled_popup_dimension(area.width, 2, 5, 44, 60);
     let preferred_height = (area.height / 2).clamp(16, 24);
     let popup = crate::ui::bounded_popup_rect(area, preferred_width, preferred_height, 1, 1);
     Rect {
@@ -3021,6 +3021,15 @@ mod tests {
         let popup = command_palette_popup(Rect::new(0, 0, 40, 10));
         assert!(popup.width <= 40);
         assert!(popup.height <= 10);
+    }
+
+    #[test]
+    fn command_palette_popup_handles_max_terminal_dimensions() {
+        let area = Rect::new(0, 0, u16::MAX, u16::MAX);
+        let popup = command_palette_popup(area);
+
+        assert!(popup.width <= area.width);
+        assert!(popup.height <= area.height);
     }
 
     #[test]
