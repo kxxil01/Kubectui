@@ -2352,7 +2352,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             )
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines), log_area);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
     render_scrollbar(frame, log_area, log_window.total, log_window.cursor);
 }
 
@@ -2781,7 +2781,10 @@ fn render_workload_logs_tab(
             Line::from(spans)
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines), content_area);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        content_area,
+    );
     render_scroll_window_scrollbar(frame, content_area, total, viewport_rows, window.start);
 }
 
@@ -3924,6 +3927,34 @@ mod tests {
     }
 
     #[test]
+    fn pod_logs_body_wraps_long_lines_on_narrow_width() {
+        let backend = TestBackend::new(44, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab_state =
+            PodLogsTabState::new(ResourceRef::Pod("api-0".into(), "default".into()));
+        tab_state.viewer.container_name = "main".into();
+        tab_state
+            .viewer
+            .lines
+            .push(LogEntry::from_raw("alpha beta gamma delta epsilon zeta"));
+        let tab = WorkbenchTab::new(1, WorkbenchTabState::PodLogs(tab_state));
+
+        terminal
+            .draw(|frame| render_logs_tab(frame, Rect::new(0, 0, 44, 12), &tab, 0))
+            .expect("pod logs should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("alpha beta gamma"));
+        assert!(rendered.contains("epsilon zeta"));
+    }
+
+    #[test]
     fn workload_logs_header_renders_on_narrow_width() {
         let backend = TestBackend::new(72, 12);
         let mut terminal = Terminal::new(backend).expect("terminal should initialize");
@@ -3978,6 +4009,35 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("needle"));
+    }
+
+    #[test]
+    fn workload_logs_body_wraps_long_lines_on_narrow_width() {
+        let backend = TestBackend::new(48, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 1);
+        tab.loading = false;
+        tab.push_line(crate::workbench::WorkloadLogLine {
+            pod_name: "api-0".into(),
+            container_name: "main".into(),
+            entry: LogEntry::from_raw("alpha beta gamma delta epsilon zeta"),
+            is_stderr: false,
+        });
+
+        terminal
+            .draw(|frame| render_workload_logs_tab(frame, Rect::new(0, 0, 48, 12), &tab))
+            .expect("workload logs should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("alpha beta gamma"));
+        assert!(rendered.contains("epsilon zeta"));
     }
 
     #[test]
