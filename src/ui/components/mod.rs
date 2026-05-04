@@ -312,6 +312,21 @@ fn cached_status_line(
     built
 }
 
+pub fn status_bar_height(width: u16, message: &str, available_height: u16) -> u16 {
+    let max_height = available_height.saturating_sub(11).clamp(2, 6);
+    if width <= 2 || max_height <= 2 {
+        return 2;
+    }
+
+    let text_width = usize::from(width.saturating_sub(2).max(1));
+    let content_width = 2 + message.chars().count();
+    let wrapped_rows = content_width.max(1).div_ceil(text_width);
+    if wrapped_rows <= 1 {
+        return 2;
+    }
+    (wrapped_rows as u16).saturating_add(2).clamp(2, max_height)
+}
+
 fn cached_sidebar_lines(
     theme_index: u8,
     active: AppView,
@@ -676,7 +691,9 @@ pub fn render_status_bar_with_overlay_mask(
         })
         .style(Style::default().bg(theme.statusbar_bg));
 
-    let widget = Paragraph::new((*text).clone()).block(block);
+    let widget = Paragraph::new((*text).clone())
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 
     STATUS_RENDERED.with(|cell| {
