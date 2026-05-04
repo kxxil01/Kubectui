@@ -540,6 +540,30 @@ fn resource_template_dialog_ctrl_u_clears_active_field() {
 }
 
 #[test]
+fn resource_template_dialog_modified_ctrl_u_does_not_clear_active_field() {
+    let mut app = AppState::default();
+    app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(
+        ResourceTemplateKind::Deployment,
+        "default",
+    ));
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('u'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ));
+
+    assert_eq!(action, AppAction::None);
+    assert_eq!(
+        app.resource_template_dialog
+            .as_ref()
+            .expect("dialog should remain open")
+            .values
+            .name,
+        "sample-app"
+    );
+}
+
+#[test]
 fn resource_template_dialog_modified_navigation_keys_do_not_move_focus() {
     let mut app = AppState::default();
     app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(
@@ -589,6 +613,45 @@ fn resource_template_dialog_alt_modified_chars_do_not_edit_fields() {
             .name,
         "sample-app"
     );
+}
+
+#[test]
+fn resource_template_dialog_modified_enter_does_not_submit_or_cancel() {
+    let mut submit = AppState::default();
+    submit.resource_template_dialog =
+        Some(crate::ui::components::ResourceTemplateDialogState::new(
+            ResourceTemplateKind::Deployment,
+            "default",
+        ));
+    submit
+        .resource_template_dialog
+        .as_mut()
+        .expect("dialog should exist")
+        .focus_field = crate::ui::components::ResourceTemplateField::CreateBtn;
+
+    assert_eq!(
+        submit.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        AppAction::None
+    );
+    assert!(submit.resource_template_dialog.is_some());
+
+    let mut cancel = AppState::default();
+    cancel.resource_template_dialog =
+        Some(crate::ui::components::ResourceTemplateDialogState::new(
+            ResourceTemplateKind::Deployment,
+            "default",
+        ));
+    cancel
+        .resource_template_dialog
+        .as_mut()
+        .expect("dialog should exist")
+        .focus_field = crate::ui::components::ResourceTemplateField::CancelBtn;
+
+    assert_eq!(
+        cancel.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        AppAction::None
+    );
+    assert!(cancel.resource_template_dialog.is_some());
 }
 
 #[test]

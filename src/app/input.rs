@@ -332,7 +332,7 @@ impl AppState {
                         KeyCode::Enter if plain_shortcut(key) => {
                             AppAction::ApplyAccessReviewSubject
                         }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('u') if ctrl_shortcut(key) => {
                             tab.subject_input.clear();
                             tab.subject_input_error = None;
                             AppAction::None
@@ -820,7 +820,7 @@ impl AppState {
                             move_cursor_end(&mut tab.edit_cursor, &tab.edit_input);
                             AppAction::None
                         }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('u') if ctrl_shortcut(key) => {
                             clear_input_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
                             AppAction::None
                         }
@@ -945,7 +945,7 @@ impl AppState {
                             );
                             AppAction::None
                         }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('u') if ctrl_shortcut(key) => {
                             clear_input_at_cursor(
                                 &mut tab.viewer.search_input,
                                 &mut tab.viewer.search_cursor,
@@ -1002,7 +1002,7 @@ impl AppState {
                             );
                             AppAction::None
                         }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('u') if ctrl_shortcut(key) => {
                             clear_input_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 &mut tab.viewer.time_jump_cursor,
@@ -1183,7 +1183,7 @@ impl AppState {
                             move_cursor_end(&mut tab.filter_input_cursor, &tab.filter_input);
                             AppAction::None
                         }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('u') if ctrl_shortcut(key) => {
                             clear_input_at_cursor(
                                 &mut tab.filter_input,
                                 &mut tab.filter_input_cursor,
@@ -1234,7 +1234,7 @@ impl AppState {
                             move_cursor_end(&mut tab.time_jump_cursor, &tab.time_jump_input);
                             AppAction::None
                         }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('u') if ctrl_shortcut(key) => {
                             clear_input_at_cursor(
                                 &mut tab.time_jump_input,
                                 &mut tab.time_jump_cursor,
@@ -1447,7 +1447,7 @@ impl AppState {
                             insert_char_at_cursor(&mut tab.input, &mut tab.input_cursor, c);
                             AppAction::None
                         }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('u') if ctrl_shortcut(key) => {
                             clear_input_at_cursor(&mut tab.input, &mut tab.input_cursor);
                             AppAction::None
                         }
@@ -1706,7 +1706,7 @@ impl AppState {
                         tab.focus = ConnectivityTabFocus::Targets;
                         AppAction::None
                     }
-                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    KeyCode::Char('u') if ctrl_shortcut(key) => {
                         tab.filter.clear();
                         tab.refresh_filter();
                         AppAction::None
@@ -2023,13 +2023,15 @@ impl AppState {
                 }
                 KeyCode::Enter
                     if dialog.focus_field
-                        == crate::ui::components::ResourceTemplateField::CreateBtn =>
+                        == crate::ui::components::ResourceTemplateField::CreateBtn
+                        && plain_shortcut(key) =>
                 {
                     AppAction::SubmitResourceTemplateDialog
                 }
                 KeyCode::Enter
                     if dialog.focus_field
-                        == crate::ui::components::ResourceTemplateField::CancelBtn =>
+                        == crate::ui::components::ResourceTemplateField::CancelBtn
+                        && plain_shortcut(key) =>
                 {
                     self.resource_template_dialog = None;
                     AppAction::None
@@ -2066,7 +2068,7 @@ impl AppState {
                     dialog.delete_char();
                     AppAction::None
                 }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('u') if ctrl_shortcut(key) => {
                     dialog.clear_active();
                     AppAction::None
                 }
@@ -3101,7 +3103,7 @@ impl AppState {
             KeyCode::End => {
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') if ctrl_shortcut(key) => {
                 self.clear_search_query();
             }
             KeyCode::Char(c) if plain_shortcut(key) => {
