@@ -2376,6 +2376,8 @@ fn ctrl_alt_content_detail_scroll_shortcuts_do_not_scroll() {
         KeyCode::Char('u'),
         KeyCode::Char('j'),
         KeyCode::Char('k'),
+        KeyCode::PageDown,
+        KeyCode::PageUp,
     ] {
         assert_eq!(
             app.handle_key_event(KeyEvent::new(
@@ -4408,6 +4410,46 @@ fn helm_history_confirm_mode_ctrl_shift_d_scrolls_instead_of_confirming() {
 }
 
 #[test]
+fn helm_history_confirm_page_keys_require_plain_modifiers() {
+    let mut plain = app_with_helm_history_workbench_tab();
+    if let Some(tab) = plain.workbench.active_tab_mut()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+    {
+        helm_tab.confirm_rollback_revision = Some(4);
+    }
+    assert_eq!(
+        plain.handle_key_event(KeyEvent::from(KeyCode::PageDown)),
+        AppAction::None
+    );
+    if let Some(tab) = plain.workbench.active_tab()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+    {
+        assert_eq!(helm_tab.scroll, 10);
+    } else {
+        panic!("expected helm history tab");
+    }
+
+    let mut modified = app_with_helm_history_workbench_tab();
+    if let Some(tab) = modified.workbench.active_tab_mut()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+    {
+        helm_tab.confirm_rollback_revision = Some(4);
+        helm_tab.scroll = 10;
+    }
+    assert_eq!(
+        modified.handle_key_event(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    if let Some(tab) = modified.workbench.active_tab()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+    {
+        assert_eq!(helm_tab.scroll, 10);
+    } else {
+        panic!("expected helm history tab");
+    }
+}
+
+#[test]
 fn helm_history_escape_cancels_rollback_confirmation() {
     let mut app = app_with_helm_history_workbench_tab();
     if let Some(tab) = app.workbench.active_tab_mut()
@@ -4706,6 +4748,63 @@ fn rollout_confirm_mode_ctrl_shift_u_scrolls_instead_of_execute_undo() {
     {
         assert_eq!(rollout_tab.confirm_undo_revision, Some(4));
         assert_eq!(rollout_tab.detail_scroll, 0);
+    } else {
+        panic!("expected rollout tab");
+    }
+}
+
+#[test]
+fn rollout_confirm_page_keys_require_plain_modifiers() {
+    let mut app = AppState::default();
+    app.open_rollout_tab(
+        ResourceRef::Deployment("api".to_string(), "default".to_string()),
+        Some(RolloutInspection {
+            kind: RolloutWorkloadKind::Deployment,
+            strategy: "RollingUpdate".to_string(),
+            paused: false,
+            current_revision: Some(5),
+            update_target_revision: Some(5),
+            summary_lines: vec!["Desired 3".to_string()],
+            conditions: Vec::new(),
+            revisions: vec![RolloutRevisionInfo {
+                revision: 4,
+                name: "api-4".to_string(),
+                created: None,
+                summary: "3/3 ready".to_string(),
+                change_cause: None,
+                is_current: false,
+                is_update_target: false,
+            }],
+        }),
+        None,
+        None,
+    );
+    app.focus_workbench();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+    {
+        rollout_tab.confirm_undo_revision = Some(4);
+    }
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::PageDown)),
+        AppAction::None
+    );
+    if let Some(tab) = app.workbench.active_tab()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &tab.state
+    {
+        assert_eq!(rollout_tab.detail_scroll, 10);
+    } else {
+        panic!("expected rollout tab");
+    }
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::PageUp, KeyModifiers::ALT)),
+        AppAction::None
+    );
+    if let Some(tab) = app.workbench.active_tab()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &tab.state
+    {
+        assert_eq!(rollout_tab.detail_scroll, 10);
     } else {
         panic!("expected rollout tab");
     }
@@ -5966,50 +6065,74 @@ fn ctrl_y_does_not_confirm_drain_dialog() {
 
 #[test]
 fn modified_confirmation_keys_do_not_execute_dialog_actions() {
-    let mut drain = AppState::default();
-    drain.detail_view = Some(DetailViewState {
-        resource: Some(ResourceRef::Node("node-0".to_string())),
-        yaml: Some("kind: Node".to_string()),
-        confirm_drain: true,
-        ..DetailViewState::default()
-    });
-    assert_eq!(
-        drain.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT)),
-        AppAction::None
-    );
-    assert!(drain.detail_view.as_ref().unwrap().confirm_drain);
+    for code in [
+        KeyCode::Char('y'),
+        KeyCode::Char('D'),
+        KeyCode::Char('F'),
+        KeyCode::Enter,
+    ] {
+        let mut drain = AppState::default();
+        drain.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        assert_eq!(
+            drain.handle_key_event(KeyEvent::new(code, KeyModifiers::ALT)),
+            AppAction::None,
+            "{code:?}"
+        );
+        assert!(
+            drain.detail_view.as_ref().unwrap().confirm_drain,
+            "{code:?}"
+        );
+    }
 
-    let mut delete = AppState::default();
-    delete.detail_view = Some(DetailViewState {
-        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
-        yaml: Some("kind: Pod".to_string()),
-        confirm_delete: true,
-        ..DetailViewState::default()
-    });
-    assert_eq!(
-        delete.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT)),
-        AppAction::None
-    );
-    assert!(delete.detail_view.as_ref().unwrap().confirm_delete);
+    for code in [
+        KeyCode::Char('d'),
+        KeyCode::Char('D'),
+        KeyCode::Char('F'),
+        KeyCode::Char('y'),
+        KeyCode::Enter,
+    ] {
+        let mut delete = AppState::default();
+        delete.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            confirm_delete: true,
+            ..DetailViewState::default()
+        });
+        assert_eq!(
+            delete.handle_key_event(KeyEvent::new(code, KeyModifiers::ALT)),
+            AppAction::None,
+            "{code:?}"
+        );
+        assert!(
+            delete.detail_view.as_ref().unwrap().confirm_delete,
+            "{code:?}"
+        );
+    }
 
-    let mut cron = AppState::default();
-    cron.detail_view = Some(DetailViewState {
-        resource: Some(ResourceRef::CronJob("job-0".to_string(), "ns".to_string())),
-        yaml: Some("kind: CronJob".to_string()),
-        confirm_cronjob_suspend: Some(true),
-        ..DetailViewState::default()
-    });
-    assert_eq!(
-        cron.handle_key_event(KeyEvent::new(
-            KeyCode::Char('S'),
-            KeyModifiers::ALT | KeyModifiers::SHIFT,
-        )),
-        AppAction::None
-    );
-    assert_eq!(
-        cron.detail_view.as_ref().unwrap().confirm_cronjob_suspend,
-        Some(true)
-    );
+    for code in [KeyCode::Char('S'), KeyCode::Char('y'), KeyCode::Enter] {
+        let mut cron = AppState::default();
+        cron.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CronJob("job-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: CronJob".to_string()),
+            confirm_cronjob_suspend: Some(true),
+            ..DetailViewState::default()
+        });
+        assert_eq!(
+            cron.handle_key_event(KeyEvent::new(code, KeyModifiers::ALT | KeyModifiers::SHIFT)),
+            AppAction::None,
+            "{code:?}"
+        );
+        assert_eq!(
+            cron.detail_view.as_ref().unwrap().confirm_cronjob_suspend,
+            Some(true),
+            "{code:?}"
+        );
+    }
 }
 
 #[test]
