@@ -18,6 +18,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
+fn edit_key(key: KeyEvent) -> bool {
+    key.modifiers.is_empty()
+}
+
 fn ctrl_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && key
@@ -164,7 +168,7 @@ impl NamespacePicker {
                 }
                 NamespacePickerAction::None
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if edit_key(key) => {
                 if self.search_cursor > 0 {
                     let selected_namespace = self
                         .selected_namespace_from_indices(&filtered)
@@ -175,7 +179,7 @@ impl NamespacePicker {
                 }
                 NamespacePickerAction::None
             }
-            KeyCode::Delete => {
+            KeyCode::Delete if edit_key(key) => {
                 let previous_len = self.search_query.len();
                 delete_char_right_at_cursor(&mut self.search_query, self.search_cursor);
                 if self.search_query.len() != previous_len {
@@ -187,19 +191,19 @@ impl NamespacePicker {
                 }
                 NamespacePickerAction::None
             }
-            KeyCode::Left => {
+            KeyCode::Left if edit_key(key) => {
                 move_cursor_left(&mut self.search_cursor);
                 NamespacePickerAction::None
             }
-            KeyCode::Right => {
+            KeyCode::Right if edit_key(key) => {
                 move_cursor_right(&mut self.search_cursor, &self.search_query);
                 NamespacePickerAction::None
             }
-            KeyCode::Home => {
+            KeyCode::Home if edit_key(key) => {
                 move_cursor_home(&mut self.search_cursor);
                 NamespacePickerAction::None
             }
-            KeyCode::End => {
+            KeyCode::End if edit_key(key) => {
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
                 NamespacePickerAction::None
             }
@@ -609,15 +613,27 @@ mod tests {
             NamespacePicker::new(vec!["default".to_string(), "kube-system".to_string()]);
         picker.open();
         picker.search_query = "kube".to_string();
-        picker.search_cursor = picker.search_query.len();
+        picker.search_cursor = 2;
 
         picker.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT));
         picker.handle_key(KeyEvent::new(
             KeyCode::Char('u'),
             KeyModifiers::CONTROL | KeyModifiers::ALT,
         ));
+        for code in [
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Home,
+            KeyCode::End,
+        ] {
+            picker.handle_key(KeyEvent::new(code, KeyModifiers::ALT));
+            picker.handle_key(KeyEvent::new(code, KeyModifiers::CONTROL));
+        }
 
         assert_eq!(picker.search_query(), "kube");
+        assert_eq!(picker.search_cursor, 2);
         assert_eq!(picker.selected_index(), 0);
     }
 
