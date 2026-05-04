@@ -211,6 +211,12 @@ impl AppState {
                 KeyCode::Tab if ctrl_shortcut(key) => {
                     return AppAction::WorkbenchNextTab;
                 }
+                KeyCode::Char(',') if plain_shortcut(key) => {
+                    return AppAction::WorkbenchPreviousTab;
+                }
+                KeyCode::Char('.') if plain_shortcut(key) => {
+                    return AppAction::WorkbenchNextTab;
+                }
                 KeyCode::Char('[') if plain_shortcut(key) && !reserve_bracket_shortcuts => {
                     return AppAction::WorkbenchPreviousTab;
                 }
@@ -2955,6 +2961,16 @@ impl AppState {
             }
             KeyCode::Tab
                 if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
+            {
+                AppAction::WorkbenchNextTab
+            }
+            KeyCode::Char(',')
+                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
+            {
+                AppAction::WorkbenchPreviousTab
+            }
+            KeyCode::Char('.')
+                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
             {
                 AppAction::WorkbenchNextTab
             }
