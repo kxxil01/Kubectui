@@ -534,15 +534,19 @@ impl AppState {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageUp if plain_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_add(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
@@ -565,15 +569,19 @@ impl AppState {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageUp if plain_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_add(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
@@ -680,15 +688,19 @@ impl AppState {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageUp if plain_shortcut(key) => {
+                            tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
+                            tab.detail_scroll = tab.detail_scroll.saturating_add(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
                             AppAction::None
                         }
@@ -710,15 +722,19 @@ impl AppState {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if ctrl_shortcut(key) =>
-                        {
+                        KeyCode::PageUp if plain_shortcut(key) => {
+                            tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
+                            tab.detail_scroll = tab.detail_scroll.saturating_add(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
                             AppAction::None
                         }
@@ -2552,56 +2568,6 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('F')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .map(|d| d.confirm_drain)
-                    .unwrap_or(false) =>
-            {
-                AppAction::ForceDrainNode
-            }
-            KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter
-                if self
-                    .detail_view
-                    .as_ref()
-                    .map(|d| d.confirm_drain)
-                    .unwrap_or(false) =>
-            {
-                AppAction::DrainNode
-            }
-            KeyCode::Char('F')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .map(|d| d.confirm_delete)
-                    .unwrap_or(false) =>
-            {
-                AppAction::ForceDeleteResource
-            }
-            KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Char('y') | KeyCode::Enter
-                if self
-                    .detail_view
-                    .as_ref()
-                    .map(|d| d.confirm_delete)
-                    .unwrap_or(false) =>
-            {
-                AppAction::DeleteResource
-            }
-            KeyCode::Char('S') | KeyCode::Char('y') | KeyCode::Enter
-                if self
-                    .detail_view
-                    .as_ref()
-                    .and_then(|d| d.confirm_cronjob_suspend)
-                    .is_some() =>
-            {
-                AppAction::SetCronJobSuspend(
-                    self.detail_view
-                        .as_ref()
-                        .and_then(|detail| detail.confirm_cronjob_suspend)
-                        .unwrap_or(false),
-                )
-            }
             KeyCode::Enter
                 if self
                     .detail_view
@@ -2713,6 +2679,7 @@ impl AppState {
             KeyCode::PageDown
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
+                    && plain_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
@@ -2721,6 +2688,7 @@ impl AppState {
             KeyCode::PageUp
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
+                    && plain_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
