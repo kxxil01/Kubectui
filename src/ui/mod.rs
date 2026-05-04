@@ -1880,7 +1880,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             ""
         };
         let workbench_hint = if app.workbench().open {
-            " • [H] history • [b] workbench • [[]/]] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
+            " • [H] history • [b] workbench • [,/.] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
         } else {
             " • [H] history • [b] workbench"
         };
@@ -3890,9 +3890,23 @@ mod tests {
         app.focus = Focus::Workbench;
         app.set_status("busy".to_string());
 
-        let rendered = render_to_string(&app, &ClusterSnapshot::default());
+        let rendered = render_to_string_with_size(&app, &ClusterSnapshot::default(), 240, 40);
 
         assert!(rendered.contains("[all] view: Dashboard • focus: workbench • busy"));
+    }
+
+    #[test]
+    fn status_bar_lists_canonical_workbench_tab_keys() {
+        let mut app = app_with_view(AppView::Dashboard);
+        app.workbench_mut()
+            .open_tab(crate::workbench::WorkbenchTabState::ActionHistory(
+                crate::workbench::ActionHistoryTabState::default(),
+            ));
+
+        let rendered = render_to_string_with_size(&app, &ClusterSnapshot::default(), 240, 40);
+
+        assert!(rendered.contains("[,/.] tabs"), "{rendered}");
+        assert!(!rendered.contains("[[]/]] tabs"), "{rendered}");
     }
 
     #[test]
