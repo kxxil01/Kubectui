@@ -540,6 +540,35 @@ fn resource_template_dialog_ctrl_u_clears_active_field() {
 }
 
 #[test]
+fn resource_template_dialog_modified_navigation_keys_do_not_move_focus() {
+    let mut app = AppState::default();
+    app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(
+        ResourceTemplateKind::Deployment,
+        "default",
+    ));
+
+    for (code, modifiers) in [
+        (KeyCode::Down, KeyModifiers::CONTROL),
+        (KeyCode::Up, KeyModifiers::CONTROL),
+        (KeyCode::Tab, KeyModifiers::ALT),
+        (KeyCode::BackTab, KeyModifiers::ALT),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(code, modifiers)),
+            AppAction::None,
+            "{code:?} {modifiers:?}"
+        );
+        assert_eq!(
+            app.resource_template_dialog
+                .as_ref()
+                .expect("dialog should remain open")
+                .focus_field,
+            crate::ui::components::ResourceTemplateField::Name
+        );
+    }
+}
+
+#[test]
 fn workspace_shortcuts_emit_actions() {
     let mut app = AppState::default();
 

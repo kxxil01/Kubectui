@@ -148,11 +148,11 @@ impl PortForwardDialog {
     fn handle_create_mode(&mut self, key: KeyEvent) -> PortForwardAction {
         match key.code {
             KeyCode::Esc => PortForwardAction::Close,
-            KeyCode::Tab => {
+            KeyCode::Tab if plain_shortcut(key) => {
                 self.next_field();
                 PortForwardAction::None
             }
-            KeyCode::BackTab => {
+            KeyCode::BackTab if plain_shortcut(key) => {
                 self.prev_field();
                 PortForwardAction::None
             }

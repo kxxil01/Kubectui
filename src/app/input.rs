@@ -292,7 +292,7 @@ impl AppState {
                             tab.stop_subject_input();
                             AppAction::None
                         }
-                        KeyCode::Tab | KeyCode::BackTab => {
+                        KeyCode::Tab | KeyCode::BackTab if plain_shortcut(key) => {
                             tab.stop_subject_input();
                             AppAction::None
                         }
@@ -1661,11 +1661,11 @@ impl AppState {
             WorkbenchTabState::Connectivity(tab) => match tab.focus {
                 ConnectivityTabFocus::Filter => match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Tab => {
+                    KeyCode::Tab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Targets;
                         AppAction::None
                     }
-                    KeyCode::BackTab => {
+                    KeyCode::BackTab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Result;
                         AppAction::None
                     }
@@ -1713,11 +1713,11 @@ impl AppState {
                 },
                 ConnectivityTabFocus::Targets => match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Tab => {
+                    KeyCode::Tab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Result;
                         AppAction::None
                     }
-                    KeyCode::BackTab => {
+                    KeyCode::BackTab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Filter;
                         AppAction::None
                     }
@@ -1746,11 +1746,11 @@ impl AppState {
                 },
                 ConnectivityTabFocus::Result => match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Tab => {
+                    KeyCode::Tab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Filter;
                         AppAction::None
                     }
-                    KeyCode::BackTab => {
+                    KeyCode::BackTab if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Targets;
                         AppAction::None
                     }
@@ -2027,11 +2027,11 @@ impl AppState {
                     self.resource_template_dialog = None;
                     AppAction::None
                 }
-                KeyCode::Tab | KeyCode::Down => {
+                KeyCode::Tab | KeyCode::Down if plain_shortcut(key) => {
                     dialog.next_field();
                     AppAction::None
                 }
-                KeyCode::BackTab | KeyCode::Up => {
+                KeyCode::BackTab | KeyCode::Up if plain_shortcut(key) => {
                     dialog.prev_field();
                     AppAction::None
                 }
@@ -2166,7 +2166,7 @@ impl AppState {
                     }
                     KeyCode::Enter if plain_shortcut(key) => AppAction::ScaleDialogSubmit,
                     KeyCode::Tab if plain_shortcut(key) => AppAction::ScaleDialogNextField,
-                    KeyCode::BackTab => AppAction::ScaleDialogPrevField,
+                    KeyCode::BackTab if plain_shortcut(key) => AppAction::ScaleDialogPrevField,
                     KeyCode::Backspace => AppAction::ScaleDialogBackspace,
                     KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up
                         if plain_shortcut(key) =>
