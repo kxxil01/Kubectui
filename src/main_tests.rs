@@ -112,6 +112,34 @@ fn root_enter_shortcut_rejects_modified_keys() {
 }
 
 #[test]
+fn extension_instances_escape_shortcut_rejects_modified_keys() {
+    let app = AppState {
+        focus: Focus::Content,
+        view: AppView::Extensions,
+        extension_in_instances: true,
+        ..AppState::default()
+    };
+
+    assert!(super::should_exit_extension_instances(
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        &app
+    ));
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::SUPER,
+        KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+    ] {
+        assert!(
+            !super::should_exit_extension_instances(KeyEvent::new(KeyCode::Esc, modifiers), &app),
+            "{modifiers:?}"
+        );
+    }
+}
+
+#[test]
 fn detail_result_gate_includes_decoded_secret_tabs() {
     let resource = ResourceRef::Secret("app-secret".into(), "default".into());
     let mut app = AppState::default();

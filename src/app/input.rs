@@ -12,6 +12,7 @@ use crate::{
     ui::components::{
         CommandPaletteAction, ContextPickerAction, NamespacePickerAction, scale_dialog::ScaleField,
     },
+    ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut},
     ui::{
         clear_input_at_cursor, delete_char_left_at_cursor, delete_char_right_at_cursor,
         insert_char_at_cursor, move_cursor_end, move_cursor_home, move_cursor_left,
@@ -20,23 +21,7 @@ use crate::{
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
-fn plain_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
-}
-
-fn edit_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty()
-}
-
 fn copy_resource_name_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && key
-            .modifiers
-            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-            .is_empty()
-}
-
-fn ctrl_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && key
             .modifiers
