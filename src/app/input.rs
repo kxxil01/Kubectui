@@ -2883,6 +2883,11 @@ impl AppState {
             KeyCode::Char('}') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::ApplyNextWorkspace
             }
+            KeyCode::Char('b') | KeyCode::Char(',') | KeyCode::Char('.') | KeyCode::Char('w')
+                if self.detail_view.is_none() =>
+            {
+                workbench_control_action(key, self.workbench.open, false).unwrap_or(AppAction::None)
+            }
             _ if self.detail_view.is_none()
                 && workbench_control_action(key, self.workbench.open, false).is_some() =>
             {
