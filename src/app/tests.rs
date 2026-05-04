@@ -802,11 +802,19 @@ fn workbench_keybindings_emit_expected_actions() {
         AppAction::WorkbenchNextTab
     );
     assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('.'))),
+        AppAction::WorkbenchNextTab
+    );
+    assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)),
         AppAction::WorkbenchNextTab
     );
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(','))),
         AppAction::WorkbenchPreviousTab
     );
     assert_eq!(
@@ -1067,11 +1075,19 @@ fn workbench_focus_supports_tab_resize_and_close_shortcuts() {
         AppAction::WorkbenchNextTab
     );
     assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('.'))),
+        AppAction::WorkbenchNextTab
+    );
+    assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)),
         AppAction::WorkbenchNextTab
     );
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(','))),
         AppAction::WorkbenchPreviousTab
     );
     assert_eq!(
