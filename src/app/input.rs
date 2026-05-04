@@ -105,7 +105,7 @@ impl AppState {
         }
 
         let action = match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc if plain_shortcut(key) => {
                 detail.confirm_delete = false;
                 detail.confirm_drain = false;
                 detail.confirm_cronjob_suspend = None;
@@ -295,7 +295,7 @@ impl AppState {
                         _ => AppAction::None,
                     },
                     AccessReviewFocus::SubjectInput => match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc if plain_shortcut(key) => {
                             tab.stop_subject_input();
                             AppAction::None
                         }
@@ -542,14 +542,14 @@ impl AppState {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
-                        KeyCode::Esc => AppAction::None,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::None,
                         _ => AppAction::None,
                     };
                 }
 
                 if tab.confirm_rollback_revision.is_some() {
                     return match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc if plain_shortcut(key) => {
                             tab.cancel_rollback_confirm();
                             AppAction::None
                         }
@@ -585,7 +585,7 @@ impl AppState {
                 if let Some(diff) = tab.diff.as_mut() {
                     let max_scroll = diff.lines.len().saturating_sub(1);
                     return match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc if plain_shortcut(key) => {
                             tab.close_diff();
                             AppAction::None
                         }
@@ -694,7 +694,7 @@ impl AppState {
 
                 if tab.confirm_undo_revision.is_some() {
                     return match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc if plain_shortcut(key) => {
                             tab.cancel_undo_confirm();
                             AppAction::None
                         }
@@ -782,7 +782,7 @@ impl AppState {
 
                 if tab.editing {
                     match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc if plain_shortcut(key) => {
                             tab.editing = false;
                             tab.edit_input.clear();
                             AppAction::None
@@ -907,7 +907,7 @@ impl AppState {
             WorkbenchTabState::PodLogs(tab) => {
                 if tab.viewer.searching {
                     match key.code {
-                        KeyCode::Esc => AppAction::LogsViewerSearchCancel,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::LogsViewerSearchCancel,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::LogsViewerSearchClose,
                         KeyCode::Backspace => {
                             delete_char_left_at_cursor(
@@ -964,7 +964,7 @@ impl AppState {
                     }
                 } else if tab.viewer.jumping_to_time {
                     match key.code {
-                        KeyCode::Esc => AppAction::CancelLogTimeJump,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::CancelLogTimeJump,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
                             delete_char_left_at_cursor(
@@ -1144,7 +1144,7 @@ impl AppState {
             WorkbenchTabState::WorkloadLogs(tab) => {
                 if tab.editing_text_filter {
                     match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc if plain_shortcut(key) => {
                             tab.editing_text_filter = false;
                             tab.filter_input.clear();
                             AppAction::None
@@ -1202,7 +1202,7 @@ impl AppState {
                     }
                 } else if tab.jumping_to_time {
                     match key.code {
-                        KeyCode::Esc => AppAction::CancelLogTimeJump,
+                        KeyCode::Esc if plain_shortcut(key) => AppAction::CancelLogTimeJump,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
                             delete_char_left_at_cursor(
@@ -1376,7 +1376,7 @@ impl AppState {
             WorkbenchTabState::Exec(tab) => {
                 if tab.picking_container {
                     match key.code {
-                        KeyCode::Esc => {
+                        KeyCode::Esc if plain_shortcut(key) => {
                             // Exit container picker back to command input,
                             // don't close the entire workbench.
                             tab.picking_container = false;
@@ -2235,7 +2235,8 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .map(|d| d.confirm_delete)
-                    .unwrap_or(false) =>
+                    .unwrap_or(false)
+                    && plain_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.confirm_delete = false;
@@ -2247,7 +2248,8 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .map(|d| d.confirm_drain)
-                    .unwrap_or(false) =>
+                    .unwrap_or(false)
+                    && plain_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.confirm_drain = false;
@@ -2259,7 +2261,8 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .and_then(|d| d.confirm_cronjob_suspend)
-                    .is_some() =>
+                    .is_some()
+                    && plain_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.confirm_cronjob_suspend = None;
