@@ -25,6 +25,28 @@ pub fn ctrl_shortcut(key: KeyEvent) -> bool {
             .is_empty()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CtrlScrollAction {
+    LineDown,
+    LineUp,
+    PageDown,
+    PageUp,
+}
+
+pub fn ctrl_scroll_action(key: KeyEvent) -> Option<CtrlScrollAction> {
+    if !ctrl_shortcut(key) {
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(CtrlScrollAction::LineDown),
+        KeyCode::Char('k') | KeyCode::Up => Some(CtrlScrollAction::LineUp),
+        KeyCode::Char('d') | KeyCode::PageDown => Some(CtrlScrollAction::PageDown),
+        KeyCode::Char('u') | KeyCode::PageUp => Some(CtrlScrollAction::PageUp),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +73,77 @@ mod tests {
             KeyCode::PageDown,
             KeyModifiers::SHIFT
         )));
+    }
+
+    #[test]
+    fn ctrl_scroll_action_maps_supported_keys() {
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::LineDown)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::LineDown)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::LineUp)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::LineUp)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::PageDown)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::PageDown, KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::PageDown)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::PageUp)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL)),
+            Some(CtrlScrollAction::PageUp)
+        );
+    }
+
+    #[test]
+    fn ctrl_scroll_action_rejects_unsupported_modifiers() {
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+            None
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(
+                KeyCode::Char('j'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            )),
+            None
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(
+                KeyCode::Char('j'),
+                KeyModifiers::CONTROL | KeyModifiers::META
+            )),
+            None
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(
+                KeyCode::Char('j'),
+                KeyModifiers::CONTROL | KeyModifiers::SUPER
+            )),
+            None
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(
+                KeyCode::Char('D'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            None
+        );
     }
 }
