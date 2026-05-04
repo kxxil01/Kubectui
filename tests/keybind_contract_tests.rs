@@ -7,6 +7,7 @@ use kubectui::{
     app::{AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef},
     events::route_keyboard_input,
     policy::DetailAction,
+    workbench::{ResourceYamlTabState, WorkbenchTabState},
     workspaces::{HotkeyAction, HotkeyBinding, HotkeyTarget, WorkspaceBank},
 };
 
@@ -387,10 +388,22 @@ fn detail_shortcuts_route_expected_actions() {
     }
 }
 
+fn reserved_modifier_variants() -> [KeyModifiers; 7] {
+    [
+        KeyModifiers::ALT,
+        KeyModifiers::CONTROL,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ]
+}
+
 #[test]
-fn detail_shortcuts_reject_control_alt_modifier_variants() {
+fn detail_shortcuts_reject_reserved_modifier_variants() {
     for case in detail_shortcut_cases() {
-        for modifiers in [KeyModifiers::ALT, KeyModifiers::CONTROL] {
+        for modifiers in reserved_modifier_variants() {
             let mut app = AppState::default();
             app.detail_view = Some((case.make_detail)());
             app.focus = Focus::Content;
@@ -431,6 +444,69 @@ fn detail_shortcuts_reject_control_alt_modifier_variants() {
             }
         }
     }
+}
+
+#[test]
+fn workbench_page_keys_reject_reserved_modifier_variants() {
+    for modifiers in reserved_modifier_variants() {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState {
+                resource: ResourceRef::Pod("pod-a".into(), "default".into()),
+                pending_request_id: None,
+                yaml: Some(
+                    (0..30)
+                        .map(|idx| format!("line-{idx}"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+                scroll: 5,
+                loading: false,
+                error: None,
+            }));
+
+        let action = route_keyboard_input(KeyEvent::new(KeyCode::PageDown, modifiers), &mut app);
+        assert_eq!(action, AppAction::None);
+
+        let scroll = app
+            .workbench()
+            .active_tab()
+            .and_then(|tab| match &tab.state {
+                WorkbenchTabState::ResourceYaml(tab) => Some(tab.scroll),
+                _ => None,
+            })
+            .expect("expected resource yaml tab");
+
+        assert_eq!(scroll, 5, "PageDown changed scroll for {modifiers:?}");
+
+        let action = route_keyboard_input(KeyEvent::new(KeyCode::PageUp, modifiers), &mut app);
+        assert_eq!(action, AppAction::None);
+
+        let scroll = app
+            .workbench()
+            .active_tab()
+            .and_then(|tab| match &tab.state {
+                WorkbenchTabState::ResourceYaml(tab) => Some(tab.scroll),
+                _ => None,
+            })
+            .expect("expected resource yaml tab");
+
+        assert_eq!(scroll, 5, "PageUp changed scroll for {modifiers:?}");
+    }
+}
+
+#[test]
+fn readme_lists_canonical_workbench_tab_keys() {
+    let readme = include_str!("../README.md");
+    assert!(
+        readme.contains("| `,` / `.` | Switch tabs |"),
+        "README workbench table must list runtime workbench tab keys"
+    );
+    assert!(
+        !readme.contains("| `[` / `]` | Switch tabs |"),
+        "README must not advertise removed workbench tab keys"
+    );
 }
 
 #[test]

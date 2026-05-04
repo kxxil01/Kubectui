@@ -242,13 +242,13 @@ impl AppState {
                     tab.select_bottom(&action_history_ids);
                     AppAction::None
                 }
-                KeyCode::PageDown => {
+                KeyCode::PageDown if plain_shortcut(key) => {
                     for _ in 0..10 {
                         tab.select_next(&action_history_ids);
                     }
                     AppAction::None
                 }
-                KeyCode::PageUp => {
+                KeyCode::PageUp if plain_shortcut(key) => {
                     for _ in 0..10 {
                         tab.select_previous(&action_history_ids);
                     }
@@ -284,11 +284,11 @@ impl AppState {
                             tab.scroll = max_scroll;
                             AppAction::None
                         }
-                        KeyCode::PageDown => {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
                             AppAction::None
                         }
-                        KeyCode::PageUp => {
+                        KeyCode::PageUp if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
@@ -370,11 +370,11 @@ impl AppState {
                         tab.scroll = max_scroll;
                         AppAction::None
                     }
-                    KeyCode::PageDown => {
+                    KeyCode::PageDown if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
                         AppAction::None
                     }
-                    KeyCode::PageUp => {
+                    KeyCode::PageUp if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_sub(10);
                         AppAction::None
                     }
@@ -401,11 +401,11 @@ impl AppState {
                         tab.scroll = max_scroll;
                         AppAction::None
                     }
-                    KeyCode::PageDown => {
+                    KeyCode::PageDown if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
                         AppAction::None
                     }
-                    KeyCode::PageUp => {
+                    KeyCode::PageUp if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_sub(10);
                         AppAction::None
                     }
@@ -430,11 +430,11 @@ impl AppState {
                     tab.scroll = usize::MAX;
                     AppAction::None
                 }
-                KeyCode::PageDown => {
+                KeyCode::PageDown if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(10);
                     AppAction::None
                 }
-                KeyCode::PageUp => {
+                KeyCode::PageUp if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_sub(10);
                     AppAction::None
                 }
@@ -458,11 +458,11 @@ impl AppState {
                     tab.scroll = usize::MAX;
                     AppAction::None
                 }
-                KeyCode::PageDown => {
+                KeyCode::PageDown if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(10);
                     AppAction::None
                 }
-                KeyCode::PageUp => {
+                KeyCode::PageUp if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_sub(10);
                     AppAction::None
                 }
@@ -502,13 +502,13 @@ impl AppState {
                     tab.select_bottom();
                     AppAction::None
                 }
-                KeyCode::PageDown => {
+                KeyCode::PageDown if plain_shortcut(key) => {
                     for _ in 0..10 {
                         tab.select_next();
                     }
                     AppAction::None
                 }
-                KeyCode::PageUp => {
+                KeyCode::PageUp if plain_shortcut(key) => {
                     for _ in 0..10 {
                         tab.select_previous();
                     }
@@ -605,11 +605,11 @@ impl AppState {
                             diff.scroll = max_scroll;
                             AppAction::None
                         }
-                        KeyCode::PageDown => {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             diff.scroll = diff.scroll.saturating_add(10).min(max_scroll);
                             AppAction::None
                         }
-                        KeyCode::PageUp => {
+                        KeyCode::PageUp if plain_shortcut(key) => {
                             diff.scroll = diff.scroll.saturating_sub(10);
                             AppAction::None
                         }
@@ -640,13 +640,13 @@ impl AppState {
                         tab.select_bottom();
                         AppAction::None
                     }
-                    KeyCode::PageDown => {
+                    KeyCode::PageDown if plain_shortcut(key) => {
                         for _ in 0..10 {
                             tab.select_next();
                         }
                         AppAction::None
                     }
-                    KeyCode::PageUp => {
+                    KeyCode::PageUp if plain_shortcut(key) => {
                         for _ in 0..10 {
                             tab.select_previous();
                         }
@@ -745,13 +745,13 @@ impl AppState {
                         tab.select_bottom();
                         AppAction::None
                     }
-                    KeyCode::PageDown => {
+                    KeyCode::PageDown if plain_shortcut(key) => {
                         for _ in 0..10 {
                             tab.select_next();
                         }
                         AppAction::None
                     }
-                    KeyCode::PageUp => {
+                    KeyCode::PageUp if plain_shortcut(key) => {
                         for _ in 0..10 {
                             tab.select_previous();
                         }
@@ -894,11 +894,11 @@ impl AppState {
                     tab.scroll = usize::MAX;
                     AppAction::None
                 }
-                KeyCode::PageDown => {
+                KeyCode::PageDown if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(10);
                     AppAction::None
                 }
-                KeyCode::PageUp => {
+                KeyCode::PageUp if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_sub(10);
                     AppAction::None
                 }
@@ -1297,7 +1297,7 @@ impl AppState {
                             tab.follow_mode = true;
                             AppAction::None
                         }
-                        KeyCode::PageDown => {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             let filtered_len = tab.filtered_len();
                             if filtered_len <= 1 {
                                 if filtered_len == 0 {
@@ -1311,7 +1311,7 @@ impl AppState {
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::PageUp => {
+                        KeyCode::PageUp if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             tab.follow_mode = false;
                             AppAction::None
@@ -1435,11 +1435,11 @@ impl AppState {
                             tab.scroll = (tab.scroll + 1).min(tab.lines.len().saturating_sub(1));
                             AppAction::None
                         }
-                        KeyCode::PageUp => {
+                        KeyCode::PageUp if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
-                        KeyCode::PageDown => {
+                        KeyCode::PageDown if plain_shortcut(key) => {
                             tab.scroll = (tab.scroll + 10).min(tab.lines.len().saturating_sub(1));
                             AppAction::None
                         }
@@ -1957,11 +1957,11 @@ impl AppState {
         if self.help_overlay.is_open() {
             return match key.code {
                 KeyCode::Esc | KeyCode::Char('?') => AppAction::CloseHelp,
-                KeyCode::PageDown => {
+                KeyCode::PageDown if plain_shortcut(key) => {
                     self.help_overlay.scroll_page_down();
                     AppAction::None
                 }
-                KeyCode::PageUp => {
+                KeyCode::PageUp if plain_shortcut(key) => {
                     self.help_overlay.scroll_page_up();
                     AppAction::None
                 }

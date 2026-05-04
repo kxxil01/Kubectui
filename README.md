@@ -163,7 +163,7 @@ Press `Enter` on a resource, then:
 
 | Key | Action |
 |-----|--------|
-| `[` / `]` | Switch tabs |
+| `,` / `.` | Switch tabs |
 | `Ctrl+W` | Close tab |
 | `z` | Maximize |
 | `Ctrl+↑`/`↓` | Resize |
