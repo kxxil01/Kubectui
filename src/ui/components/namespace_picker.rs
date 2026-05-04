@@ -15,8 +15,7 @@ use ratatui::{
 };
 
 fn plain_shortcut(key: KeyEvent) -> bool {
-    !key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
 /// Actions emitted by namespace picker keyboard handling.
@@ -207,7 +206,7 @@ impl NamespacePicker {
                 }
                 NamespacePickerAction::None
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char(c) if plain_shortcut(key) => {
                 let selected_namespace = self
                     .selected_namespace_from_indices(&filtered)
                     .map(ToOwned::to_owned)
@@ -568,6 +567,18 @@ mod tests {
         picker.handle_key(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
 
         assert_eq!(picker.search_query(), "D");
+    }
+
+    #[test]
+    fn test_namespace_picker_alt_modified_chars_do_not_edit_search() {
+        let mut picker =
+            NamespacePicker::new(vec!["default".to_string(), "kube-system".to_string()]);
+        picker.open();
+
+        picker.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT));
+
+        assert_eq!(picker.search_query(), "");
+        assert_eq!(picker.selected_index(), 0);
     }
 
     #[test]

@@ -15,8 +15,7 @@ use crate::ui::{
 };
 
 fn plain_shortcut(key: KeyEvent) -> bool {
-    !key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
 
 /// Port forward dialog modes.
@@ -202,7 +201,7 @@ impl PortForwardDialog {
                 self.error = None;
                 PortForwardAction::None
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char(c) if plain_shortcut(key) => {
                 // Port fields: only allow digits
                 match self.focus {
                     FormField::RemotePort | FormField::LocalPort => {
@@ -903,13 +902,14 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_modified_chars_do_not_insert_unrelated_chars_into_create_fields() {
+    fn modified_chars_do_not_insert_unrelated_chars_into_create_fields() {
         let mut dialog = PortForwardDialog::new();
         dialog.focus = FormField::PodName;
         dialog.pod_name_field.value = "api".to_string();
         dialog.pod_name_field.cursor_pos = dialog.pod_name_field.value.chars().count();
 
         dialog.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        dialog.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
 
         assert_eq!(dialog.pod_name_field.value, "api");
     }

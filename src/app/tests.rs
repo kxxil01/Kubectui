@@ -569,6 +569,29 @@ fn resource_template_dialog_modified_navigation_keys_do_not_move_focus() {
 }
 
 #[test]
+fn resource_template_dialog_alt_modified_chars_do_not_edit_fields() {
+    let mut app = AppState::default();
+    app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(
+        ResourceTemplateKind::Deployment,
+        "default",
+    ));
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+
+    assert_eq!(
+        app.resource_template_dialog
+            .as_ref()
+            .expect("dialog should remain open")
+            .values
+            .name,
+        "sample-app"
+    );
+}
+
+#[test]
 fn workspace_shortcuts_emit_actions() {
     let mut app = AppState::default();
 
@@ -1520,6 +1543,38 @@ fn workbench_common_shortcuts_do_not_leak_into_pod_logs_search() {
 }
 
 #[test]
+fn pod_logs_search_ignores_alt_modified_chars() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+    logs_tab.viewer.search_input = "api".into();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, "api");
+}
+
+#[test]
 fn workbench_common_shortcuts_do_not_leak_into_exec_input() {
     let mut app = AppState::default();
     app.workbench.open_tab(WorkbenchTabState::Exec(
@@ -1549,6 +1604,33 @@ fn workbench_common_shortcuts_do_not_leak_into_exec_input() {
     };
     assert_eq!(exec_tab.input, "bz");
     assert!(app.workbench.open);
+}
+
+#[test]
+fn exec_input_ignores_alt_modified_chars() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert!(exec_tab.input.is_empty());
 }
 
 #[test]
@@ -1587,6 +1669,42 @@ fn workbench_common_shortcuts_do_not_leak_into_connectivity_filter() {
     };
     assert_eq!(connectivity_tab.filter.value, "bz");
     assert!(app.workbench.open);
+}
+
+#[test]
+fn connectivity_filter_ignores_alt_modified_chars() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Connectivity(
+        crate::workbench::ConnectivityTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            Vec::new(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &mut tab.state else {
+        panic!("expected connectivity tab");
+    };
+    connectivity_tab.focus = crate::workbench::ConnectivityTabFocus::Filter;
+    connectivity_tab.filter.value = "api".into();
+    connectivity_tab.filter.cursor_pos = 3;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &tab.state else {
+        panic!("expected connectivity tab");
+    };
+    assert_eq!(connectivity_tab.filter.value, "api");
+    assert_eq!(connectivity_tab.filter.cursor_pos, 3);
 }
 
 #[test]
@@ -1656,6 +1774,41 @@ fn workload_logs_filter_mode_supports_ctrl_u_clear() {
         panic!("expected workload logs tab");
     };
     assert!(logs_tab.filter_input.is_empty());
+}
+
+#[test]
+fn workload_logs_filter_ignores_alt_modified_chars() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state else {
+        panic!("expected workload logs tab");
+    };
+    logs_tab.editing_text_filter = true;
+    logs_tab.filter_input = "error".into();
+    logs_tab.filter_input_cursor = logs_tab.filter_input.chars().count();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(logs_tab.filter_input, "error");
+    assert_eq!(logs_tab.filter_input_cursor, "error".len());
 }
 
 #[test]
@@ -2799,13 +2952,14 @@ fn rapid_tab_switching_is_stable() {
     assert_eq!(app.view(), AppView::Dashboard);
 }
 
-/// Verifies search input ignores Ctrl-modified characters except supported shortcuts.
+/// Verifies search input ignores modified characters except supported shortcuts.
 #[test]
-fn search_input_ignores_ctrl_characters() {
+fn search_input_ignores_modified_characters() {
     let mut app = AppState::default();
     app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
 
     app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
 
     assert_eq!(app.search_query(), "");
 }
@@ -3521,6 +3675,39 @@ fn access_review_subject_input_treats_r_and_b_as_text() {
         panic!("expected access review tab");
     };
     assert_eq!(tab.subject_input.value, "rb");
+}
+
+#[test]
+fn access_review_subject_input_ignores_alt_modified_chars() {
+    use crate::workbench::{AccessReviewTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = AccessReviewTabState::new(
+        ResourceRef::Pod("pod-0".to_string(), "ns".to_string()),
+        Some("prod".to_string()),
+        "ns".to_string(),
+        Vec::new(),
+        None,
+        None,
+    );
+    tab.start_subject_input();
+    tab.subject_input.value = "User/alice".to_string();
+    tab.subject_input.cursor_pos = tab.subject_input.value.chars().count();
+    app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing access review tab");
+    };
+    let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+        panic!("expected access review tab");
+    };
+    assert_eq!(tab.subject_input.value, "User/alice");
 }
 
 #[test]
