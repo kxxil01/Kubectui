@@ -510,6 +510,19 @@ fn readme_lists_canonical_workbench_tab_keys() {
 }
 
 #[test]
+fn readme_scopes_cronjob_logs_to_detail_history() {
+    let readme = include_str!("../README.md");
+    assert!(
+        readme.contains("| `l` / `L` | Logs | Pods, workloads, Jobs; CronJob detail history |"),
+        "README must describe list-level logs shortcut and CronJob detail history separately"
+    );
+    assert!(
+        !readme.contains("| `l` / `L` | Logs | Pods, workloads, CronJobs |"),
+        "README must not imply CronJobs list rows open logs without a selected child Job"
+    );
+}
+
+#[test]
 fn readme_lists_exact_quit_sequence() {
     let readme = include_str!("../README.md");
     assert!(
