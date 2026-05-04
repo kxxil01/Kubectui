@@ -140,7 +140,7 @@ Press `Enter` on a resource, then:
 | Key | Action | Resources |
 |-----|--------|-----------|
 | `y` | YAML | All |
-| `l` / `L` | Logs | Pods, workloads, CronJobs |
+| `l` / `L` | Logs | Pods, workloads, Jobs; CronJob detail history |
 | `x` | Exec/shell | Pods |
 | `f` | Port-forward | Pods |
 | `s` | Scale | Deployments, StatefulSets |

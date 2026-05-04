@@ -1101,6 +1101,12 @@ fn content_logs_shortcut_only_routes_supported_views() {
         AppAction::LogsViewerOpen
     );
 
+    app.view = AppView::CronJobs;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('l'))),
+        AppAction::None
+    );
+
     app.view = AppView::ConfigMaps;
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('l'))),
