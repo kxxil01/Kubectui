@@ -154,7 +154,7 @@ impl PortForwardDialog {
 
     fn handle_create_mode(&mut self, key: KeyEvent) -> PortForwardAction {
         match key.code {
-            KeyCode::Esc => PortForwardAction::Close,
+            KeyCode::Esc if plain_shortcut(key) => PortForwardAction::Close,
             KeyCode::Tab if plain_shortcut(key) => {
                 self.next_field();
                 PortForwardAction::None
@@ -230,7 +230,7 @@ impl PortForwardDialog {
 
     fn handle_list_mode(&mut self, key: KeyEvent) -> PortForwardAction {
         match key.code {
-            KeyCode::Esc => PortForwardAction::Close,
+            KeyCode::Esc if plain_shortcut(key) => PortForwardAction::Close,
             KeyCode::Char('q') if plain_shortcut(key) => PortForwardAction::Close,
             KeyCode::F(1) => {
                 self.switch_mode(PortForwardMode::Create);
@@ -1024,6 +1024,33 @@ mod tests {
             dialog.handle_key(KeyEvent::from(KeyCode::Delete)),
             PortForwardAction::Stop(_)
         ));
+    }
+
+    #[test]
+    fn modified_escape_does_not_close_port_forward_dialog() {
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::META,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL | KeyModifiers::META,
+            KeyModifiers::CONTROL | KeyModifiers::SUPER,
+        ] {
+            let mut create_dialog = PortForwardDialog::new();
+            assert_eq!(
+                create_dialog.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                PortForwardAction::None,
+                "{modifiers:?}"
+            );
+
+            let mut list_dialog = PortForwardDialog::new();
+            list_dialog.mode = PortForwardMode::List;
+            assert_eq!(
+                list_dialog.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                PortForwardAction::None,
+                "{modifiers:?}"
+            );
+        }
     }
 
     #[test]
