@@ -12,7 +12,7 @@ use ratatui::{
     },
 };
 
-use crate::ui::{components::default_theme, wrapped_line_count};
+use crate::ui::{components::default_theme, keybindings::LOG_PRESET_KEYS_HINT, wrapped_line_count};
 use crate::{app::DetailViewState, policy::DetailAction};
 
 #[derive(Debug, Clone, Default)]
@@ -241,7 +241,10 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("T", "Jump to timestamp"),
             ("C", "Toggle request-id correlation"),
             ("J", "Toggle structured JSON summary"),
-            ("[ / ]", "Previous / next saved preset (logs tabs)"),
+            (
+                LOG_PRESET_KEYS_HINT,
+                "Previous / next saved preset (logs tabs)",
+            ),
             ("M / m", "Save current log preset"),
             ("Enter / Esc", "Apply / cancel log search"),
             ("Ctrl+U", "Clear log search input"),
@@ -264,7 +267,10 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("L", "Cycle pod label filter"),
             ("C", "Toggle request-id correlation"),
             ("J", "Toggle structured JSON summary"),
-            ("[ / ]", "Previous / next saved preset (logs tabs)"),
+            (
+                LOG_PRESET_KEYS_HINT,
+                "Previous / next saved preset (logs tabs)",
+            ),
             ("M / m", "Save current log preset"),
             ("Enter / Esc", "Apply / cancel text filter"),
             ("Ctrl+U", "Clear text filter input"),
@@ -774,6 +780,29 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn help_lists_unambiguous_log_preset_keys() {
+        for section_name in ["Logs", "Workload Logs"] {
+            let section = SECTIONS
+                .iter()
+                .find(|(title, _)| *title == section_name)
+                .expect("logs help section exists")
+                .1;
+
+            assert!(
+                section.iter().any(|(key, desc)| {
+                    *key == LOG_PRESET_KEYS_HINT
+                        && *desc == "Previous / next saved preset (logs tabs)"
+                }),
+                "{section_name} must list literal bracket preset keys"
+            );
+            assert!(
+                !section.iter().any(|(key, _)| *key == "[ / ]"),
+                "{section_name} must not render preset keys like slash"
+            );
         }
     }
 

@@ -20,8 +20,8 @@ use crate::{
     state::ClusterSnapshot,
     time::format_local,
     ui::{
-        components::default_theme, cursor_visible_input_line, loading_spinner_char, theme::Theme,
-        wrap_span_groups, wrapped_line_count,
+        components::default_theme, cursor_visible_input_line, keybindings::LOG_PRESET_KEYS_HINT,
+        loading_spinner_char, theme::Theme, wrap_span_groups, wrapped_line_count,
     },
     workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
@@ -2138,7 +2138,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             vec![Span::styled("[Ctrl+U] clear", theme.keybind_desc_style())],
         ]
     } else {
-        [
+        let mut groups = [
             "[Esc] back  ",
             "[f] follow  ",
             "[P] previous  ",
@@ -2149,14 +2149,20 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             "[T] jump-to-time  ",
             "[C] correlate  ",
             "[J] json  ",
-            "[[]/[]] presets  ",
-            "[M] save preset  ",
-            "[n/N] next/prev  ",
-            "[S] save",
         ]
         .into_iter()
         .map(|group| vec![Span::styled(group, theme.keybind_desc_style())])
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+        groups.push(vec![
+            Span::styled(LOG_PRESET_KEYS_HINT, theme.keybind_desc_style()),
+            Span::styled(" presets  ", theme.keybind_desc_style()),
+        ]);
+        groups.extend(
+            ["[M] save preset  ", "[n/N] next/prev  ", "[S] save"]
+                .into_iter()
+                .map(|group| vec![Span::styled(group, theme.keybind_desc_style())]),
+        );
+        groups
     };
     let mut header_lines = wrap_span_groups(&status_groups, area.width.max(1));
     header_lines.extend(wrap_span_groups(&hint_groups, area.width.max(1)));
@@ -2606,10 +2612,10 @@ fn render_workload_logs_tab(
                 vec![Span::styled("[J] json  ", theme.keybind_desc_style())],
                 vec![Span::styled("[p] pod  ", theme.keybind_desc_style())],
                 vec![Span::styled("[c] container  ", theme.keybind_desc_style())],
-                vec![Span::styled(
-                    "[[]/[]] presets  ",
-                    theme.keybind_desc_style(),
-                )],
+                vec![
+                    Span::styled(LOG_PRESET_KEYS_HINT, theme.keybind_desc_style()),
+                    Span::styled(" presets  ", theme.keybind_desc_style()),
+                ],
                 vec![Span::styled(
                     "[M] save preset  ",
                     theme.keybind_desc_style(),

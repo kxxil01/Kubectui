@@ -2,6 +2,8 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+pub const LOG_PRESET_KEYS_HINT: &str = "[[]/[]]";
+
 pub fn plain_shortcut(key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char(_) | KeyCode::BackTab => {
