@@ -9,6 +9,16 @@ use crate::runbooks::{
 use crate::workbench::WorkbenchTabState;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+fn removed_workbench_tab_keys() -> [KeyEvent; 5] {
+    [
+        KeyEvent::from(KeyCode::Char('[')),
+        KeyEvent::from(KeyCode::Char(']')),
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL),
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL),
+    ]
+}
+
 /// Verifies full forward tab cycle across all views and wraps to Dashboard.
 #[test]
 fn tab_cycles_all_views_forward() {
@@ -798,36 +808,16 @@ fn workbench_keybindings_emit_expected_actions() {
         ));
     app.toggle_workbench();
     assert_eq!(
-        app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
-        AppAction::WorkbenchNextTab
-    );
-    assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('.'))),
         AppAction::WorkbenchNextTab
-    );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)),
-        AppAction::WorkbenchNextTab
-    );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
-        AppAction::WorkbenchPreviousTab
     );
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char(','))),
         AppAction::WorkbenchPreviousTab
     );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::new(
-            KeyCode::Tab,
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT
-        )),
-        AppAction::WorkbenchPreviousTab
-    );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL)),
-        AppAction::WorkbenchPreviousTab
-    );
+    for key in removed_workbench_tab_keys() {
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+    }
     assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
         AppAction::WorkbenchCloseActiveTab
@@ -1071,36 +1061,16 @@ fn workbench_focus_supports_tab_resize_and_close_shortcuts() {
     app.focus = Focus::Workbench;
 
     assert_eq!(
-        app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
-        AppAction::WorkbenchNextTab
-    );
-    assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('.'))),
         AppAction::WorkbenchNextTab
-    );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)),
-        AppAction::WorkbenchNextTab
-    );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
-        AppAction::WorkbenchPreviousTab
     );
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char(','))),
         AppAction::WorkbenchPreviousTab
     );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::new(
-            KeyCode::Tab,
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT
-        )),
-        AppAction::WorkbenchPreviousTab
-    );
-    assert_eq!(
-        app.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL)),
-        AppAction::WorkbenchPreviousTab
-    );
+    for key in removed_workbench_tab_keys() {
+        assert_eq!(app.handle_key_event(key), AppAction::None, "{key:?}");
+    }
     assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
         AppAction::WorkbenchCloseActiveTab
