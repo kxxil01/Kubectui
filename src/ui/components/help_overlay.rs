@@ -126,6 +126,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("z", "Maximize / restore"),
             (", / .", "Previous / next workbench tab"),
             ("Ctrl+W", "Close active workbench tab"),
+            ("Ctrl+Up / Ctrl+Down", "Resize workbench"),
             ("j / k", "Scroll down / up"),
             ("g / G", "Jump to top / bottom"),
             ("PageDown / PageUp", "Scroll by page"),
@@ -781,6 +782,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn focused_workbench_help_lists_resize_shortcuts() {
+        let section = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Workbench (focused)")
+            .expect("workbench section exists")
+            .1;
+
+        assert!(
+            section.iter().any(|(key, desc)| {
+                *key == "Ctrl+Up / Ctrl+Down" && *desc == "Resize workbench"
+            })
+        );
     }
 
     #[test]
