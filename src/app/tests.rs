@@ -3154,17 +3154,45 @@ fn ctrl_shift_y_uses_copy_resource_name_not_full_name() {
 }
 
 #[test]
-fn ctrl_alt_y_does_not_copy_resource_name() {
+fn ctrl_with_extra_modifier_does_not_copy_resource_name() {
     let mut app = AppState::default();
     app.view = AppView::Pods;
     app.focus = Focus::Content;
 
-    let action = app.handle_key_event(KeyEvent::new(
-        KeyCode::Char('y'),
+    for modifiers in [
         KeyModifiers::CONTROL | KeyModifiers::ALT,
-    ));
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), modifiers));
+        assert_eq!(action, AppAction::None, "{modifiers:?}");
+    }
+}
 
-    assert_eq!(action, AppAction::None);
+#[test]
+fn ctrl_with_system_modifier_does_not_route_workbench_controls() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+
+    for (code, modifiers) in [
+        (
+            KeyCode::Char('w'),
+            KeyModifiers::CONTROL | KeyModifiers::META,
+        ),
+        (KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::SUPER),
+        (KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::SUPER),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(code, modifiers)),
+            AppAction::None,
+            "{code:?} {modifiers:?}"
+        );
+    }
+
+    assert_eq!(app.workbench.tabs.len(), 1);
 }
 
 #[test]
