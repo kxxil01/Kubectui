@@ -134,7 +134,7 @@ impl NamespacePicker {
         let filtered = self.filtered_namespace_indices();
 
         match key.code {
-            KeyCode::Esc => NamespacePickerAction::Close,
+            KeyCode::Esc if plain_shortcut(key) => NamespacePickerAction::Close,
             KeyCode::Enter if plain_shortcut(key) => self
                 .selected_namespace_from_indices(&filtered)
                 .map(ToOwned::to_owned)
@@ -533,6 +533,32 @@ mod tests {
                 "{code:?} {modifiers:?}"
             );
             assert_eq!(picker.selected_index(), 0);
+        }
+    }
+
+    #[test]
+    fn namespace_picker_modified_escape_does_not_close() {
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::META,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL | KeyModifiers::META,
+            KeyModifiers::CONTROL | KeyModifiers::SUPER,
+        ] {
+            let mut picker = NamespacePicker::new(vec![
+                "all".to_string(),
+                "default".to_string(),
+                "kube-system".to_string(),
+            ]);
+            picker.open();
+
+            assert_eq!(
+                picker.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                NamespacePickerAction::None,
+                "{modifiers:?}"
+            );
+            assert!(picker.is_open(), "{modifiers:?}");
         }
     }
 

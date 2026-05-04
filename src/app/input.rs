@@ -1956,7 +1956,7 @@ impl AppState {
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
         if self.help_overlay.is_open() {
             return match key.code {
-                KeyCode::Esc | KeyCode::Char('?') => AppAction::CloseHelp,
+                KeyCode::Esc | KeyCode::Char('?') if plain_shortcut(key) => AppAction::CloseHelp,
                 KeyCode::PageDown if plain_shortcut(key) => {
                     self.help_overlay.scroll_page_down();
                     AppAction::None
@@ -1965,11 +1965,11 @@ impl AppState {
                     self.help_overlay.scroll_page_up();
                     AppAction::None
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     self.help_overlay.scroll_down();
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     self.help_overlay.scroll_up();
                     AppAction::None
                 }
@@ -2017,7 +2017,7 @@ impl AppState {
 
         if let Some(dialog) = &mut self.resource_template_dialog {
             return match key.code {
-                KeyCode::Esc => {
+                KeyCode::Esc if plain_shortcut(key) => {
                     self.resource_template_dialog = None;
                     AppAction::None
                 }

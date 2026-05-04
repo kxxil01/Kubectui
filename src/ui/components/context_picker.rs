@@ -126,7 +126,7 @@ impl ContextPicker {
         let filtered = self.filtered_context_indices();
 
         match key.code {
-            KeyCode::Esc => ContextPickerAction::Close,
+            KeyCode::Esc if plain_shortcut(key) => ContextPickerAction::Close,
             KeyCode::Enter if plain_shortcut(key) => self
                 .selected_context_from_indices(&filtered)
                 .map(ToOwned::to_owned)
@@ -553,6 +553,31 @@ mod tests {
                 "{code:?} {modifiers:?}"
             );
             assert_eq!(picker.selected_index, 0);
+        }
+    }
+
+    #[test]
+    fn context_picker_modified_escape_does_not_close() {
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::META,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL | KeyModifiers::META,
+            KeyModifiers::CONTROL | KeyModifiers::SUPER,
+        ] {
+            let mut picker = ContextPicker::new(
+                vec!["ctx-a".to_string(), "ctx-b".to_string()],
+                Some("ctx-a".to_string()),
+            );
+            picker.open();
+
+            assert_eq!(
+                picker.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                ContextPickerAction::None,
+                "{modifiers:?}"
+            );
+            assert!(picker.is_open(), "{modifiers:?}");
         }
     }
 

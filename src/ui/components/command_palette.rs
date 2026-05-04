@@ -1191,7 +1191,7 @@ impl CommandPalette {
         }
 
         match key.code {
-            KeyCode::Esc => CommandPaletteAction::Close,
+            KeyCode::Esc if plain_shortcut(key) => CommandPaletteAction::Close,
             KeyCode::Enter if plain_shortcut(key) => {
                 let entries = self.filtered_entries();
                 if let Some(entry) = entries.get(self.selected_index) {
@@ -1923,6 +1923,28 @@ mod tests {
                 "{code:?} {modifiers:?}"
             );
             assert_eq!(p.selected_index, 0);
+        }
+    }
+
+    #[test]
+    fn modified_escape_does_not_close_palette() {
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::META,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL | KeyModifiers::META,
+            KeyModifiers::CONTROL | KeyModifiers::SUPER,
+        ] {
+            let mut p = CommandPalette::default();
+            p.open();
+
+            assert_eq!(
+                p.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                CommandPaletteAction::None,
+                "{modifiers:?}"
+            );
+            assert!(p.is_open(), "{modifiers:?}");
         }
     }
 
