@@ -3935,6 +3935,49 @@ fn access_review_subject_input_ignores_alt_modified_chars() {
 }
 
 #[test]
+fn access_review_subject_modified_escape_does_not_stop_input() {
+    use crate::workbench::{AccessReviewFocus, AccessReviewTabState, WorkbenchTabState};
+
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        let mut tab = AccessReviewTabState::new(
+            ResourceRef::Pod("pod-0".to_string(), "ns".to_string()),
+            Some("prod".to_string()),
+            "ns".to_string(),
+            Vec::new(),
+            None,
+            None,
+        );
+        tab.start_subject_input();
+        tab.subject_input.value = "User/alice".to_string();
+        app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing access review tab");
+        };
+        let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+            panic!("expected access review tab");
+        };
+        assert_eq!(tab.focus, AccessReviewFocus::SubjectInput, "{modifiers:?}");
+        assert_eq!(tab.subject_input.value, "User/alice", "{modifiers:?}");
+    }
+}
+
+#[test]
 fn access_review_subject_delete_removes_character_at_cursor() {
     use crate::workbench::{AccessReviewTabState, WorkbenchTabState};
 
@@ -4262,6 +4305,58 @@ fn helm_history_escape_cancels_rollback_confirmation() {
 }
 
 #[test]
+fn helm_history_modified_escape_does_not_cancel_submodes() {
+    use crate::workbench::HelmValuesDiffState;
+
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut confirm = app_with_helm_history_workbench_tab();
+        if let Some(tab) = confirm.workbench.active_tab_mut()
+            && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+        {
+            helm_tab.confirm_rollback_revision = Some(4);
+        }
+        assert_eq!(
+            confirm.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        if let Some(tab) = confirm.workbench.active_tab()
+            && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+        {
+            assert_eq!(helm_tab.confirm_rollback_revision, Some(4), "{modifiers:?}");
+        } else {
+            panic!("expected helm history tab");
+        }
+
+        let mut diff = app_with_helm_history_workbench_tab();
+        if let Some(tab) = diff.workbench.active_tab_mut()
+            && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+        {
+            helm_tab.diff = Some(HelmValuesDiffState::new(5, 4, 9));
+        }
+        assert_eq!(
+            diff.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        if let Some(tab) = diff.workbench.active_tab()
+            && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+        {
+            assert!(helm_tab.diff.is_some(), "{modifiers:?}");
+        } else {
+            panic!("expected helm history tab");
+        }
+    }
+}
+
+#[test]
 fn uppercase_o_opens_rollout_for_deployment_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -4493,6 +4588,62 @@ fn rollout_confirm_mode_ctrl_shift_u_scrolls_instead_of_execute_undo() {
 }
 
 #[test]
+fn rollout_confirm_modified_escape_does_not_cancel_undo() {
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut app = AppState::default();
+        app.open_rollout_tab(
+            ResourceRef::Deployment("api".to_string(), "default".to_string()),
+            Some(RolloutInspection {
+                kind: RolloutWorkloadKind::Deployment,
+                strategy: "RollingUpdate".to_string(),
+                paused: false,
+                current_revision: Some(5),
+                update_target_revision: Some(5),
+                summary_lines: vec!["Desired 3".to_string()],
+                conditions: Vec::new(),
+                revisions: vec![RolloutRevisionInfo {
+                    revision: 4,
+                    name: "api-4".to_string(),
+                    created: None,
+                    summary: "3/3 ready".to_string(),
+                    change_cause: None,
+                    is_current: false,
+                    is_update_target: false,
+                }],
+            }),
+            None,
+            None,
+        );
+        app.focus_workbench();
+        if let Some(tab) = app.workbench.active_tab_mut()
+            && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+        {
+            rollout_tab.confirm_undo_revision = Some(4);
+        }
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        if let Some(tab) = app.workbench.active_tab()
+            && let WorkbenchTabState::Rollout(rollout_tab) = &tab.state
+        {
+            assert_eq!(rollout_tab.confirm_undo_revision, Some(4), "{modifiers:?}");
+        } else {
+            panic!("expected rollout tab");
+        }
+    }
+}
+
+#[test]
 fn runbook_workbench_shortcuts_dispatch_expected_actions() {
     let mut app = AppState::default();
     app.focus = Focus::Workbench;
@@ -4717,6 +4868,54 @@ fn reopen_decoded_secret_tab_preserves_unsaved_edit_state() {
         tab.selected_entry().map(|entry| entry.key.as_str()),
         Some("TOKEN")
     );
+}
+
+#[test]
+fn decoded_secret_modified_escape_does_not_cancel_unmasked_edit() {
+    use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
+    use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
+
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        let mut tab =
+            DecodedSecretTabState::new(ResourceRef::Secret("app-secret".into(), "prod".into()));
+        tab.entries = vec![DecodedSecretEntry {
+            key: "TOKEN".into(),
+            value: DecodedSecretValue::Text {
+                current: "new-value".into(),
+                original: "old-value".into(),
+            },
+        }];
+        tab.masked = false;
+        tab.editing = true;
+        tab.edit_input = "new-value".into();
+        tab.edit_cursor = tab.edit_input.len();
+        app.workbench
+            .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing decoded secret tab");
+        };
+        let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+            panic!("expected decoded secret tab");
+        };
+        assert!(tab.editing, "{modifiers:?}");
+        assert_eq!(tab.edit_input, "new-value", "{modifiers:?}");
+    }
 }
 
 #[test]
@@ -5244,6 +5443,113 @@ fn reopen_workload_logs_tab_preserves_filters_while_resetting_session() {
 }
 
 #[test]
+fn pod_logs_modified_escape_does_not_cancel_search_or_time_jump() {
+    use crate::workbench::{PodLogsTabState, WorkbenchTabState};
+
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut search = AppState::default();
+        search.focus = Focus::Workbench;
+        let mut tab = PodLogsTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+        tab.viewer.searching = true;
+        tab.viewer.search_input = "error".into();
+        tab.viewer.search_cursor = tab.viewer.search_input.len();
+        search.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+        assert_eq!(
+            search.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        let WorkbenchTabState::PodLogs(tab) = &search.workbench.active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert!(tab.viewer.searching, "{modifiers:?}");
+        assert_eq!(tab.viewer.search_input, "error", "{modifiers:?}");
+
+        let mut jump = AppState::default();
+        jump.focus = Focus::Workbench;
+        let mut tab = PodLogsTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+        tab.viewer.jumping_to_time = true;
+        tab.viewer.time_jump_input = "10:30".into();
+        tab.viewer.time_jump_cursor = tab.viewer.time_jump_input.len();
+        jump.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+        assert_eq!(
+            jump.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        let WorkbenchTabState::PodLogs(tab) = &jump.workbench.active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert!(tab.viewer.jumping_to_time, "{modifiers:?}");
+        assert_eq!(tab.viewer.time_jump_input, "10:30", "{modifiers:?}");
+    }
+}
+
+#[test]
+fn workload_logs_modified_escape_does_not_cancel_filter_or_time_jump() {
+    use crate::workbench::{WorkbenchTabState, WorkloadLogsTabState};
+
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut filter = AppState::default();
+        filter.focus = Focus::Workbench;
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "prod".into()), 7);
+        tab.editing_text_filter = true;
+        tab.filter_input = "timeout".into();
+        tab.filter_input_cursor = tab.filter_input.len();
+        filter
+            .workbench
+            .open_tab(WorkbenchTabState::WorkloadLogs(tab));
+        assert_eq!(
+            filter.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        let WorkbenchTabState::WorkloadLogs(tab) = &filter.workbench.active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert!(tab.editing_text_filter, "{modifiers:?}");
+        assert_eq!(tab.filter_input, "timeout", "{modifiers:?}");
+
+        let mut jump = AppState::default();
+        jump.focus = Focus::Workbench;
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "prod".into()), 7);
+        tab.jumping_to_time = true;
+        tab.time_jump_input = "10:30".into();
+        tab.time_jump_cursor = tab.time_jump_input.len();
+        jump.workbench
+            .open_tab(WorkbenchTabState::WorkloadLogs(tab));
+        assert_eq!(
+            jump.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        let WorkbenchTabState::WorkloadLogs(tab) = &jump.workbench.active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert!(tab.jumping_to_time, "{modifiers:?}");
+        assert_eq!(tab.time_jump_input, "10:30", "{modifiers:?}");
+    }
+}
+
+#[test]
 fn workload_logs_single_filtered_line_allows_row_scroll_offsets() {
     let mut app = AppState::default();
     app.focus = Focus::Workbench;
@@ -5311,6 +5617,44 @@ fn reopen_exec_tab_preserves_selected_container_while_resetting_session() {
     assert!(tab.lines.is_empty());
     assert_eq!(tab.scroll, 0);
     assert!(tab.loading);
+}
+
+#[test]
+fn exec_picker_modified_escape_does_not_cancel_container_picker() {
+    use crate::workbench::{ExecTabState, WorkbenchTabState};
+
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        let resource = ResourceRef::Pod("api".into(), "prod".into());
+        let mut tab = ExecTabState::new(resource.clone(), 7, "api".into(), "prod".into());
+        tab.containers = vec!["main".into(), "sidecar".into()];
+        tab.picking_container = true;
+        tab.container_cursor = 1;
+        app.workbench.open_tab(WorkbenchTabState::Exec(tab));
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing exec tab");
+        };
+        let WorkbenchTabState::Exec(tab) = &tab.state else {
+            panic!("expected exec tab");
+        };
+        assert!(tab.picking_container, "{modifiers:?}");
+        assert_eq!(tab.container_cursor, 1, "{modifiers:?}");
+    }
 }
 
 #[test]
@@ -5399,6 +5743,70 @@ fn modified_confirmation_keys_do_not_execute_dialog_actions() {
         cron.detail_view.as_ref().unwrap().confirm_cronjob_suspend,
         Some(true)
     );
+}
+
+#[test]
+fn modified_confirmation_escape_does_not_cancel_dialog_actions() {
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut drain = AppState::default();
+        drain.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        assert_eq!(
+            drain.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert!(
+            drain.detail_view.as_ref().unwrap().confirm_drain,
+            "{modifiers:?}"
+        );
+
+        let mut delete = AppState::default();
+        delete.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            confirm_delete: true,
+            ..DetailViewState::default()
+        });
+        assert_eq!(
+            delete.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert!(
+            delete.detail_view.as_ref().unwrap().confirm_delete,
+            "{modifiers:?}"
+        );
+
+        let mut cron = AppState::default();
+        cron.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CronJob("job-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: CronJob".to_string()),
+            confirm_cronjob_suspend: Some(true),
+            ..DetailViewState::default()
+        });
+        assert_eq!(
+            cron.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert_eq!(
+            cron.detail_view.as_ref().unwrap().confirm_cronjob_suspend,
+            Some(true),
+            "{modifiers:?}"
+        );
+    }
 }
 
 #[test]
