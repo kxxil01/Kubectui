@@ -136,14 +136,14 @@ impl DebugContainerDialogState {
     pub fn handle_key(&mut self, key: KeyEvent) -> DebugContainerDialogEvent {
         if self.pending_launch {
             return match key.code {
-                KeyCode::Esc => DebugContainerDialogEvent::Close,
+                KeyCode::Esc if plain_shortcut(key) => DebugContainerDialogEvent::Close,
                 _ => DebugContainerDialogEvent::None,
             };
         }
 
         if self.is_editing_custom_image() {
             match key.code {
-                KeyCode::Esc => return DebugContainerDialogEvent::Close,
+                KeyCode::Esc if plain_shortcut(key) => return DebugContainerDialogEvent::Close,
                 KeyCode::Tab | KeyCode::Down if plain_shortcut(key) => {
                     self.error_message = None;
                     self.focus_field = self.focus_field.next();
@@ -221,7 +221,7 @@ impl DebugContainerDialogState {
         }
 
         match key.code {
-            KeyCode::Esc => DebugContainerDialogEvent::Close,
+            KeyCode::Esc if plain_shortcut(key) => DebugContainerDialogEvent::Close,
             KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                 self.error_message = None;
                 self.focus_field = self.focus_field.next();
@@ -980,6 +980,41 @@ mod tests {
                 "{code:?} {modifiers:?}"
             );
             assert_eq!(state.focus_field, DebugContainerField::Launch);
+        }
+    }
+
+    #[test]
+    fn modified_escape_does_not_close_debug_dialog() {
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::META,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL | KeyModifiers::META,
+            KeyModifiers::CONTROL | KeyModifiers::SUPER,
+        ] {
+            let mut state = DebugContainerDialogState::new("api-0", "default");
+            assert_eq!(
+                state.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                DebugContainerDialogEvent::None,
+                "{modifiers:?}"
+            );
+
+            state.pending_launch = true;
+            assert_eq!(
+                state.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                DebugContainerDialogEvent::None,
+                "{modifiers:?}"
+            );
+
+            state.pending_launch = false;
+            state.selected_preset = DebugImagePreset::Custom;
+            state.focus_field = DebugContainerField::CustomImage;
+            assert_eq!(
+                state.handle_key(KeyEvent::new(KeyCode::Esc, modifiers)),
+                DebugContainerDialogEvent::None,
+                "{modifiers:?}"
+            );
         }
     }
 

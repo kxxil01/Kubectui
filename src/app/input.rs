@@ -3076,7 +3076,7 @@ impl AppState {
         let previous_query = self.search_query.clone();
 
         match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc if plain_shortcut(key) => {
                 self.clear_search_query();
                 self.is_search_mode = false;
                 // Reset selection so the user doesn't land on a stale filtered index.

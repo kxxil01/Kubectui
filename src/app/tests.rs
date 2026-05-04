@@ -392,6 +392,30 @@ fn search_mode_esc_clears_and_exits() {
     assert!(!app.is_search_mode());
 }
 
+#[test]
+fn search_mode_modified_escape_does_not_clear_or_exit() {
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert_eq!(app.search_query(), "x", "{modifiers:?}");
+        assert!(app.is_search_mode(), "{modifiers:?}");
+    }
+}
+
 /// Verifies refresh actions are emitted for `r` and Ctrl+R.
 #[test]
 fn refresh_action_transitions() {
