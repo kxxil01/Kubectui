@@ -2879,6 +2879,58 @@ fn modified_esc_does_not_start_quit_confirmation() {
 }
 
 #[test]
+fn modified_esc_does_not_close_detail_or_move_focus() {
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut detail_app = AppState {
+            focus: Focus::Content,
+            detail_view: Some(DetailViewState {
+                resource: Some(ResourceRef::Pod("pod-a".to_string(), "default".to_string())),
+                ..DetailViewState::default()
+            }),
+            ..AppState::default()
+        };
+        assert_eq!(
+            detail_app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert!(detail_app.detail_view.is_some(), "{modifiers:?}");
+
+        let mut content_app = AppState {
+            focus: Focus::Content,
+            ..AppState::default()
+        };
+        assert_eq!(
+            content_app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert_eq!(content_app.focus, Focus::Content, "{modifiers:?}");
+
+        let mut workbench_app = AppState::default();
+        workbench_app
+            .workbench
+            .open_tab(WorkbenchTabState::ActionHistory(
+                crate::workbench::ActionHistoryTabState::default(),
+            ));
+        workbench_app.focus_workbench();
+        assert_eq!(
+            workbench_app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert_eq!(workbench_app.focus, Focus::Workbench, "{modifiers:?}");
+    }
+}
+
+#[test]
 fn q_does_not_start_quit_confirmation() {
     let mut app = AppState::default();
 
