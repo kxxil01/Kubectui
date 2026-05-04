@@ -1,12 +1,15 @@
 //! Context (kubeconfig) picker modal component.
 
+use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
 use crate::ui::{
     clear_input_at_cursor, components::render_vertical_scrollbar, contains_ci,
     cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
     insert_char_at_cursor, move_cursor_end, move_cursor_home, move_cursor_left, move_cursor_right,
     table_window, wrap_span_groups, wrapped_line_count,
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+#[cfg(test)]
+use crossterm::event::KeyModifiers;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Style},
@@ -14,22 +17,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
-
-fn plain_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
-}
-
-fn edit_key(key: KeyEvent) -> bool {
-    key.modifiers.is_empty()
-}
-
-fn ctrl_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && key
-            .modifiers
-            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-            .is_empty()
-}
 
 /// Actions emitted by context picker keyboard handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
