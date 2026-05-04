@@ -116,8 +116,9 @@ pub fn hotkey_matches(spec: &str, key: KeyEvent) -> bool {
         None => return false,
     };
 
-    let actual_modifiers =
-        key.modifiers & (KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT);
+    let Some(actual_modifiers) = hotkey_modifiers(key) else {
+        return false;
+    };
     required_modifiers == actual_modifiers && key_code_matches(required_key, key.code)
 }
 
@@ -150,6 +151,14 @@ fn parse_hotkey_spec(spec: &str) -> Option<(KeyModifiers, HotkeyToken)> {
     }
 
     key_token.map(|token| (modifiers, token))
+}
+
+fn hotkey_modifiers(key: KeyEvent) -> Option<KeyModifiers> {
+    let allowed = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
+    key.modifiers
+        .difference(allowed)
+        .is_empty()
+        .then_some(key.modifiers & allowed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +211,29 @@ mod tests {
         assert!(!hotkey_matches(
             "ctrl+k",
             KeyEvent::new(KeyCode::Char('k'), KeyModifiers::ALT)
+        ));
+    }
+
+    #[test]
+    fn hotkey_rejects_extra_system_modifier() {
+        assert!(!hotkey_matches(
+            "ctrl+k",
+            KeyEvent::new(
+                KeyCode::Char('k'),
+                KeyModifiers::CONTROL | KeyModifiers::SUPER
+            )
+        ));
+        assert!(!hotkey_matches(
+            "alt+1",
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT | KeyModifiers::META)
+        ));
+    }
+
+    #[test]
+    fn hotkey_matches_shift_modifier() {
+        assert!(hotkey_matches(
+            "shift+k",
+            KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT)
         ));
     }
 

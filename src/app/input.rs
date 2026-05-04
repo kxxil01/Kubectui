@@ -1,6 +1,6 @@
 //! Keyboard input handling for AppState.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 
 use super::views::AppView;
 use super::{
@@ -20,14 +20,6 @@ use crate::{
     },
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
-
-fn copy_resource_name_shortcut(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL)
-        && key
-            .modifiers
-            .difference(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-            .is_empty()
-}
 
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
@@ -2302,8 +2294,7 @@ impl AppState {
                 AppAction::LogsViewerOpen
             }
             KeyCode::Char('y') | KeyCode::Char('Y')
-                if copy_resource_name_shortcut(key)
-                    && app_supports_selected_resource_action_shortcut(self) =>
+                if ctrl_shortcut(key) && app_supports_selected_resource_action_shortcut(self) =>
             {
                 AppAction::CopyResourceName
             }
