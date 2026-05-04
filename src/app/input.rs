@@ -2888,9 +2888,7 @@ impl AppState {
             {
                 workbench_control_action(key, self.workbench.open, false).unwrap_or(AppAction::None)
             }
-            _ if self.detail_view.is_none()
-                && workbench_control_action(key, self.workbench.open, false).is_some() =>
-            {
+            KeyCode::Up | KeyCode::Down if self.detail_view.is_none() && ctrl_shortcut(key) => {
                 workbench_control_action(key, self.workbench.open, false).unwrap_or(AppAction::None)
             }
             KeyCode::Char('c') if self.detail_view.is_none() && plain_shortcut(key) => {
