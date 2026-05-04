@@ -655,6 +655,32 @@ fn resource_template_dialog_modified_enter_does_not_submit_or_cancel() {
 }
 
 #[test]
+fn resource_template_dialog_modified_escape_does_not_close() {
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+        KeyModifiers::CONTROL | KeyModifiers::META,
+        KeyModifiers::CONTROL | KeyModifiers::SUPER,
+    ] {
+        let mut app = AppState::default();
+        app.resource_template_dialog =
+            Some(crate::ui::components::ResourceTemplateDialogState::new(
+                ResourceTemplateKind::Deployment,
+                "default",
+            ));
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers)),
+            AppAction::None,
+            "{modifiers:?}"
+        );
+        assert!(app.resource_template_dialog.is_some(), "{modifiers:?}");
+    }
+}
+
+#[test]
 fn workspace_shortcuts_emit_actions() {
     let mut app = AppState::default();
 
@@ -2091,6 +2117,37 @@ fn help_overlay_page_keys_scroll_overlay() {
         AppAction::None
     );
     assert!(app.help_overlay.scroll() < scrolled);
+}
+
+#[test]
+fn help_overlay_modified_keys_do_not_close_or_scroll() {
+    for (code, modifiers) in [
+        (KeyCode::Esc, KeyModifiers::CONTROL),
+        (KeyCode::Esc, KeyModifiers::ALT),
+        (
+            KeyCode::Char('?'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (KeyCode::PageDown, KeyModifiers::CONTROL),
+        (KeyCode::PageUp, KeyModifiers::ALT),
+        (KeyCode::Char('j'), KeyModifiers::CONTROL),
+        (KeyCode::Char('k'), KeyModifiers::CONTROL),
+        (KeyCode::Down, KeyModifiers::CONTROL),
+        (KeyCode::Up, KeyModifiers::ALT),
+    ] {
+        let mut app = AppState::default();
+        app.help_overlay.open();
+        app.help_overlay.scroll_down();
+        let scroll = app.help_overlay.scroll();
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(code, modifiers)),
+            AppAction::None,
+            "{code:?} {modifiers:?}"
+        );
+        assert!(app.help_overlay.is_open(), "{code:?} {modifiers:?}");
+        assert_eq!(app.help_overlay.scroll(), scroll, "{code:?} {modifiers:?}");
+    }
 }
 
 #[test]
