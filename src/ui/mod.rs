@@ -916,6 +916,102 @@ fn focus_owner_label(app: &AppState, secondary_pane_active: bool) -> &'static st
     }
 }
 
+fn status_bar_message(
+    app: &AppState,
+    cluster: &ClusterSnapshot,
+    secondary_pane_active: bool,
+) -> (String, bool) {
+    let active_toast = app.toasts.last();
+    let focus_owner = focus_owner_label(app, secondary_pane_active);
+    let status_prefix = format!(
+        "[{}] view: {} • focus: {focus_owner}",
+        app.get_namespace(),
+        app.view().label()
+    );
+
+    let is_error =
+        active_toast.is_some_and(|toast| toast.is_error) || app.error_message().is_some();
+    let status = if let Some(toast) = active_toast.filter(|toast| toast.is_error) {
+        format!(
+            "{status_prefix} • ✗ {}",
+            truncate_error(&toast.message, 120)
+        )
+    } else if let Some(err) = app.error_message() {
+        format!("{status_prefix} • ERROR: {}", truncate_error(err, 120))
+    } else if let Some(toast) = active_toast {
+        format!("{status_prefix} • ● {}", toast.message)
+    } else if let Some(message) = app.status_message() {
+        format!("{status_prefix} • {message}")
+    } else {
+        let theme_name = theme::active_theme().name;
+        let current_activity = current_view_activity(cluster, app.view(), app.spinner_char())
+            .map(|activity| format!(" {activity} •"))
+            .unwrap_or_default();
+        let staleness = cluster.last_updated.map_or(String::new(), |ts| {
+            let elapsed = age_seconds_since(ts, now_unix_seconds());
+            if elapsed > 45 {
+                format!(" {elapsed}s ago •")
+            } else {
+                String::new()
+            }
+        });
+        let sort_hint = if app.view() == AppView::Pods {
+            let active = app.pod_sort().map_or("default", PodSortState::short_label);
+            format!(" • [n/a] sort ({active}) • [1/2/3] pod-sort • [0] clear-sort")
+        } else {
+            let caps = app.view().shared_sort_capabilities();
+            if caps.is_empty() {
+                String::new()
+            } else {
+                let key_hint = if caps == [WorkloadSortColumn::Name] {
+                    "[n]"
+                } else {
+                    "[n/a]"
+                };
+                let active = app
+                    .workload_sort()
+                    .map_or("default", WorkloadSortState::short_label);
+                format!(" • {key_hint} sort ({active}) • [0] clear-sort")
+            }
+        };
+        let flux_reconcile_hint = if app.detail_view.is_none()
+            && app
+                .view()
+                .supports_view_action(ViewAction::SelectedFluxReconcile)
+        {
+            " • [R] reconcile"
+        } else {
+            ""
+        };
+        let workbench_hint = if app.workbench().open {
+            " • [H] history • [b] workbench • [,/.] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
+        } else {
+            " • [H] history • [b] workbench"
+        };
+        let focus_hint = match app.focus {
+            Focus::Workbench if app.workbench().maximized => " • [Esc] exit maximize",
+            Focus::Workbench => " • [Esc] return",
+            Focus::Content if secondary_pane_active => " • [;] resource list",
+            Focus::Content
+                if app.detail_view.is_none() && app.view().supports_secondary_pane_scroll() =>
+            {
+                " • [;] secondary pane"
+            }
+            _ => "",
+        };
+        let navigation_hint = if secondary_pane_active {
+            "[j/k] scroll"
+        } else {
+            "[j/k] navigate"
+        };
+        format!(
+            "{status_prefix}{current_activity}{focus_hint}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit"
+        )
+    };
+
+    (status, is_error)
+}
+
 fn active_overlay_mask(app: &AppState) -> u16 {
     let mut mask = 0_u16;
     if app.detail_view.is_some() {
@@ -1146,6 +1242,15 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         return;
     }
 
+    let overlay_mask = active_overlay_mask(app);
+    let secondary_pane_active = app.content_secondary_pane_active();
+    let (status, is_status_error) = status_bar_message(app, cluster, secondary_pane_active);
+    let status_height = if app.workbench().maximized {
+        components::status_bar_height(area.width, &status, area.height)
+    } else {
+        2
+    };
+
     let root = {
         let _layout_scope = profiling::span_scope("layout");
         Layout::default()
@@ -1153,12 +1258,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .constraints([
                 Constraint::Length(3),
                 Constraint::Min(8),
-                Constraint::Length(2),
+                Constraint::Length(status_height),
             ])
             .split(frame.area())
     };
-
-    let overlay_mask = active_overlay_mask(app);
 
     {
         let _header_scope = profiling::span_scope("header");
@@ -1285,7 +1388,6 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     }
 
     let visible_columns = resolve_visible_columns(app);
-    let secondary_pane_active = app.content_secondary_pane_active();
     let split_pane_focus = if secondary_pane_active {
         SplitPaneFocus::Detail
     } else if app.focus == Focus::Content {
@@ -1820,100 +1922,13 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         });
     }
 
-    // Toast notifications take priority over regular status messages
-    let active_toast = app.toasts.last();
-    let focus_owner = focus_owner_label(app, secondary_pane_active);
-    let status_prefix = format!(
-        "[{}] view: {} • focus: {focus_owner}",
-        app.get_namespace(),
-        app.view().label()
-    );
-    let status = if let Some(toast) = active_toast.filter(|t| t.is_error) {
-        format!(
-            "{status_prefix} • ✗ {}",
-            truncate_error(&toast.message, 120)
-        )
-    } else if let Some(err) = app.error_message() {
-        format!("{status_prefix} • ERROR: {}", truncate_error(err, 120))
-    } else if let Some(toast) = active_toast {
-        format!("{status_prefix} • ● {}", toast.message)
-    } else if let Some(message) = app.status_message() {
-        format!("{status_prefix} • {message}")
-    } else {
-        let theme_name = theme::active_theme().name;
-        let current_activity = current_view_activity(cluster, app.view(), app.spinner_char())
-            .map(|activity| format!(" {activity} •"))
-            .unwrap_or_default();
-        let staleness = cluster.last_updated.map_or(String::new(), |ts| {
-            let elapsed = age_seconds_since(ts, now_unix_seconds());
-            if elapsed > 45 {
-                format!(" {elapsed}s ago •")
-            } else {
-                String::new()
-            }
-        });
-        let sort_hint = if app.view() == AppView::Pods {
-            let active = app.pod_sort().map_or("default", PodSortState::short_label);
-            format!(" • [n/a] sort ({active}) • [1/2/3] pod-sort • [0] clear-sort")
-        } else {
-            let caps = app.view().shared_sort_capabilities();
-            if caps.is_empty() {
-                String::new()
-            } else {
-                let key_hint = if caps == [WorkloadSortColumn::Name] {
-                    "[n]"
-                } else {
-                    "[n/a]"
-                };
-                let active = app
-                    .workload_sort()
-                    .map_or("default", WorkloadSortState::short_label);
-                format!(" • {key_hint} sort ({active}) • [0] clear-sort")
-            }
-        };
-        let flux_reconcile_hint = if app.detail_view.is_none()
-            && app
-                .view()
-                .supports_view_action(ViewAction::SelectedFluxReconcile)
-        {
-            " • [R] reconcile"
-        } else {
-            ""
-        };
-        let workbench_hint = if app.workbench().open {
-            " • [H] history • [b] workbench • [,/.] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
-        } else {
-            " • [H] history • [b] workbench"
-        };
-        let focus_hint = match app.focus {
-            Focus::Workbench if app.workbench().maximized => " • [Esc] exit maximize",
-            Focus::Workbench => " • [Esc] return",
-            Focus::Content if secondary_pane_active => " • [;] resource list",
-            Focus::Content
-                if app.detail_view.is_none() && app.view().supports_secondary_pane_scroll() =>
-            {
-                " • [;] secondary pane"
-            }
-            _ => "",
-        };
-        let navigation_hint = if secondary_pane_active {
-            "[j/k] scroll"
-        } else {
-            "[j/k] navigate"
-        };
-        format!(
-            "{status_prefix}{current_activity}{focus_hint}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit"
-        )
-    };
-
     {
         let _status_scope = profiling::span_scope("status");
-        let is_error = active_toast.is_some_and(|t| t.is_error) || app.error_message().is_some();
         components::render_status_bar_with_overlay_mask(
             frame,
             root[2],
             &status,
-            is_error,
+            is_status_error,
             overlay_mask,
         );
     }
@@ -3908,6 +3923,34 @@ mod tests {
 
         assert!(rendered.contains("[,/.] tabs"), "{rendered}");
         assert!(!rendered.contains("[[]/]] tabs"), "{rendered}");
+    }
+
+    #[test]
+    fn status_bar_wraps_long_hint_line_on_standard_width() {
+        let mut app = app_with_view(AppView::Pods);
+        app.workbench_mut()
+            .open_tab(crate::workbench::WorkbenchTabState::ActionHistory(
+                crate::workbench::ActionHistoryTabState::default(),
+            ));
+        app.focus = Focus::Workbench;
+        app.workbench_mut().maximized = true;
+
+        let rendered = render_to_string_with_size(&app, &pods_snapshot_for_render_tests(), 120, 40);
+
+        assert!(rendered.contains("[Ctrl+w] close-tab"), "{rendered}");
+        assert!(rendered.contains("[Esc then Enter] quit"), "{rendered}");
+    }
+
+    #[test]
+    fn status_bar_height_grows_for_wrapped_content_but_stays_bounded() {
+        let short = components::status_bar_height(120, "ready", 40);
+        let long = components::status_bar_height(80, &"hint ".repeat(80), 40);
+        let tiny = components::status_bar_height(80, &"hint ".repeat(80), 12);
+
+        assert_eq!(short, 2);
+        assert!(long > short, "{long}");
+        assert!(long <= 6, "{long}");
+        assert_eq!(tiny, 2);
     }
 
     #[test]
