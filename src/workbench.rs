@@ -1993,13 +1993,17 @@ impl ExecTabState {
     const MAX_PENDING_FRAGMENT: usize = 1_048_576;
 
     pub fn append_output(&mut self, chunk: &str) {
-        for segment in chunk.split_inclusive('\n') {
-            if segment.ends_with('\n') {
-                self.pending_fragment
-                    .push_str(segment.trim_end_matches('\n'));
-                self.lines.push(std::mem::take(&mut self.pending_fragment));
-            } else {
-                self.pending_fragment.push_str(segment);
+        let chunk = normalize_exec_output_chunk(chunk);
+        for c in chunk.chars() {
+            match c {
+                '\n' => self.lines.push(std::mem::take(&mut self.pending_fragment)),
+                '\r' => self.pending_fragment.clear(),
+                '\u{0008}' => {
+                    self.pending_fragment.pop();
+                }
+                '\t' => self.pending_fragment.push_str("    "),
+                c if !c.is_control() => self.pending_fragment.push(c),
+                _ => {}
             }
         }
         // Force-flush oversized fragments (e.g. binary output without newlines).
@@ -2080,6 +2084,50 @@ impl ExecTabState {
         self.pending_fragment.clear();
         self.scroll = 0;
     }
+}
+
+fn normalize_exec_output_chunk(chunk: &str) -> String {
+    strip_ansi_escape_sequences(&chunk.replace("\r\n", "\n"))
+}
+
+fn strip_ansi_escape_sequences(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{001b}' {
+            output.push(c);
+            continue;
+        }
+
+        match chars.peek().copied() {
+            Some('[') => {
+                chars.next();
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                chars.next();
+                let mut saw_escape = false;
+                for c in chars.by_ref() {
+                    if c == '\u{0007}' {
+                        break;
+                    }
+                    if saw_escape && c == '\\' {
+                        break;
+                    }
+                    saw_escape = c == '\u{001b}';
+                }
+            }
+            Some(_) => {
+                chars.next();
+            }
+            None => {}
+        }
+    }
+    output
 }
 
 fn truncate_extension_lines(mut lines: Vec<String>) -> Vec<String> {
@@ -4104,6 +4152,33 @@ mod tests {
         assert!(tab.lines.is_empty());
         assert!(tab.pending_fragment.is_empty());
         assert_eq!(tab.scroll, 0);
+    }
+
+    #[test]
+    fn exec_output_carriage_return_replaces_pending_line() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("progress 10%\rprogress 90%\n");
+
+        assert_eq!(tab.lines, vec!["progress 90%"]);
+        assert!(tab.pending_fragment.is_empty());
+    }
+
+    #[test]
+    fn exec_output_crlf_is_single_newline() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("first\r\nsecond\r\n");
+
+        assert_eq!(tab.lines, vec!["first", "second"]);
+        assert!(tab.pending_fragment.is_empty());
+    }
+
+    #[test]
+    fn exec_output_strips_ansi_and_control_sequences() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("\u{001b}[31mred\u{001b}[0m\tok\u{0008}!\u{001b}]0;title\u{0007}\n");
+
+        assert_eq!(tab.lines, vec!["red    o!"]);
+        assert!(tab.pending_fragment.is_empty());
     }
 
     #[test]
