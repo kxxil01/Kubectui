@@ -2112,6 +2112,22 @@ impl ExecTabState {
         self.input_cursor = self.input.chars().count();
     }
 
+    pub fn input_command_bytes(&self) -> Option<Vec<u8>> {
+        if self.input.is_empty() {
+            return None;
+        }
+        let mut bytes = self.input.clone().into_bytes();
+        bytes.push(b'\r');
+        Some(bytes)
+    }
+
+    pub fn mark_input_sent(&mut self) {
+        let command = self.input.clone();
+        self.record_command_history(&command);
+        self.input.clear();
+        self.input_cursor = 0;
+    }
+
     pub fn clear_output(&mut self) {
         self.lines.clear();
         self.pending_fragment.clear();
@@ -4266,6 +4282,27 @@ mod tests {
 
         assert_eq!(tab.input, "kubectl ");
         assert_eq!(tab.input_cursor, 8);
+    }
+
+    #[test]
+    fn exec_mark_input_sent_records_history_and_resets_cursor() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.input = "echo ready".into();
+        tab.input_cursor = tab.input.chars().count();
+
+        assert_eq!(tab.input_command_bytes(), Some(b"echo ready\r".to_vec()));
+        tab.mark_input_sent();
+
+        assert!(tab.input.is_empty());
+        assert_eq!(tab.input_cursor, 0);
+        assert_eq!(tab.command_history, vec!["echo ready"]);
+    }
+
+    #[test]
+    fn exec_empty_input_has_no_command_bytes() {
+        let tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+
+        assert_eq!(tab.input_command_bytes(), None);
     }
 
     #[test]
