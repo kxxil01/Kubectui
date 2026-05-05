@@ -7382,6 +7382,12 @@ pub(crate) async fn run_app_inner(
                 AppAction::ExportLogs => {
                     action::copy_export::export_logs(&mut app);
                 }
+                AppAction::CopyExecOutput => {
+                    action::copy_export::copy_exec_output(&mut app);
+                }
+                AppAction::ExportExecOutput => {
+                    action::copy_export::export_exec_output(&mut app);
+                }
                 AppAction::EditYaml => {
                     if !app
                         .detail_view

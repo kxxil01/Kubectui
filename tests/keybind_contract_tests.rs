@@ -543,7 +543,7 @@ fn readme_documents_exec_workbench_control_handoff() {
         "README must document exec input to workbench controls handoff"
     );
     assert!(
-        readme.contains("then use `z`, `,`/`.`, or `Ctrl+W`"),
+        readme.contains("then use `z`, `,`/`.`, `Ctrl+W`, `y`, or `S`"),
         "README must list reachable exec controls after Esc"
     );
 }
@@ -583,6 +583,16 @@ fn exec_workbench_controls_require_controls_mode() {
         AppAction::None,
         "Ctrl+W must not close exec tab while exec input owns keyboard"
     );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('y')), &mut app),
+        AppAction::None,
+        "y must remain shell input while exec input owns keyboard"
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('S')), &mut app),
+        AppAction::None,
+        "S must remain shell input while exec input owns keyboard"
+    );
 
     assert_eq!(
         route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app),
@@ -610,6 +620,14 @@ fn exec_workbench_controls_require_controls_mode() {
             &mut app
         ),
         AppAction::WorkbenchCloseActiveTab
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('y')), &mut app),
+        AppAction::CopyExecOutput
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('S')), &mut app),
+        AppAction::ExportExecOutput
     );
 }
 

@@ -89,6 +89,46 @@ pub fn export_logs(app: &mut AppState) {
     }
 }
 
+/// Copies the active exec tab output to the clipboard.
+pub fn copy_exec_output(app: &mut AppState) {
+    let Some(tab) = app.workbench().active_tab() else {
+        app.set_error("Open an exec tab before copying exec output.".to_string());
+        return;
+    };
+    let Some(content) = active_exec_output(tab) else {
+        app.set_error(empty_or_unsupported_exec_action_message(tab, "copy"));
+        return;
+    };
+
+    let line_count = content.lines().count();
+    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
+        app.set_error(format!("Clipboard error: {e}"));
+    } else {
+        app.status_message = Some(format!("Copied {line_count} exec output lines"));
+    }
+}
+
+/// Exports the active exec tab output to a file.
+pub fn export_exec_output(app: &mut AppState) {
+    let Some(tab) = app.workbench().active_tab() else {
+        app.set_error("Open an exec tab before exporting exec output.".to_string());
+        return;
+    };
+    let Some((label, content)) = active_exec_export(tab) else {
+        app.set_error(empty_or_unsupported_exec_action_message(tab, "export"));
+        return;
+    };
+
+    match kubectui::export::save_text_to_file("exec", &label, &content) {
+        Ok(path) => {
+            app.status_message = Some(format!("Saved to {}", path.display()));
+        }
+        Err(e) => {
+            app.set_error(format!("Export error: {e}"));
+        }
+    }
+}
+
 fn empty_or_unsupported_log_action_message(
     tab: &kubectui::workbench::WorkbenchTab,
     action: &str,
@@ -98,6 +138,16 @@ fn empty_or_unsupported_log_action_message(
             format!("No matching log lines to {action}.")
         }
         _ => format!("Open a log tab before {action}ing logs."),
+    }
+}
+
+fn empty_or_unsupported_exec_action_message(
+    tab: &kubectui::workbench::WorkbenchTab,
+    action: &str,
+) -> String {
+    match &tab.state {
+        WorkbenchTabState::Exec(_) => format!("No exec output to {action}."),
+        _ => format!("Open an exec tab before {action}ing exec output."),
     }
 }
 
@@ -133,6 +183,22 @@ fn active_log_copy_content(tab: &kubectui::workbench::WorkbenchTab) -> Option<St
                 .collect::<Vec<_>>();
             (!content.is_empty()).then(|| content.join("\n"))
         }
+        _ => None,
+    }
+}
+
+fn active_exec_output(tab: &kubectui::workbench::WorkbenchTab) -> Option<String> {
+    match &tab.state {
+        WorkbenchTabState::Exec(exec_tab) => exec_tab.output_text(),
+        _ => None,
+    }
+}
+
+fn active_exec_export(tab: &kubectui::workbench::WorkbenchTab) -> Option<(String, String)> {
+    match &tab.state {
+        WorkbenchTabState::Exec(exec_tab) => exec_tab
+            .output_text()
+            .map(|content| (exec_tab.output_label(), content)),
         _ => None,
     }
 }
@@ -189,7 +255,9 @@ mod tests {
     use kubectui::{
         app::{LogsViewerState, ResourceRef},
         log_investigation::{LogEntry, LogQueryMode, LogTimeWindow, compile_query},
-        workbench::{PodLogsTabState, WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState},
+        workbench::{
+            ExecTabState, PodLogsTabState, WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
+        },
     };
 
     #[test]
@@ -291,6 +359,98 @@ mod tests {
             app.error_message(),
             Some("No matching log lines to export.")
         );
+    }
+
+    #[test]
+    fn exec_copy_includes_pending_fragment() {
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("pod-0".into(), "ns".into()),
+            1,
+            "pod-0".into(),
+            "ns".into(),
+        );
+        tab.container_name = "main".into();
+        tab.lines.push("first line".into());
+        tab.pending_fragment = "partial".into();
+
+        let content = active_exec_output(&kubectui::workbench::WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::Exec(tab),
+        })
+        .expect("exec output");
+
+        assert_eq!(content, "first line\npartial");
+    }
+
+    #[test]
+    fn exec_export_uses_resource_label() {
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("pod-0".into(), "ns".into()),
+            1,
+            "pod-0".into(),
+            "ns".into(),
+        );
+        tab.container_name = "main".into();
+        tab.lines.push("ok".into());
+
+        let export = active_exec_export(&kubectui::workbench::WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::Exec(tab),
+        })
+        .expect("exec export");
+
+        assert_eq!(export.0, "ns-pod-0-main");
+        assert_eq!(export.1, "ok");
+    }
+
+    #[test]
+    fn copy_exec_output_reports_missing_exec_tab() {
+        let mut app = AppState::default();
+
+        copy_exec_output(&mut app);
+
+        assert_eq!(
+            app.error_message(),
+            Some("Open an exec tab before copying exec output.")
+        );
+    }
+
+    #[test]
+    fn export_exec_output_reports_empty_exec_tab() {
+        let mut app = AppState::default();
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::Exec(ExecTabState::new(
+                ResourceRef::Pod("pod-0".into(), "ns".into()),
+                1,
+                "pod-0".into(),
+                "ns".into(),
+            )));
+
+        export_exec_output(&mut app);
+
+        assert_eq!(app.error_message(), Some("No exec output to export."));
+    }
+
+    #[test]
+    fn export_exec_output_uses_exec_file_prefix() {
+        let mut app = AppState::default();
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("pod-0".into(), "ns".into()),
+            1,
+            "pod-0".into(),
+            "ns".into(),
+        );
+        tab.container_name = "main".into();
+        tab.lines.push("ok".into());
+        app.workbench_mut().open_tab(WorkbenchTabState::Exec(tab));
+
+        export_exec_output(&mut app);
+
+        let status = app.status_message.expect("status message");
+        assert!(status.contains("kubectui-exec-ns-pod-0-main-"));
+        let path = status.trim_start_matches("Saved to ");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "ok");
+        std::fs::remove_file(path).ok();
     }
 
     #[test]
