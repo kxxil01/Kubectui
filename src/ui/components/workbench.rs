@@ -2979,22 +2979,18 @@ fn wrapped_str_row_count(value: &str, width: u16) -> usize {
     value.chars().count().max(1).div_ceil(usable_width)
 }
 
-fn exec_output_window_lines<'a>(
-    tab: &'a crate::workbench::ExecTabState,
-    width: u16,
-    height: u16,
+fn visual_window_start(
+    total: usize,
+    viewport_rows: usize,
     scroll: usize,
-) -> (Vec<Line<'a>>, usize, usize, usize) {
-    let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
-    let viewport_rows = height.max(1) as usize;
+    mut row_count: impl FnMut(usize) -> usize,
+) -> (usize, usize, usize, usize, usize) {
     let mut visual_total = 0usize;
     let mut rows_before = 0usize;
     let mut start_index = 0usize;
     let mut start_rows = 1usize;
     for index in 0..total {
-        let rows = exec_output_entry(tab, index)
-            .map(|line| wrapped_str_row_count(line, width))
-            .unwrap_or(1);
+        let rows = row_count(index);
         if visual_total <= scroll && visual_total.saturating_add(rows) > scroll {
             start_index = index;
             rows_before = visual_total;
@@ -3005,15 +3001,12 @@ fn exec_output_window_lines<'a>(
 
     let position = scroll.min(visual_total.saturating_sub(viewport_rows));
     if position != scroll {
-        let total_rows = visual_total;
         let mut scanned_rows = 0usize;
         rows_before = 0;
         start_index = 0;
         start_rows = 1;
         for index in 0..total {
-            let rows = exec_output_entry(tab, index)
-                .map(|line| wrapped_str_row_count(line, width))
-                .unwrap_or(1);
+            let rows = row_count(index);
             if scanned_rows <= position && scanned_rows.saturating_add(rows) > position {
                 start_index = index;
                 rows_before = scanned_rows;
@@ -3022,10 +3015,32 @@ fn exec_output_window_lines<'a>(
             }
             scanned_rows = scanned_rows.saturating_add(rows);
         }
-        visual_total = total_rows;
     }
 
-    let local_scroll = position.saturating_sub(rows_before);
+    (
+        visual_total,
+        position,
+        start_index,
+        position.saturating_sub(rows_before),
+        start_rows,
+    )
+}
+
+fn exec_output_window_lines<'a>(
+    tab: &'a crate::workbench::ExecTabState,
+    width: u16,
+    height: u16,
+    scroll: usize,
+) -> (Vec<Line<'a>>, usize, usize, usize) {
+    let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
+    let viewport_rows = height.max(1) as usize;
+    let (visual_total, position, start_index, local_scroll, start_rows) =
+        visual_window_start(total, viewport_rows, scroll, |index| {
+            exec_output_entry(tab, index)
+                .map(|line| wrapped_str_row_count(line, width))
+                .unwrap_or(1)
+        });
+
     let mut visible_rows = 0usize;
     let mut lines = Vec::new();
     for index in start_index..total {
@@ -3044,6 +3059,72 @@ fn exec_output_window_lines<'a>(
     }
 
     (lines, visual_total, position, local_scroll)
+}
+
+fn extension_output_line_style(line: &str, theme: &Theme) -> Style {
+    if line.starts_with("stderr:") {
+        Style::default().fg(theme.warning)
+    } else {
+        Style::default().fg(theme.fg)
+    }
+}
+
+fn extension_output_window_lines<'a>(
+    lines: &'a [String],
+    width: u16,
+    height: u16,
+    scroll: usize,
+    theme: &Theme,
+) -> (Vec<Line<'a>>, usize, usize, usize) {
+    let total = lines.len();
+    let viewport_rows = height.max(1) as usize;
+    let (visual_total, position, start_index, local_scroll, start_rows) =
+        visual_window_start(total, viewport_rows, scroll, |index| {
+            lines
+                .get(index)
+                .map(|line| wrapped_str_row_count(line, width))
+                .unwrap_or(1)
+        });
+
+    let mut visible_rows = 0usize;
+    let mut rendered = Vec::new();
+    for index in start_index..total {
+        if visible_rows >= local_scroll + viewport_rows {
+            break;
+        }
+        if let Some(line) = lines.get(index) {
+            rendered.push(Line::from(Span::styled(
+                line.as_str(),
+                extension_output_line_style(line, theme),
+            )));
+            let rows = if index == start_index {
+                start_rows
+            } else {
+                wrapped_str_row_count(line, width)
+            };
+            visible_rows = visible_rows.saturating_add(rows);
+        }
+    }
+
+    (rendered, visual_total, position, local_scroll)
+}
+
+fn render_extension_output_lines(
+    frame: &mut Frame,
+    area: Rect,
+    lines: &[String],
+    scroll: usize,
+    theme: &Theme,
+) {
+    let (rendered, total, position, local_scroll) =
+        extension_output_window_lines(lines, area.width, area.height, scroll, theme);
+    frame.render_widget(
+        Paragraph::new(rendered)
+            .wrap(Wrap { trim: false })
+            .scroll((local_scroll.min(u16::MAX as usize) as u16, 0)),
+        area,
+    );
+    render_scrollbar(frame, area, total, position);
 }
 
 fn render_exec_output_lines(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
@@ -3126,19 +3207,7 @@ fn render_extension_output_tab(
         return;
     }
 
-    let lines = tab
-        .lines
-        .iter()
-        .map(|line| {
-            let style = if line.starts_with("stderr:") {
-                Style::default().fg(theme.warning)
-            } else {
-                Style::default().fg(theme.fg)
-            };
-            Line::from(Span::styled(line.clone(), style))
-        })
-        .collect::<Vec<_>>();
-    render_wrapped_text_lines(frame, sections[1], lines, tab.scroll);
+    render_extension_output_lines(frame, sections[1], &tab.lines, tab.scroll, &theme);
 }
 
 fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::RunbookTabState) {
@@ -3507,11 +3576,11 @@ fn scroll_window_scrollbar_position(
 mod tests {
     use super::{
         VisibleWindow, access_review_lines, centered_window, exec_output_window_lines,
-        render_connectivity_tab, render_decoded_secret_tab, render_events_tab, render_exec_tab,
-        render_extension_output_tab, render_helm_history_tab, render_helm_values_diff,
-        render_logs_tab, render_rollout_tab, render_workload_logs_tab, render_yaml_tab,
-        scroll_window, scroll_window_scrollbar_position, summarize_workload_log_filters,
-        workload_log_render_window,
+        extension_output_window_lines, render_connectivity_tab, render_decoded_secret_tab,
+        render_events_tab, render_exec_tab, render_extension_output_tab, render_helm_history_tab,
+        render_helm_values_diff, render_logs_tab, render_rollout_tab, render_workload_logs_tab,
+        render_yaml_tab, scroll_window, scroll_window_scrollbar_position,
+        summarize_workload_log_filters, workload_log_render_window,
     };
     use crate::{
         action_history::{ActionKind, ActionStatus},
@@ -4410,6 +4479,35 @@ mod tests {
                 .first()
                 .is_some_and(|line| line.spans.iter().any(|span| span.content == "line 15")),
             "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn extension_output_window_collects_only_visible_lines() {
+        let theme = default_theme();
+        let lines = (0..crate::workbench::MAX_EXTENSION_OUTPUT_LINES)
+            .map(|idx| format!("line {idx}"))
+            .collect::<Vec<_>>();
+
+        let (rendered, total, position, local_scroll) =
+            extension_output_window_lines(&lines, 80, 8, usize::MAX, &theme);
+
+        assert_eq!(total, crate::workbench::MAX_EXTENSION_OUTPUT_LINES);
+        assert_eq!(
+            position,
+            crate::workbench::MAX_EXTENSION_OUTPUT_LINES.saturating_sub(8)
+        );
+        assert_eq!(local_scroll, 0);
+        assert!(
+            rendered.len() <= 8,
+            "render window should stay viewport-sized, got {}",
+            rendered.len()
+        );
+        assert!(
+            rendered
+                .first()
+                .is_some_and(|line| line.spans.iter().any(|span| span.content == "line 4992")),
+            "{rendered:?}"
         );
     }
 
