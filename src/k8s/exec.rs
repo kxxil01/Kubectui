@@ -11,6 +11,7 @@ use kube::{
     Api,
     api::{AttachParams, AttachedProcess, Patch, PatchParams},
 };
+use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     sync::{mpsc, oneshot},
@@ -24,11 +25,81 @@ const DEBUG_CONTAINER_NAME_PREFIX: &str = "kubectui-debug";
 const DEBUG_CONTAINER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const DEBUG_CONTAINER_READY_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-const SHELL_FALLBACKS: &[(&str, &[&str])] = &[
-    ("/bin/bash", &["/bin/bash", "-i"]),
-    ("/bin/sh", &["/bin/sh", "-i"]),
-    ("/busybox/sh", &["/busybox/sh", "-i"]),
+const DEFAULT_EXEC_SHELLS: &[&str] = &[
+    "/bin/zsh",
+    "/usr/bin/zsh",
+    "/usr/bin/fish",
+    "/bin/fish",
+    "/bin/bash",
+    "/usr/bin/bash",
+    "/bin/ash",
+    "/bin/sh",
+    "/busybox/sh",
 ];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecConfig {
+    #[serde(default = "default_exec_shells")]
+    pub shells: Vec<String>,
+    #[serde(default)]
+    pub login: bool,
+}
+
+impl Default for ExecConfig {
+    fn default() -> Self {
+        Self {
+            shells: default_exec_shells(),
+            login: false,
+        }
+    }
+}
+
+fn default_exec_shells() -> Vec<String> {
+    DEFAULT_EXEC_SHELLS
+        .iter()
+        .map(|shell| shell.to_string())
+        .collect()
+}
+
+impl ExecConfig {
+    pub fn normalized_shells(&self) -> Vec<String> {
+        let mut shells = Vec::new();
+        for shell in self
+            .shells
+            .iter()
+            .filter_map(|shell| normalize_shell_candidate(shell))
+        {
+            if !shells.contains(&shell) {
+                shells.push(shell);
+            }
+        }
+        if shells.is_empty() {
+            shells = default_exec_shells();
+        }
+        shells
+    }
+
+    pub fn shell_summary(&self) -> String {
+        let shells = self.normalized_shells();
+        match shells.as_slice() {
+            [] => "auto".to_string(),
+            [only] => format!("auto:{only}"),
+            [first, rest @ ..] => format!("auto:{first}+{}", rest.len()),
+        }
+    }
+}
+
+fn normalize_shell_candidate(shell: &str) -> Option<String> {
+    let shell = shell.trim();
+    if shell.is_empty()
+        || shell.contains('\0')
+        || shell.chars().any(char::is_whitespace)
+        || shell.contains('/') && !shell.starts_with('/')
+    {
+        return None;
+    }
+    Some(shell.to_string())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum DebugImagePreset {
@@ -200,6 +271,7 @@ pub async fn spawn_exec_session(
     pod_name: String,
     namespace: String,
     container_name: String,
+    config: ExecConfig,
     update_tx: mpsc::Sender<ExecEvent>,
 ) -> Result<ExecSessionHandle> {
     let (input_tx, input_rx) = mpsc::channel(128);
@@ -211,6 +283,7 @@ pub async fn spawn_exec_session(
             pod_name,
             namespace,
             container_name,
+            config,
             input_rx,
             cancel_rx,
             update_tx.clone(),
@@ -239,13 +312,14 @@ async fn run_exec_session(
     pod_name: String,
     namespace: String,
     container_name: String,
+    config: ExecConfig,
     mut input_rx: mpsc::Receiver<Vec<u8>>,
     mut cancel_rx: oneshot::Receiver<()>,
     update_tx: mpsc::Sender<ExecEvent>,
 ) -> Result<()> {
     let pods: Api<Pod> = Api::namespaced(client.get_client(), &namespace);
     let (mut attached, shell, mut status_future) =
-        open_shell_process(&pods, &pod_name, &container_name).await?;
+        open_shell_process(&pods, &pod_name, &container_name, &config).await?;
 
     let _ = update_tx
         .send(ExecEvent::Opened {
@@ -338,17 +412,20 @@ async fn open_shell_process(
     pods: &Api<Pod>,
     pod_name: &str,
     container_name: &str,
-) -> Result<(AttachedProcess, &'static str, StatusFuture)> {
-    for (shell_label, command) in SHELL_FALLBACKS {
+    config: &ExecConfig,
+) -> Result<(AttachedProcess, String, StatusFuture)> {
+    let shells = config.normalized_shells();
+    for shell in &shells {
+        let command = shell_command(shell, config.login);
         let attach = AttachParams::default()
             .stdin(true)
             .stdout(true)
             .stderr(true)
             .container(container_name.to_string());
         let mut attached = pods
-            .exec(pod_name, command.iter().copied(), &attach)
+            .exec(pod_name, command.iter().map(String::as_str), &attach)
             .await
-            .with_context(|| format!("failed to exec {} in Pod '{pod_name}'", command[0]))?;
+            .with_context(|| format!("failed to exec {shell} in Pod '{pod_name}'"))?;
         let mut status_future = attached
             .take_status()
             .map(|future| Box::pin(future) as StatusFuture)
@@ -361,13 +438,27 @@ async fn open_shell_process(
         .await
         .is_err()
         {
-            return Ok((attached, shell_label, status_future));
+            return Ok((attached, shell.clone(), status_future));
         }
     }
 
     Err(anyhow!(
-        "No supported shell was found. Tried /bin/bash, /bin/sh, and /busybox/sh."
+        "No supported shell was found. Tried {}.",
+        shells.join(", ")
     ))
+}
+
+fn shell_command(shell: &str, login: bool) -> Vec<String> {
+    let flag = if login && supports_login_shell_flag(shell) {
+        "-il"
+    } else {
+        "-i"
+    };
+    vec![shell.to_string(), flag.to_string()]
+}
+
+fn supports_login_shell_flag(shell: &str) -> bool {
+    shell.ends_with("bash") || shell.ends_with("zsh") || shell.ends_with("fish")
 }
 
 async fn pipe_exec_output(
@@ -584,10 +675,49 @@ mod tests {
     use kube::core::ObjectMeta;
 
     #[test]
-    fn shell_fallbacks_are_ordered() {
-        assert_eq!(SHELL_FALLBACKS[0].0, "/bin/bash");
-        assert_eq!(SHELL_FALLBACKS[1].0, "/bin/sh");
-        assert_eq!(SHELL_FALLBACKS[2].0, "/busybox/sh");
+    fn exec_config_defaults_include_modern_and_posix_shells() {
+        let shells = ExecConfig::default().normalized_shells();
+        assert_eq!(shells[0], "/bin/zsh");
+        assert!(shells.iter().any(|shell| shell == "/bin/bash"));
+        assert!(shells.iter().any(|shell| shell == "/bin/sh"));
+        assert!(shells.iter().any(|shell| shell == "/busybox/sh"));
+    }
+
+    #[test]
+    fn exec_config_normalizes_shells_and_falls_back_when_empty() {
+        let config = ExecConfig {
+            shells: vec![
+                " /bin/fish ".to_string(),
+                "bad shell".to_string(),
+                "relative/path".to_string(),
+                "/bin/fish".to_string(),
+                "/bin/sh".to_string(),
+            ],
+            login: false,
+        };
+        assert_eq!(config.normalized_shells(), vec!["/bin/fish", "/bin/sh"]);
+
+        let empty = ExecConfig {
+            shells: vec!["bad shell".to_string()],
+            login: false,
+        };
+        assert_eq!(empty.normalized_shells(), ExecConfig::default().shells);
+    }
+
+    #[test]
+    fn shell_command_uses_login_only_for_shells_that_support_it() {
+        assert_eq!(
+            shell_command("/bin/zsh", true),
+            vec!["/bin/zsh".to_string(), "-il".to_string()]
+        );
+        assert_eq!(
+            shell_command("/bin/sh", true),
+            vec!["/bin/sh".to_string(), "-i".to_string()]
+        );
+        assert_eq!(
+            shell_command("/usr/bin/fish", false),
+            vec!["/usr/bin/fish".to_string(), "-i".to_string()]
+        );
     }
 
     #[test]

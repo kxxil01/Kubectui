@@ -70,6 +70,19 @@ Supported AI providers: `open_ai`, `anthropic`, `claude_cli`, and `codex_cli`.
 When multiple providers are configured, the action palette is the picker: choose entries like `Explain Failure (Codex CLI)` or `Explain Failure (Claude CLI)`.
 Legacy `ai:` blocks in `extensions.yaml` are not supported.
 
+Pod exec shells use container-local shells. Configure preferred candidates in
+`~/.kube/kubectui-config.json`; `login` only affects shells that support login
+mode (`bash`, `zsh`, `fish`):
+
+```json
+{
+  "exec": {
+    "shells": ["/usr/bin/fish", "/bin/zsh", "/bin/bash", "/bin/sh"],
+    "login": false
+  }
+}
+```
+
 ## What it does
 
 **Browse** 50 resource views across 9 sidebar groups — workloads, network, config, storage, Helm, Flux, RBAC, diagnostics, and custom resources. The sidebar auto-collapses to show only the active group.

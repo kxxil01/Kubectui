@@ -32,7 +32,7 @@ use crate::{
     action_history::{ActionHistoryState, ActionHistoryTarget, ActionKind, ActionStatus},
     ai_actions::AiConfig,
     bookmarks::{BookmarkEntry, BookmarkToggleResult, selected_bookmark_resource, toggle_bookmark},
-    k8s::{client::EventInfo, dtos::CustomResourceInfo},
+    k8s::{client::EventInfo, dtos::CustomResourceInfo, exec::ExecConfig},
     preferences::{ClusterPreferences, UserPreferences},
     ui::components::{
         CommandPalette, ContextPicker, NamespacePicker, port_forward_dialog::PortForwardDialog,
@@ -348,6 +348,8 @@ pub struct AppState {
     pub cluster_preferences: Option<HashMap<String, ClusterPreferences>>,
     /// Native AI provider/action configuration.
     pub ai_config: Option<AiConfig>,
+    /// Native pod exec shell configuration.
+    pub exec_config: ExecConfig,
     /// Active kube context name (for per-cluster preferences).
     pub current_context_name: Option<String>,
     /// When true, config should be saved at next convenient point.

@@ -494,14 +494,14 @@ impl AppState {
             && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
         {
             exec_tab.restart_session(session_id, pod_name, namespace, None);
+            exec_tab.set_shell_plan(self.exec_config.shell_summary());
             self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
         }
-        self.workbench
-            .open_tab(WorkbenchTabState::Exec(ExecTabState::new(
-                resource, session_id, pod_name, namespace,
-            )));
+        let mut tab = ExecTabState::new(resource, session_id, pod_name, namespace);
+        tab.set_shell_plan(self.exec_config.shell_summary());
+        self.workbench.open_tab(WorkbenchTabState::Exec(tab));
         self.focus = Focus::Workbench;
     }
 
@@ -518,12 +518,14 @@ impl AppState {
             && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
         {
             exec_tab.restart_session(session_id, pod_name, namespace, Some(container_name));
+            exec_tab.set_shell_plan(self.exec_config.shell_summary());
             self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
         }
         let mut tab = ExecTabState::new(resource, session_id, pod_name, namespace);
         tab.preset_container(container_name);
+        tab.set_shell_plan(self.exec_config.shell_summary());
         self.workbench.open_tab(WorkbenchTabState::Exec(tab));
         self.focus = Focus::Workbench;
     }

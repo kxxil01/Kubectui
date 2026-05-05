@@ -2869,7 +2869,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 format!(
                     "ns:{} shell:{} lines:{}",
                     tab.namespace,
-                    tab.shell_name.as_deref().unwrap_or("pending"),
+                    tab.shell_name.as_deref().unwrap_or(&tab.shell_plan),
                     tab.lines.len() + usize::from(!tab.pending_fragment.is_empty())
                 ),
                 theme.inactive_style(),
