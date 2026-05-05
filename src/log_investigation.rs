@@ -5,6 +5,8 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub const MAX_LOG_ENTRY_BYTES: usize = 10_000;
+
 fn default_structured_view() -> bool {
     true
 }
@@ -152,7 +154,7 @@ pub struct LogEntry {
 
 impl LogEntry {
     pub fn from_raw(raw: impl Into<String>) -> Self {
-        let raw = raw.into();
+        let raw = cap_log_entry(raw.into());
         let trimmed = raw.trim();
         let parsed_json = if trimmed.starts_with('{') {
             serde_json::from_str::<Value>(trimmed).ok()
@@ -308,6 +310,17 @@ impl LogEntry {
     pub fn request_id(&self) -> Option<&str> {
         self.request_id.as_deref()
     }
+}
+
+fn cap_log_entry(mut raw: String) -> String {
+    if raw.len() <= MAX_LOG_ENTRY_BYTES {
+        return raw;
+    }
+
+    let end = raw.floor_char_boundary(MAX_LOG_ENTRY_BYTES);
+    raw.truncate(end);
+    raw.push_str("…[truncated]");
+    raw
 }
 
 pub fn compile_query(query: &str, mode: LogQueryMode) -> Result<Option<Regex>, String> {
@@ -599,6 +612,26 @@ fn summarize_preset_label(name: &str, query: &str, mode: LogQueryMode) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_entry_caps_long_raw_lines_once_for_all_log_views() {
+        let entry = LogEntry::from_raw("x".repeat(MAX_LOG_ENTRY_BYTES + 256));
+
+        assert_eq!(
+            entry.raw().len(),
+            MAX_LOG_ENTRY_BYTES + "…[truncated]".len()
+        );
+        assert!(entry.raw().ends_with("…[truncated]"));
+        assert_eq!(entry.display_text(false), entry.raw());
+    }
+
+    #[test]
+    fn log_entry_cap_preserves_utf8_boundary() {
+        let entry = LogEntry::from_raw("🚀".repeat((MAX_LOG_ENTRY_BYTES / 4) + 8));
+
+        assert!(entry.raw().is_char_boundary(MAX_LOG_ENTRY_BYTES));
+        assert!(entry.raw().ends_with("…[truncated]"));
+    }
 
     #[test]
     fn structured_json_line_extracts_summary_fields() {
