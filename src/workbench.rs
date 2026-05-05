@@ -2084,6 +2084,23 @@ impl ExecTabState {
         self.pending_fragment.clear();
         self.scroll = 0;
     }
+
+    pub fn output_text(&self) -> Option<String> {
+        let mut lines = self.lines.clone();
+        if !self.pending_fragment.is_empty() {
+            lines.push(self.pending_fragment.clone());
+        }
+        (!lines.is_empty()).then(|| lines.join("\n"))
+    }
+
+    pub fn output_label(&self) -> String {
+        let container = if self.container_name.is_empty() {
+            "container"
+        } else {
+            self.container_name.as_str()
+        };
+        format!("{}-{}-{container}", self.namespace, self.pod_name)
+    }
 }
 
 fn normalize_exec_output_chunk(chunk: &str) -> String {

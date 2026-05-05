@@ -1427,6 +1427,10 @@ impl AppState {
                             tab.command_mode = false;
                             AppAction::None
                         }
+                        KeyCode::Char('y') if plain_shortcut(key) => AppAction::CopyExecOutput,
+                        KeyCode::Char('S') | KeyCode::Char('s') if plain_shortcut(key) => {
+                            AppAction::ExportExecOutput
+                        }
                         _ => AppAction::None,
                     }
                 } else {

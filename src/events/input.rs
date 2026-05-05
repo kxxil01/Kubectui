@@ -607,6 +607,14 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs (needs log buffer access)
             true
         }
+        AppAction::CopyExecOutput => {
+            // Handled in main.rs (needs workbench exec output access)
+            true
+        }
+        AppAction::ExportExecOutput => {
+            // Handled in main.rs (needs workbench exec output access)
+            true
+        }
         AppAction::SaveLogPreset => match app_state.save_active_log_preset() {
             Ok(_) => true,
             Err(err) => {

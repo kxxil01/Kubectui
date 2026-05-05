@@ -163,6 +163,8 @@ pub enum AppAction {
     CopyResourceFullName,
     CopyLogContent,
     ExportLogs,
+    CopyExecOutput,
+    ExportExecOutput,
     SaveLogPreset,
     ApplyPreviousLogPreset,
     ApplyNextLogPreset,
