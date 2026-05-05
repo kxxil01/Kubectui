@@ -40,9 +40,11 @@ pub const MIN_WORKBENCH_HEIGHT: u16 = 8;
 pub const MAX_WORKBENCH_HEIGHT: u16 = 40;
 pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
+pub const MAX_EXEC_OUTPUT_LINE_BYTES: usize = 16_384;
 pub const MAX_EXTENSION_OUTPUT_LINES: usize = 5_000;
 const EXEC_CLEAR_SCREEN: char = '\u{E000}';
 const EXEC_CLEAR_LINE: char = '\u{E001}';
+const EXEC_OUTPUT_TRUNCATED_SUFFIX: &str = " ... [truncated]";
 pub const MAX_EXEC_COMMAND_HISTORY: usize = 100;
 pub const MAX_TIMELINE_EVENTS: usize = 200;
 
@@ -2018,28 +2020,28 @@ impl ExecTabState {
         }
     }
 
-    /// Max pending fragment size before force-flushing (1 MB).
-    const MAX_PENDING_FRAGMENT: usize = 1_048_576;
-
     pub fn append_output(&mut self, chunk: &str) {
         let chunk = normalize_exec_output_chunk(chunk);
         for c in chunk.chars() {
             match c {
                 EXEC_CLEAR_SCREEN => self.clear_output(),
                 EXEC_CLEAR_LINE => self.pending_fragment.clear(),
-                '\n' => self.lines.push(std::mem::take(&mut self.pending_fragment)),
+                '\n' => {
+                    cap_exec_output_line(&mut self.pending_fragment);
+                    self.lines.push(std::mem::take(&mut self.pending_fragment));
+                }
                 '\r' => self.pending_fragment.clear(),
-                '\u{0008}' => {
+                '\u{0008}' if !exec_output_line_is_capped(&self.pending_fragment) => {
                     self.pending_fragment.pop();
                 }
-                '\t' => self.pending_fragment.push_str("    "),
-                c if !c.is_control() => self.pending_fragment.push(c),
+                '\t' => {
+                    append_exec_output_text(&mut self.pending_fragment, "    ");
+                }
+                c if !c.is_control() => {
+                    append_exec_output_char(&mut self.pending_fragment, c);
+                }
                 _ => {}
             }
-        }
-        // Force-flush oversized fragments (e.g. binary output without newlines).
-        if self.pending_fragment.len() > Self::MAX_PENDING_FRAGMENT {
-            self.lines.push(std::mem::take(&mut self.pending_fragment));
         }
         if self.lines.len() > MAX_EXEC_OUTPUT_LINES {
             let excess = self.lines.len() - MAX_EXEC_OUTPUT_LINES;
@@ -2136,6 +2138,39 @@ impl ExecTabState {
 
 fn normalize_exec_output_chunk(chunk: &str) -> String {
     strip_ansi_escape_sequences(&chunk.replace("\r\n", "\n"))
+}
+
+fn cap_exec_output_line(value: &mut String) {
+    if value.len() <= MAX_EXEC_OUTPUT_LINE_BYTES {
+        return;
+    }
+    let target_len = MAX_EXEC_OUTPUT_LINE_BYTES.saturating_sub(EXEC_OUTPUT_TRUNCATED_SUFFIX.len());
+    let mut boundary = target_len.min(value.len());
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    value.truncate(boundary);
+    value.push_str(EXEC_OUTPUT_TRUNCATED_SUFFIX);
+}
+
+fn exec_output_line_is_capped(value: &str) -> bool {
+    value.len() >= MAX_EXEC_OUTPUT_LINE_BYTES && value.ends_with(EXEC_OUTPUT_TRUNCATED_SUFFIX)
+}
+
+fn append_exec_output_char(value: &mut String, c: char) {
+    if exec_output_line_is_capped(value) {
+        return;
+    }
+    value.push(c);
+    cap_exec_output_line(value);
+}
+
+fn append_exec_output_text(value: &mut String, text: &str) {
+    if exec_output_line_is_capped(value) {
+        return;
+    }
+    value.push_str(text);
+    cap_exec_output_line(value);
 }
 
 fn strip_ansi_escape_sequences(input: &str) -> String {
@@ -4299,6 +4334,56 @@ mod tests {
 
         assert_eq!(tab.lines, vec!["axy"]);
         assert!(tab.pending_fragment.is_empty());
+    }
+
+    #[test]
+    fn exec_output_caps_huge_completed_line() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+
+        tab.append_output(&format!(
+            "{}\n",
+            "x".repeat(MAX_EXEC_OUTPUT_LINE_BYTES + 1024)
+        ));
+
+        assert_eq!(tab.lines.len(), 1);
+        assert_eq!(tab.lines[0].len(), MAX_EXEC_OUTPUT_LINE_BYTES);
+        assert!(tab.lines[0].ends_with(EXEC_OUTPUT_TRUNCATED_SUFFIX));
+        assert!(tab.pending_fragment.is_empty());
+    }
+
+    #[test]
+    fn exec_output_caps_huge_pending_fragment() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+
+        tab.append_output(&"x".repeat(MAX_EXEC_OUTPUT_LINE_BYTES + 1024));
+
+        assert!(tab.lines.is_empty());
+        assert_eq!(tab.pending_fragment.len(), MAX_EXEC_OUTPUT_LINE_BYTES);
+        assert!(tab.pending_fragment.ends_with(EXEC_OUTPUT_TRUNCATED_SUFFIX));
+    }
+
+    #[test]
+    fn exec_output_capped_fragment_ignores_more_text_until_newline() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+
+        tab.append_output(&"x".repeat(MAX_EXEC_OUTPUT_LINE_BYTES + 1024));
+        let capped = tab.pending_fragment.clone();
+        tab.append_output("more text\t\u{0008}\nnext");
+
+        assert_eq!(tab.lines, vec![capped]);
+        assert_eq!(tab.pending_fragment, "next");
+    }
+
+    #[test]
+    fn exec_output_cap_preserves_utf8_boundary() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+
+        tab.append_output(&format!("{}\n", "é".repeat(MAX_EXEC_OUTPUT_LINE_BYTES)));
+
+        assert_eq!(tab.lines.len(), 1);
+        assert!(tab.lines[0].is_char_boundary(tab.lines[0].len()));
+        assert!(tab.lines[0].ends_with(EXEC_OUTPUT_TRUNCATED_SUFFIX));
+        assert!(tab.lines[0].len() <= MAX_EXEC_OUTPUT_LINE_BYTES);
     }
 
     #[test]
