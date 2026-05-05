@@ -1918,7 +1918,7 @@ impl AppState {
             KeyCode::Char('r') if allow_plain_r && plain_shortcut(key) => {
                 Some(AppAction::RefreshData)
             }
-            KeyCode::Char('R') if ctrl_shortcut(key) && allow_plain_r => {
+            KeyCode::Char('r') | KeyCode::Char('R') if allow_plain_r && ctrl_shortcut(key) => {
                 Some(AppAction::RefreshData)
             }
             _ => None,
@@ -2931,7 +2931,7 @@ impl AppState {
             {
                 AppAction::RefreshData
             }
-            KeyCode::Char('R')
+            KeyCode::Char('r') | KeyCode::Char('R')
                 if ctrl_shortcut(key)
                     && !self
                         .detail_view
