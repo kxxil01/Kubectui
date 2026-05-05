@@ -408,8 +408,15 @@ fn prepare_context_switch_ui(app: &mut kubectui::app::AppState) {
     app.is_search_mode = false;
     app.clear_selection_search_status();
     app.detail_view = None;
-    app.workbench.close_resource_tabs();
+    close_resource_tabs_and_refresh_palette_activity(app);
     app.sync_workbench_focus();
+}
+
+fn close_resource_tabs_and_refresh_palette_activity(app: &mut kubectui::app::AppState) {
+    app.workbench.close_resource_tabs();
+    if app.command_palette.is_open() {
+        refresh_palette_activity(app);
+    }
 }
 
 fn clear_port_forward_registries(app: &mut kubectui::app::AppState) {
@@ -6281,7 +6288,7 @@ pub(crate) async fn run_app_inner(
                     global_state.begin_loading_transition(false);
                     snapshot_dirty = true;
                     app.detail_view = None;
-                    app.workbench.close_resource_tabs();
+                    close_resource_tabs_and_refresh_palette_activity(&mut app);
                     if let Some(snapshot) =
                         app.pending_workspace_restore.take().filter(|snapshot| {
                             snapshot.namespace == selected_namespace
@@ -6292,6 +6299,7 @@ pub(crate) async fn run_app_inner(
                     {
                         app.apply_workspace_snapshot(&snapshot);
                         reopen_pending_runbook(&mut app, &mut pending_runbook_restore);
+                        refresh_palette_activity(&mut app);
                     }
                     app.sync_workbench_focus();
 
