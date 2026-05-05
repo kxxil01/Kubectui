@@ -403,11 +403,29 @@ fn ai_cli_args(provider: &AiProviderConfig, system_prompt: &str, user_prompt: &s
         provider.args.clone()
     };
     args.into_iter()
-        .map(|arg| {
-            arg.replace("$SYSTEM_PROMPT", system_prompt)
-                .replace("$PROMPT", &prompt)
-        })
+        .map(|arg| render_ai_cli_arg_template(&arg, system_prompt, &prompt))
         .collect()
+}
+
+fn render_ai_cli_arg_template(arg: &str, system_prompt: &str, prompt: &str) -> String {
+    let mut rendered = String::with_capacity(arg.len());
+    let mut rest = arg;
+    while let Some(index) = rest.find('$') {
+        rendered.push_str(&rest[..index]);
+        rest = &rest[index..];
+        if let Some(next) = rest.strip_prefix("$SYSTEM_PROMPT") {
+            rendered.push_str(system_prompt);
+            rest = next;
+        } else if let Some(next) = rest.strip_prefix("$PROMPT") {
+            rendered.push_str(prompt);
+            rest = next;
+        } else {
+            rendered.push('$');
+            rest = &rest['$'.len_utf8()..];
+        }
+    }
+    rendered.push_str(rest);
+    rendered
 }
 
 #[cold]
@@ -1179,6 +1197,40 @@ trailing note {also ignored}"#,
         assert_eq!(args[0], "exec");
         assert!(args[1].contains("system"));
         assert!(args[1].contains("user"));
+    }
+
+    #[test]
+    fn ai_cli_args_do_not_recursively_expand_placeholders() {
+        let provider = AiProviderConfig {
+            provider: AiProviderKind::CodexCli,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 5,
+            max_output_tokens: 128,
+            temperature: Some(0.1),
+            command: None,
+            args: vec![
+                "--system".into(),
+                "$SYSTEM_PROMPT".into(),
+                "--prompt".into(),
+                "$PROMPT".into(),
+                "--literal".into(),
+                "$UNKNOWN".into(),
+            ],
+            action: None,
+        };
+
+        let args = ai_cli_args(
+            &provider,
+            "system mentions $PROMPT literally",
+            "user mentions $SYSTEM_PROMPT literally",
+        );
+
+        assert_eq!(args[1], "system mentions $PROMPT literally");
+        assert!(args[3].contains("system mentions $PROMPT literally"));
+        assert!(args[3].contains("user mentions $SYSTEM_PROMPT literally"));
+        assert_eq!(args[5], "$UNKNOWN");
     }
 
     #[test]
