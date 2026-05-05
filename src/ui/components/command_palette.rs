@@ -18,7 +18,7 @@ use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
+use crate::ui::keybindings::{ctrl_char, edit_key, plain_shortcut};
 use crate::ui::theme::Theme;
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
@@ -1302,7 +1302,7 @@ impl CommandPalette {
                 move_cursor_end(&mut self.query_cursor, &self.query);
                 CommandPaletteAction::None
             }
-            KeyCode::Char('u') if ctrl_shortcut(key) => {
+            _ if ctrl_char(key, 'u') => {
                 if !self.query.is_empty() {
                     let selected_entry = self.selected_entry_anchor();
                     clear_input_at_cursor(&mut self.query, &mut self.query_cursor);
