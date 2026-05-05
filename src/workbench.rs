@@ -31,7 +31,7 @@ use crate::{
     ui::{
         clear_input_at_cursor,
         components::{input_field::InputFieldWidget, port_forward_dialog::PortForwardDialog},
-        move_cursor_end,
+        contains_ci, move_cursor_end,
     },
 };
 
@@ -2497,21 +2497,19 @@ impl ConnectivityTabState {
             self.selected_target_option()
                 .map(|target| target.resource.clone())
         });
-        let query = self.filter.value.to_ascii_lowercase();
+        let query = self.filter.value.as_str();
         self.filtered_target_indices = self
             .targets
             .iter()
             .enumerate()
             .filter_map(|(idx, target)| {
                 (query.is_empty()
-                    || target.display.to_ascii_lowercase().contains(&query)
-                    || target.status.to_ascii_lowercase().contains(&query)
+                    || contains_ci(&target.display, query)
+                    || contains_ci(&target.status, query)
                     || target
                         .pod_ip
                         .as_deref()
-                        .unwrap_or_default()
-                        .to_ascii_lowercase()
-                        .contains(&query))
+                        .is_some_and(|pod_ip| contains_ci(pod_ip, query)))
                 .then_some(idx)
             })
             .collect();
@@ -5146,6 +5144,39 @@ mod tests {
                 .map(|target| target.resource.clone()),
             Some(selected)
         );
+    }
+
+    #[test]
+    fn connectivity_filter_matches_target_fields_case_insensitively() {
+        let mut tab = ConnectivityTabState::new(
+            ResourceRef::Pod("source".into(), "default".into()),
+            vec![
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("frontend-0".into(), "default".into()),
+                    display: "Frontend-0".into(),
+                    status: "Ready".into(),
+                    pod_ip: Some("10.42.0.7".into()),
+                },
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("backend-0".into(), "default".into()),
+                    display: "backend-0".into(),
+                    status: "CrashLoopBackOff".into(),
+                    pod_ip: Some("10.42.0.8".into()),
+                },
+            ],
+        );
+
+        tab.filter.value = "front".into();
+        tab.refresh_filter();
+        assert_eq!(tab.filtered_target_indices, vec![0]);
+
+        tab.filter.value = "crashloop".into();
+        tab.refresh_filter();
+        assert_eq!(tab.filtered_target_indices, vec![1]);
+
+        tab.filter.value = "10.42.0.7".into();
+        tab.refresh_filter();
+        assert_eq!(tab.filtered_target_indices, vec![0]);
     }
 
     #[test]
