@@ -2846,7 +2846,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     } else if tab.exited {
         "exited".to_string()
     } else {
-        "connected".to_string()
+        "input".to_string()
     };
     let header_lines = vec![
         Line::from(vec![
@@ -2877,9 +2877,9 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
         ]),
         Line::from(Span::styled(
             if tab.command_mode {
-                "[z] maximize  [,/.] tabs  [Ctrl+W] close  [i/Enter] input  [Esc] back"
+                "[z] maximize/restore  [,/.] tabs  [Ctrl+W] close  [i/Enter] input  [Esc] back"
             } else {
-                "[Enter] send  [Up/Down] history  [Ctrl+L] clear  [Esc] controls"
+                "[Enter] send  [Up/Down] history  [Ctrl+L] clear  [Esc] controls for maximize/tabs/close"
             },
             theme.keybind_desc_style(),
         )),
@@ -4253,6 +4253,34 @@ mod tests {
         assert!(rendered.contains("controls"));
         assert!(rendered.contains("[z] maximize"));
         assert!(rendered.contains("[i/Enter] input"));
+    }
+
+    #[test]
+    fn exec_input_mode_renders_control_discovery_hint() {
+        let backend = TestBackend::new(120, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("api-0".into(), "default".into()),
+            1,
+            "api-0".into(),
+            "default".into(),
+        );
+        tab.loading = false;
+        tab.container_name = "main".into();
+
+        terminal
+            .draw(|frame| render_exec_tab(frame, Rect::new(0, 0, 120, 12), &tab))
+            .expect("exec tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains(" input "));
+        assert!(rendered.contains("[Esc] controls for maximize/tabs/close"));
     }
 
     #[test]
