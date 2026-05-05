@@ -72,6 +72,20 @@ fn workbench_control_action(
     }
 }
 
+fn maybe_workbench_control_key(key: KeyEvent) -> bool {
+    matches!(
+        key.code,
+        KeyCode::Char('z')
+            | KeyCode::Char('b')
+            | KeyCode::Char(',')
+            | KeyCode::Char('.')
+            | KeyCode::Char('w')
+            | KeyCode::Char('W')
+            | KeyCode::Up
+            | KeyCode::Down
+    )
+}
+
 fn view_supports_resource_events_shortcut(view: AppView) -> bool {
     matches!(
         view,
@@ -2884,16 +2898,7 @@ impl AppState {
             KeyCode::Char('}') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::ApplyNextWorkspace
             }
-            KeyCode::Char('b')
-            | KeyCode::Char(',')
-            | KeyCode::Char('.')
-            | KeyCode::Char('w')
-            | KeyCode::Char('W')
-                if self.detail_view.is_none() =>
-            {
-                workbench_control_action(key, self.workbench.open, false).unwrap_or(AppAction::None)
-            }
-            KeyCode::Up | KeyCode::Down if self.detail_view.is_none() && ctrl_shortcut(key) => {
+            _ if self.detail_view.is_none() && maybe_workbench_control_key(key) => {
                 workbench_control_action(key, self.workbench.open, false).unwrap_or(AppAction::None)
             }
             KeyCode::Char('c') if self.detail_view.is_none() && plain_shortcut(key) => {
