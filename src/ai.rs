@@ -19,6 +19,9 @@ const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/comple
 const ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 const PROVIDER_ERROR_MAX_LINES: usize = 12;
 const PROVIDER_ERROR_MAX_CHARS: usize = 600;
+const AI_OUTPUT_MAX_ITEMS: usize = 8;
+const AI_OUTPUT_MAX_LINES: usize = 8;
+const AI_OUTPUT_MAX_CHARS_PER_LINE: usize = 320;
 const DEFAULT_SYSTEM_PROMPT: &str = "You are an expert Kubernetes SRE assistant embedded in KubecTUI. \
 Analyze the provided resource context conservatively. Do not invent facts. Use only the supplied context. \
 Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty. \
@@ -513,7 +516,11 @@ fn normalize_structured_response(value: Value) -> Result<StructuredAiResponse> {
 
 fn normalize_ai_lines(value: Value) -> Vec<String> {
     match value {
-        Value::Array(items) => items.into_iter().map(stringify_ai_field).collect(),
+        Value::Array(items) => items
+            .into_iter()
+            .take(AI_OUTPUT_MAX_ITEMS)
+            .map(stringify_ai_field)
+            .collect(),
         Value::Null => Vec::new(),
         value => vec![stringify_ai_field(value)],
     }
@@ -567,16 +574,40 @@ fn trim_ai_output_lines(lines: Vec<String>) -> Vec<String> {
         .into_iter()
         .map(|line| sanitize_ai_model_output(line.trim()))
         .filter(|line| !line.is_empty())
-        .take(8)
+        .take(AI_OUTPUT_MAX_ITEMS)
         .collect()
 }
 
 fn sanitize_ai_model_output(value: &str) -> String {
-    value
-        .lines()
-        .map(sanitize_provider_error_line)
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut output = Vec::new();
+    let mut truncated = false;
+
+    for (index, line) in value.lines().enumerate() {
+        if index >= AI_OUTPUT_MAX_LINES {
+            truncated = true;
+            break;
+        }
+        let sanitized = sanitize_provider_error_line(line.trim());
+        if sanitized.is_empty() {
+            continue;
+        }
+        output.push(truncate_ai_output_line(&sanitized, &mut truncated));
+    }
+
+    if truncated {
+        output.push("[truncated]".to_string());
+    }
+
+    output.join("\n")
+}
+
+fn truncate_ai_output_line(line: &str, truncated: &mut bool) -> String {
+    let mut char_indices = line.char_indices();
+    let Some((cutoff, _)) = char_indices.nth(AI_OUTPUT_MAX_CHARS_PER_LINE) else {
+        return line.to_string();
+    };
+    *truncated = true;
+    format!("{}...", &line[..cutoff])
 }
 
 #[cold]
@@ -947,6 +978,42 @@ trailing note {also ignored}"#,
         assert!(!rendered.contains("api-token"), "{rendered}");
         assert!(!rendered.contains("sk-live"), "{rendered}");
         assert!(!rendered.contains("literal-value"), "{rendered}");
+    }
+
+    #[test]
+    fn parse_structured_response_bounds_large_model_output() {
+        let long_line = "x".repeat(AI_OUTPUT_MAX_CHARS_PER_LINE + 40);
+        let summary = (0..12)
+            .map(|idx| format!("summary-{idx}-{long_line}"))
+            .collect::<Vec<_>>()
+            .join("\\n");
+        let likely_causes = (0..20)
+            .map(|idx| format!(r#""cause-{idx}""#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let raw = format!(
+            r#"{{
+                "summary": "{summary}",
+                "likely_causes": [{likely_causes}],
+                "next_steps": ["check"],
+                "uncertainty": []
+            }}"#
+        );
+
+        let parsed = parse_structured_response(&raw).expect("large response parses");
+
+        assert_eq!(parsed.likely_causes.len(), AI_OUTPUT_MAX_ITEMS);
+        assert!(parsed.summary.contains("[truncated]"), "{}", parsed.summary);
+        assert!(!parsed.summary.contains("summary-9"), "{}", parsed.summary);
+        assert!(
+            parsed
+                .summary
+                .lines()
+                .filter(|line| *line != "[truncated]")
+                .all(|line| line.chars().count() <= AI_OUTPUT_MAX_CHARS_PER_LINE + 3),
+            "{}",
+            parsed.summary
+        );
     }
 
     #[test]
