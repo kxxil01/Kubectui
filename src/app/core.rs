@@ -44,6 +44,7 @@ impl Default for AppState {
             preferences: None,
             cluster_preferences: None,
             ai_config: None,
+            exec_config: ExecConfig::default(),
             current_context_name: None,
             needs_config_save: false,
             resource_template_dialog: None,

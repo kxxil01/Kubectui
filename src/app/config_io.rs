@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::{AppState, views::NavGroup};
 use crate::{
     ai_actions::AiConfig,
+    k8s::exec::ExecConfig,
     preferences::{ClusterPreferences, UserPreferences},
     workbench::DEFAULT_WORKBENCH_HEIGHT,
 };
@@ -35,6 +36,8 @@ pub(super) struct AppConfig {
     clusters: Option<HashMap<String, ClusterPreferences>>,
     #[serde(default)]
     ai: Option<AiConfig>,
+    #[serde(default)]
+    exec: Option<ExecConfig>,
 }
 
 fn default_refresh_interval() -> u64 {
@@ -104,6 +107,9 @@ pub fn load_config_from_path(path: &Path) -> AppState {
         app.preferences = cfg.preferences;
         app.cluster_preferences = cfg.clusters;
         app.ai_config = cfg.ai;
+        if let Some(exec_config) = cfg.exec {
+            app.exec_config = exec_config;
+        }
     }
 
     app.current_context_name = kube::config::Kubeconfig::read()
@@ -138,6 +144,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
         preferences: app.preferences.clone(),
         clusters: app.cluster_preferences.clone(),
         ai: app.ai_config.clone(),
+        exec: Some(app.exec_config.clone()),
     };
 
     if let Some(parent) = path.parent()
@@ -272,6 +279,26 @@ mod tests {
             .expect("ai config");
         assert_eq!(ai.providers.len(), 1);
         assert_eq!(ai.providers[0].provider, AiProviderKind::CodexCli);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_config_reads_exec_config() {
+        let path =
+            std::env::temp_dir().join(format!("kubectui-exec-config-{}.json", std::process::id()));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","exec":{"shells":["/usr/bin/fish","/bin/bash"],"login":true}}"#,
+        )
+        .expect("write config");
+
+        let app = load_config_from_path(&path);
+        assert_eq!(
+            app.exec_config.shells,
+            vec!["/usr/bin/fish".to_string(), "/bin/bash".to_string()]
+        );
+        assert!(app.exec_config.login);
 
         let _ = fs::remove_file(path);
     }

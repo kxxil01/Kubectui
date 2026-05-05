@@ -10,6 +10,7 @@ use crate::{
     k8s::{
         client::EventInfo,
         dtos::HelmReleaseRevisionInfo,
+        exec::ExecConfig,
         rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind},
         workload_logs::MAX_WORKLOAD_LOG_STREAMS,
     },
@@ -1549,6 +1550,7 @@ pub struct ExecTabState {
     pub scroll: usize,
     pub loading: bool,
     pub shell_name: Option<String>,
+    pub shell_plan: String,
     pub error: Option<String>,
     pub exited: bool,
     pub pending_fragment: String,
@@ -1886,6 +1888,7 @@ impl ExecTabState {
             scroll: 0,
             loading: true,
             shell_name: None,
+            shell_plan: ExecConfig::default().shell_summary(),
             error: None,
             exited: false,
             pending_fragment: String::new(),
@@ -1927,6 +1930,10 @@ impl ExecTabState {
             self.container_name = container.clone();
             self.picking_container = false;
         }
+    }
+
+    pub fn set_shell_plan(&mut self, shell_plan: impl Into<String>) {
+        self.shell_plan = shell_plan.into();
     }
 
     pub fn restart_session(

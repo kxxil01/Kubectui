@@ -4410,6 +4410,7 @@ pub(crate) async fn run_app_inner(
                             pod_name,
                             namespace,
                             container_name.clone(),
+                            app.exec_config.clone(),
                             exec_update_tx.clone(),
                         )
                         .await
@@ -4535,6 +4536,7 @@ pub(crate) async fn run_app_inner(
                                 launch.pod_name.clone(),
                                 launch.namespace.clone(),
                                 launch.container_name.clone(),
+                                app.exec_config.clone(),
                                 exec_update_tx.clone(),
                             )
                             .await
@@ -4722,6 +4724,7 @@ pub(crate) async fn run_app_inner(
                                 launch.pod_name.clone(),
                                 launch.namespace.clone(),
                                 launch.container_name.clone(),
+                                app.exec_config.clone(),
                                 exec_update_tx.clone(),
                             )
                             .await
@@ -6759,6 +6762,7 @@ pub(crate) async fn run_app_inner(
                             pod_name,
                             namespace,
                             container_name.clone(),
+                            app.exec_config.clone(),
                             exec_update_tx.clone(),
                         )
                         .await
