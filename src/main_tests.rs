@@ -6,7 +6,8 @@ use super::flux_reconcile::{
 };
 use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
-    apply_extension_fetch_result, clear_port_forward_registries, detail_debug_launch_owned,
+    apply_extension_fetch_result, clear_port_forward_registries,
+    close_resource_tabs_and_refresh_palette_activity, detail_debug_launch_owned,
     detail_node_debug_launch_owned, fail_context_switch, map_palette_detail_action,
     mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
     parse_editor_command, prepare_bookmark_target, prepare_resource_target,
@@ -23,7 +24,7 @@ use crate::ai::{AiAnalysisContext, AiAnalysisResult};
 use crate::async_types::{
     AiAnalysisAsyncResult, QueuedRefresh, RefreshDispatch, RefreshRuntimeState,
 };
-use kubectui::ui::components::command_palette::PaletteEntry;
+use kubectui::ui::components::command_palette::{PaletteActivityTarget, PaletteEntry};
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
     ai_actions::{AiConfig, AiProviderConfig, AiProviderKind, AiWorkflowKind, validate_ai_actions},
@@ -1128,6 +1129,36 @@ fn clear_port_forward_registries_clears_workbench_dialog_copy() {
         panic!("expected port-forward tab");
     };
     assert!(port_tab.dialog.registry.is_empty());
+}
+
+#[test]
+fn close_resource_tabs_refreshes_open_palette_activity_entries() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut app = AppState::default();
+    app.open_pod_logs_tab(resource.clone());
+    super::refresh_palette_activity(&mut app);
+    app.command_palette.open();
+
+    assert!(app.command_palette.filtered().into_iter().any(|entry| {
+        matches!(
+            entry,
+            PaletteEntry::Activity(activity)
+                if activity.target
+                    == PaletteActivityTarget::WorkbenchTab(
+                        kubectui::workbench::WorkbenchTabKey::PodLogs(resource.clone())
+                    )
+        )
+    }));
+
+    close_resource_tabs_and_refresh_palette_activity(&mut app);
+
+    assert!(!app.command_palette.filtered().into_iter().any(|entry| {
+        matches!(
+            entry,
+            PaletteEntry::Activity(activity)
+                if matches!(activity.target, PaletteActivityTarget::WorkbenchTab(_))
+        )
+    }));
 }
 
 #[test]
