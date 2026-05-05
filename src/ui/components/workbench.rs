@@ -2988,37 +2988,58 @@ fn exec_output_window_lines<'a>(
     let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
     let viewport_rows = height.max(1) as usize;
     let mut visual_total = 0usize;
-    let mut row_counts = Vec::with_capacity(total);
+    let mut rows_before = 0usize;
+    let mut start_index = 0usize;
+    let mut start_rows = 1usize;
     for index in 0..total {
         let rows = exec_output_entry(tab, index)
             .map(|line| wrapped_str_row_count(line, width))
             .unwrap_or(1);
+        if visual_total <= scroll && visual_total.saturating_add(rows) > scroll {
+            start_index = index;
+            rows_before = visual_total;
+            start_rows = rows;
+        }
         visual_total = visual_total.saturating_add(rows);
-        row_counts.push(rows);
     }
 
     let position = scroll.min(visual_total.saturating_sub(viewport_rows));
-    let mut rows_before = 0usize;
-    let mut start_index = 0usize;
-    for (index, rows) in row_counts.iter().enumerate() {
-        if rows_before + rows > position {
-            start_index = index;
-            break;
+    if position != scroll {
+        let total_rows = visual_total;
+        let mut scanned_rows = 0usize;
+        rows_before = 0;
+        start_index = 0;
+        start_rows = 1;
+        for index in 0..total {
+            let rows = exec_output_entry(tab, index)
+                .map(|line| wrapped_str_row_count(line, width))
+                .unwrap_or(1);
+            if scanned_rows <= position && scanned_rows.saturating_add(rows) > position {
+                start_index = index;
+                rows_before = scanned_rows;
+                start_rows = rows;
+                break;
+            }
+            scanned_rows = scanned_rows.saturating_add(rows);
         }
-        rows_before += rows;
+        visual_total = total_rows;
     }
 
     let local_scroll = position.saturating_sub(rows_before);
     let mut visible_rows = 0usize;
     let mut lines = Vec::new();
-    for (offset, rows) in row_counts[start_index..].iter().enumerate() {
+    for index in start_index..total {
         if visible_rows >= local_scroll + viewport_rows {
             break;
         }
-        let index = start_index + offset;
         if let Some(line) = exec_output_entry(tab, index) {
             lines.push(Line::from(line));
-            visible_rows = visible_rows.saturating_add(*rows);
+            let rows = if index == start_index {
+                start_rows
+            } else {
+                wrapped_str_row_count(line, width)
+            };
+            visible_rows = visible_rows.saturating_add(rows);
         }
     }
 
@@ -4364,6 +4385,30 @@ mod tests {
             lines
                 .first()
                 .is_some_and(|line| line.spans.iter().any(|span| span.content == "line 4992")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn exec_output_window_clamps_overscroll_after_visual_total_scan() {
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("api-0".into(), "default".into()),
+            1,
+            "api-0".into(),
+            "default".into(),
+        );
+        tab.lines = (0..20).map(|idx| format!("line {idx}")).collect();
+
+        let (lines, total, position, local_scroll) =
+            exec_output_window_lines(&tab, 80, 5, usize::MAX);
+
+        assert_eq!(total, 20);
+        assert_eq!(position, 15);
+        assert_eq!(local_scroll, 0);
+        assert!(
+            lines
+                .first()
+                .is_some_and(|line| line.spans.iter().any(|span| span.content == "line 15")),
             "{lines:?}"
         );
     }

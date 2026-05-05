@@ -27,6 +27,7 @@ debug/
 
 # Local agent instructions
 AGENTS.md
+.serena/
 
 # OS
 Thumbs.db
