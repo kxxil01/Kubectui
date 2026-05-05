@@ -4501,6 +4501,31 @@ fn helm_history_confirm_mode_ctrl_shift_d_scrolls_instead_of_confirming() {
 }
 
 #[test]
+fn helm_history_confirm_mode_ctrl_shift_j_scrolls() {
+    let mut app = app_with_helm_history_workbench_tab();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+    {
+        helm_tab.confirm_rollback_revision = Some(4);
+    }
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('J'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench.active_tab()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+    {
+        assert_eq!(helm_tab.confirm_rollback_revision, Some(4));
+        assert_eq!(helm_tab.scroll, 1);
+    } else {
+        panic!("expected helm history tab");
+    }
+}
+
+#[test]
 fn helm_history_confirm_page_keys_require_plain_modifiers() {
     let mut plain = app_with_helm_history_workbench_tab();
     if let Some(tab) = plain.workbench.active_tab_mut()
@@ -4902,6 +4927,55 @@ fn rollout_confirm_page_keys_require_plain_modifiers() {
 }
 
 #[test]
+fn rollout_confirm_mode_ctrl_shift_j_scrolls() {
+    let mut app = AppState::default();
+    app.open_rollout_tab(
+        ResourceRef::Deployment("api".to_string(), "default".to_string()),
+        Some(RolloutInspection {
+            kind: RolloutWorkloadKind::Deployment,
+            strategy: "RollingUpdate".to_string(),
+            paused: false,
+            current_revision: Some(5),
+            update_target_revision: Some(5),
+            summary_lines: vec!["Desired 3".to_string()],
+            conditions: Vec::new(),
+            revisions: vec![RolloutRevisionInfo {
+                revision: 4,
+                name: "api-4".to_string(),
+                created: None,
+                summary: "3/3 ready".to_string(),
+                change_cause: None,
+                is_current: false,
+                is_update_target: false,
+            }],
+        }),
+        None,
+        None,
+    );
+    app.focus = Focus::Workbench;
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+    {
+        rollout_tab.confirm_undo_revision = Some(4);
+    }
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('J'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench.active_tab()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &tab.state
+    {
+        assert_eq!(rollout_tab.confirm_undo_revision, Some(4));
+        assert_eq!(rollout_tab.detail_scroll, 1);
+    } else {
+        panic!("expected rollout tab");
+    }
+}
+
+#[test]
 fn rollout_confirm_modified_escape_does_not_cancel_undo() {
     for modifiers in [
         KeyModifiers::CONTROL,
@@ -5012,6 +5086,20 @@ fn runbook_workbench_shortcuts_dispatch_expected_actions() {
         && let WorkbenchTabState::Runbook(tab) = &tab.state
     {
         assert_eq!(tab.detail_scroll, 10);
+    } else {
+        panic!("expected active runbook tab");
+    }
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('J'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+    if let Some(tab) = app.workbench.active_tab()
+        && let WorkbenchTabState::Runbook(tab) = &tab.state
+    {
+        assert_eq!(tab.detail_scroll, 11);
     } else {
         panic!("expected active runbook tab");
     }
