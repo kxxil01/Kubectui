@@ -6,17 +6,18 @@ use super::flux_reconcile::{
 };
 use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
-    apply_extension_fetch_result, detail_debug_launch_owned, detail_node_debug_launch_owned,
-    fail_context_switch, map_palette_detail_action, mutation_refresh_options,
-    normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
-    prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
-    preserve_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
-    refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
-    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
-    should_animate_loading_spinner, should_include_flux_in_auto_refresh,
-    should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
-    should_request_periodic_redraw, strip_active_watch_scope_from_refresh, ui_staleness_visible,
-    watch_scope_for_view, workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
+    apply_extension_fetch_result, clear_port_forward_registries, detail_debug_launch_owned,
+    detail_node_debug_launch_owned, fail_context_switch, map_palette_detail_action,
+    mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
+    parse_editor_command, prepare_bookmark_target, prepare_resource_target,
+    preserve_detail_selection_identity, preserve_selection_identity_after_snapshot_change,
+    queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
+    refresh_scope_pending, request_refresh, selected_extension_crd,
+    selected_flux_reconcile_resource, selected_resource, should_animate_loading_spinner,
+    should_include_flux_in_auto_refresh, should_preserve_current_flux_after_refresh,
+    should_request_navigation_refresh, should_request_periodic_redraw,
+    strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
+    workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
 use crate::ai::{AiAnalysisContext, AiAnalysisResult};
 use crate::async_types::{
@@ -1086,6 +1087,47 @@ fn context_switch_start_invalidates_pending_ai_results() {
         &pending_ai_result,
         &refresh_state
     ));
+}
+
+#[test]
+fn clear_port_forward_registries_clears_workbench_dialog_copy() {
+    use kubectui::{
+        k8s::portforward::{PortForwardTarget, PortForwardTunnelInfo, TunnelState},
+        state::port_forward::TunnelRegistry,
+        ui::components::port_forward_dialog::{PortForwardDialog, PortForwardMode},
+    };
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
+    let tunnel = PortForwardTunnelInfo {
+        id: "default/api/8080".to_string(),
+        target: PortForwardTarget::new("default", "api", 8080),
+        local_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 18080)),
+        state: TunnelState::Active,
+    };
+    let mut registry = TunnelRegistry::new();
+    registry.add_tunnel(tunnel.clone());
+
+    let mut dialog = PortForwardDialog::new();
+    dialog.mode = PortForwardMode::List;
+    dialog.update_registry(registry);
+
+    let mut app = AppState::default();
+    app.tunnel_registry.add_tunnel(tunnel);
+    app.open_port_forward_tab(None, dialog);
+
+    clear_port_forward_registries(&mut app);
+
+    assert!(app.tunnel_registry.is_empty());
+    let tab = app
+        .workbench()
+        .tabs
+        .iter()
+        .find(|tab| tab.state.key() == kubectui::workbench::WorkbenchTabKey::PortForward)
+        .expect("port-forward tab remains open");
+    let WorkbenchTabState::PortForward(port_tab) = &tab.state else {
+        panic!("expected port-forward tab");
+    };
+    assert!(port_tab.dialog.registry.is_empty());
 }
 
 #[test]
