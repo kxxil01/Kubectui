@@ -618,18 +618,20 @@ async fn pipe_exec_output(
     update_tx: mpsc::Sender<ExecEvent>,
 ) {
     let mut buf = vec![0u8; READ_CHUNK_SIZE];
+    let mut pending_utf8 = Vec::new();
     loop {
         match reader.read(&mut buf).await {
-            Ok(0) => break,
+            Ok(0) => {
+                if let Some(chunk) = drain_exec_utf8_output(&mut pending_utf8, true) {
+                    send_exec_output_chunk(session_id, &update_tx, chunk, is_stderr).await;
+                }
+                break;
+            }
             Ok(n) => {
-                let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
-                let _ = update_tx
-                    .send(ExecEvent::Output {
-                        session_id,
-                        chunk,
-                        is_stderr,
-                    })
-                    .await;
+                pending_utf8.extend_from_slice(&buf[..n]);
+                if let Some(chunk) = drain_exec_utf8_output(&mut pending_utf8, false) {
+                    send_exec_output_chunk(session_id, &update_tx, chunk, is_stderr).await;
+                }
             }
             Err(err) => {
                 let _ = update_tx
@@ -642,6 +644,57 @@ async fn pipe_exec_output(
             }
         }
     }
+}
+
+async fn send_exec_output_chunk(
+    session_id: u64,
+    update_tx: &mpsc::Sender<ExecEvent>,
+    chunk: String,
+    is_stderr: bool,
+) {
+    let _ = update_tx
+        .send(ExecEvent::Output {
+            session_id,
+            chunk,
+            is_stderr,
+        })
+        .await;
+}
+
+fn drain_exec_utf8_output(buffer: &mut Vec<u8>, final_flush: bool) -> Option<String> {
+    let mut output = String::new();
+    loop {
+        match std::str::from_utf8(buffer) {
+            Ok(valid) => {
+                if !valid.is_empty() {
+                    output.push_str(valid);
+                    buffer.clear();
+                }
+                break;
+            }
+            Err(err) => {
+                let valid_up_to = err.valid_up_to();
+                if valid_up_to > 0 {
+                    output.push_str(
+                        std::str::from_utf8(&buffer[..valid_up_to]).expect("valid UTF-8 prefix"),
+                    );
+                    buffer.drain(..valid_up_to);
+                    continue;
+                }
+                if let Some(error_len) = err.error_len() {
+                    output.push(char::REPLACEMENT_CHARACTER);
+                    buffer.drain(..error_len);
+                    continue;
+                }
+                if final_flush && !buffer.is_empty() {
+                    output.push_str(&String::from_utf8_lossy(buffer));
+                    buffer.clear();
+                }
+                break;
+            }
+        }
+    }
+    (!output.is_empty()).then_some(output)
 }
 
 fn build_debug_ephemeral_container(
@@ -926,6 +979,58 @@ mod tests {
                 height: 5,
             }
         );
+    }
+
+    #[test]
+    fn exec_utf8_output_waits_for_split_multibyte_sequence() {
+        let mut buffer = Vec::new();
+
+        buffer.extend_from_slice(&[0xE2, 0x82]);
+        assert_eq!(drain_exec_utf8_output(&mut buffer, false), None);
+        assert_eq!(buffer, vec![0xE2, 0x82]);
+
+        buffer.push(0xAC);
+        assert_eq!(
+            drain_exec_utf8_output(&mut buffer, false),
+            Some("€".to_string())
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn exec_utf8_output_keeps_incomplete_suffix_after_valid_prefix() {
+        let mut buffer = b"ok ".to_vec();
+        buffer.extend_from_slice(&[0xF0, 0x9F]);
+
+        assert_eq!(
+            drain_exec_utf8_output(&mut buffer, false),
+            Some("ok ".to_string())
+        );
+        assert_eq!(buffer, vec![0xF0, 0x9F]);
+
+        buffer.extend_from_slice(&[0x98, 0x80]);
+        assert_eq!(
+            drain_exec_utf8_output(&mut buffer, false),
+            Some("😀".to_string())
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn exec_utf8_output_replaces_invalid_bytes_and_flushes_partial_at_eof() {
+        let mut invalid = vec![0xFF, b'a'];
+        assert_eq!(
+            drain_exec_utf8_output(&mut invalid, false),
+            Some("\u{FFFD}a".to_string())
+        );
+        assert!(invalid.is_empty());
+
+        let mut partial = vec![0xE2, 0x82];
+        assert_eq!(
+            drain_exec_utf8_output(&mut partial, true),
+            Some("\u{FFFD}".to_string())
+        );
+        assert!(partial.is_empty());
     }
 
     #[test]
