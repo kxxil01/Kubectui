@@ -47,6 +47,8 @@ pub struct ExecConfig {
     pub shells: Vec<String>,
     #[serde(default)]
     pub login: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_terminal_template: Option<String>,
 }
 
 impl Default for ExecConfig {
@@ -54,6 +56,7 @@ impl Default for ExecConfig {
         Self {
             shells: default_exec_shells(),
             login: false,
+            external_terminal_template: None,
         }
     }
 }
@@ -91,6 +94,51 @@ impl ExecConfig {
             [first, rest @ ..] => format!("auto:{first}+{}", rest.len()),
         }
     }
+
+    pub fn external_terminal_command(
+        &self,
+        context: Option<&str>,
+        namespace: &str,
+        pod: &str,
+        container: &str,
+    ) -> Result<String> {
+        let template = self
+            .external_terminal_template
+            .as_deref()
+            .map(str::trim)
+            .filter(|template| !template.is_empty())
+            .context("Configure exec.external_terminal_template first.")?;
+        let shell = self
+            .normalized_shells()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "/bin/sh".to_string());
+        let context_arg = context
+            .filter(|ctx| !ctx.trim().is_empty())
+            .map(|ctx| format!("--context {}", shell_quote(ctx)))
+            .unwrap_or_default();
+        let command = template
+            .replace("{context_arg}", &context_arg)
+            .replace("{context}", &context.map(shell_quote).unwrap_or_default())
+            .replace("{namespace}", &shell_quote(namespace))
+            .replace("{pod}", &shell_quote(pod))
+            .replace("{container}", &shell_quote(container))
+            .replace("{shell}", &shell_quote(&shell));
+        Ok(command)
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    if value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/' | b':' | b'@'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 
 fn normalize_shell_candidate(shell: &str) -> Option<String> {
@@ -760,12 +808,14 @@ mod tests {
                 "/bin/sh".to_string(),
             ],
             login: false,
+            external_terminal_template: None,
         };
         assert_eq!(config.normalized_shells(), vec!["/bin/fish", "/bin/sh"]);
 
         let empty = ExecConfig {
             shells: vec!["bad shell".to_string()],
             login: false,
+            external_terminal_template: None,
         };
         assert_eq!(empty.normalized_shells(), ExecConfig::default().shells);
     }
@@ -837,6 +887,39 @@ mod tests {
                 width: 20,
                 height: 5,
             }
+        );
+    }
+
+    #[test]
+    fn external_terminal_command_renders_shell_quoted_placeholders() {
+        let config = ExecConfig {
+            shells: vec!["/bin/bash".to_string()],
+            login: false,
+            external_terminal_template: Some(
+                "kitty kubectl {context_arg} exec -it -n {namespace} {pod} -c {container} -- {shell}"
+                    .to_string(),
+            ),
+        };
+
+        let command = config
+            .external_terminal_command(Some("prod cluster"), "default", "api';rm", "main container")
+            .expect("external command");
+
+        assert_eq!(
+            command,
+            "kitty kubectl --context 'prod cluster' exec -it -n default 'api'\\'';rm' -c 'main container' -- /bin/bash"
+        );
+    }
+
+    #[test]
+    fn external_terminal_command_requires_template() {
+        let err = ExecConfig::default()
+            .external_terminal_command(None, "default", "pod", "main")
+            .expect_err("missing template should fail");
+
+        assert_eq!(
+            err.to_string(),
+            "Configure exec.external_terminal_template first."
         );
     }
 

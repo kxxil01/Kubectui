@@ -543,8 +543,12 @@ fn readme_documents_exec_workbench_control_handoff() {
         "README must document exec input to workbench controls handoff"
     );
     assert!(
-        readme.contains("then use `z`, `,`/`.`, `Ctrl+W`, `r`, `y`, or `S`"),
+        readme.contains("then use `z`, `,`/`.`, `Ctrl+W`, `r`, `t`, `y`, or `S`"),
         "README must list reachable exec controls after Esc"
+    );
+    assert!(
+        readme.contains("exec.external_terminal_template"),
+        "README must document external terminal exec template"
     );
 }
 
@@ -599,6 +603,11 @@ fn exec_workbench_controls_require_controls_mode() {
         "r must remain shell input while exec input owns keyboard"
     );
     assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('t')), &mut app),
+        AppAction::None,
+        "t must remain shell input while exec input owns keyboard"
+    );
+    assert_eq!(
         route_keyboard_input(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
             &mut app
@@ -648,6 +657,10 @@ fn exec_workbench_controls_require_controls_mode() {
     assert_eq!(
         route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app),
         AppAction::ExecRestartSession
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('t')), &mut app),
+        AppAction::ExecOpenExternalTerminal
     );
 }
 

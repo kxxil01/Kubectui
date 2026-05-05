@@ -289,7 +289,7 @@ mod tests {
             std::env::temp_dir().join(format!("kubectui-exec-config-{}.json", std::process::id()));
         fs::write(
             &path,
-            r#"{"namespace":"all","exec":{"shells":["/usr/bin/fish","/bin/bash"],"login":true}}"#,
+            r#"{"namespace":"all","exec":{"shells":["/usr/bin/fish","/bin/bash"],"login":true,"external_terminal_template":"kitty kubectl {context_arg} exec -it -n {namespace} {pod} -c {container} -- {shell}"}}"#,
         )
         .expect("write config");
 
@@ -299,6 +299,12 @@ mod tests {
             vec!["/usr/bin/fish".to_string(), "/bin/bash".to_string()]
         );
         assert!(app.exec_config.login);
+        assert_eq!(
+            app.exec_config.external_terminal_template.as_deref(),
+            Some(
+                "kitty kubectl {context_arg} exec -it -n {namespace} {pod} -c {container} -- {shell}"
+            )
+        );
 
         let _ = fs::remove_file(path);
     }

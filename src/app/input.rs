@@ -1434,6 +1434,9 @@ impl AppState {
                         KeyCode::Char('R') | KeyCode::Char('r') if plain_shortcut(key) => {
                             AppAction::ExecRestartSession
                         }
+                        KeyCode::Char('T') | KeyCode::Char('t') if plain_shortcut(key) => {
+                            AppAction::ExecOpenExternalTerminal
+                        }
                         _ => AppAction::None,
                     }
                 } else {

@@ -147,6 +147,7 @@ pub enum AppAction {
     ExecSendRawInput(Vec<u8>),
     ExecClearOutput,
     ExecRestartSession,
+    ExecOpenExternalTerminal,
     RolloutRestart,
     ToggleRolloutPauseResume,
     ConfirmRolloutUndo,

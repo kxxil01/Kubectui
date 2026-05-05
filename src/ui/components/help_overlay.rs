@@ -141,6 +141,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             (", / .", "Previous / next tab in controls mode"),
             ("Ctrl+W", "Close tab in controls mode"),
             ("r / R", "Restart exec session in controls mode"),
+            ("t / T", "Open exec in external terminal"),
             ("y", "Copy exec output in controls mode"),
             ("S / s", "Save exec output in controls mode"),
             ("i / Enter", "Return to exec input from controls mode"),
@@ -842,6 +843,11 @@ mod tests {
         assert!(section.iter().any(|(key, desc)| {
             *key == "r / R" && *desc == "Restart exec session in controls mode"
         }));
+        assert!(
+            section.iter().any(|(key, desc)| {
+                *key == "t / T" && *desc == "Open exec in external terminal"
+            })
+        );
         assert!(section.iter().any(|(key, desc)| {
             *key == "S / s" && *desc == "Save exec output in controls mode"
         }));

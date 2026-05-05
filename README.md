@@ -182,8 +182,17 @@ Press `Enter` on a resource, then:
 | `Ctrl+↑`/`↓` | Resize |
 
 Exec tabs reserve text input for the remote shell. Press `Esc` once to enter
-controls mode, then use `z`, `,`/`.`, `Ctrl+W`, `r`, `y`, or `S`; press `i`
-or `Enter` to return to shell input.
+controls mode, then use `z`, `,`/`.`, `Ctrl+W`, `r`, `t`, `y`, or `S`; press
+`i` or `Enter` to return to shell input. To launch exec in a native terminal,
+configure `exec.external_terminal_template`, for example:
+
+```json
+{
+  "exec": {
+    "external_terminal_template": "kitty kubectl {context_arg} exec -it -n {namespace} {pod} -c {container} -- {shell}"
+  }
+}
+```
 
 ### Log viewer
 

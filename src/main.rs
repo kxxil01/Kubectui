@@ -6939,6 +6939,62 @@ pub(crate) async fn run_app_inner(
                         });
                     }
                 }
+                AppAction::ExecOpenExternalTerminal => {
+                    let request = app.workbench().active_tab().and_then(|tab| {
+                        if let WorkbenchTabState::Exec(exec_tab) = &tab.state {
+                            Some((
+                                exec_tab.namespace.clone(),
+                                exec_tab.pod_name.clone(),
+                                exec_tab.container_name.clone(),
+                            ))
+                        } else {
+                            None
+                        }
+                    });
+                    let Some((namespace, pod_name, container_name)) = request else {
+                        app.set_error(
+                            "Open an exec tab before launching external terminal.".to_string(),
+                        );
+                        continue;
+                    };
+                    if container_name.is_empty() {
+                        app.set_error(
+                            "Select an exec container before launching external terminal."
+                                .to_string(),
+                        );
+                        continue;
+                    }
+                    let command = match app.exec_config.external_terminal_command(
+                        app.current_context_name.as_deref(),
+                        &namespace,
+                        &pod_name,
+                        &container_name,
+                    ) {
+                        Ok(command) => command,
+                        Err(err) => {
+                            app.set_error(format!("{err:#}"));
+                            continue;
+                        }
+                    };
+                    match std::process::Command::new("/bin/sh")
+                        .arg("-lc")
+                        .arg(&command)
+                        .spawn()
+                    {
+                        Ok(_) => {
+                            set_transient_status(
+                                &mut app,
+                                &mut status_message_clear_at,
+                                format!(
+                                    "Opened external terminal for {namespace}/{pod_name}:{container_name}."
+                                ),
+                            );
+                        }
+                        Err(err) => {
+                            app.set_error(format!("Failed to open external terminal: {err}"));
+                        }
+                    }
+                }
                 AppAction::LogsViewerSelectContainer(container) => {
                     let mut logs_request: Option<(u64, String, String, String)> = None;
                     if let Some(tab) = app.workbench_mut().active_tab_mut()
