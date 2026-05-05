@@ -187,18 +187,6 @@ impl LogsViewerState {
 
     /// Appends a log line, evicting the oldest lines if the buffer exceeds [`MAX_LOG_LINES`].
     pub fn push_line(&mut self, line: String) {
-        const MAX_LINE_BYTES: usize = 10_000;
-        let line = if line.len() > MAX_LINE_BYTES {
-            // Find the nearest char boundary at or before the limit to avoid
-            // panicking on multi-byte UTF-8 sequences.
-            let end = line.floor_char_boundary(MAX_LINE_BYTES);
-            let mut truncated = line;
-            truncated.truncate(end);
-            truncated.push_str("…[truncated]");
-            truncated
-        } else {
-            line
-        };
         self.lines.push(LogEntry::from_raw(line));
         if self.lines.len() > MAX_LOG_LINES {
             let excess = self.lines.len() - MAX_LOG_LINES;
