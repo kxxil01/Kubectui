@@ -47,6 +47,7 @@ use crate::{
         render_cache::mark_area_skipped,
         theme::Theme,
     },
+    workbench::WorkbenchTabState,
 };
 
 static LOADING_SPINNER_TICK: AtomicU8 = AtomicU8::new(0);
@@ -955,6 +956,12 @@ fn status_bar_message(
                 String::new()
             }
         });
+        if let Some(exec_hint) = exec_status_hint(app) {
+            return (
+                format!("{status_prefix}{current_activity}{staleness} {exec_hint}"),
+                is_error,
+            );
+        }
         let sort_hint = if app.view() == AppView::Pods {
             let active = app.pod_sort().map_or("default", PodSortState::short_label);
             format!(" • [n/a] sort ({active}) • [1/2/3] pod-sort • [0] clear-sort")
@@ -1010,6 +1017,25 @@ fn status_bar_message(
     };
 
     (status, is_error)
+}
+
+fn exec_status_hint(app: &AppState) -> Option<&'static str> {
+    if app.focus != Focus::Workbench {
+        return None;
+    }
+    let tab = app.workbench().active_tab()?;
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        return None;
+    };
+    if exec_tab.picking_container {
+        Some("exec container: [j/k] choose • [Enter] start • [Esc] cancel")
+    } else if exec_tab.command_mode {
+        Some(
+            "exec controls: [z] maximize • [,/.] tabs • [Ctrl+W] close • [r] restart • [y] copy • [S] save • [i/Enter] input • [Esc] back",
+        )
+    } else {
+        Some("exec input: [Enter] send • [Up/Down] history • [Ctrl+L] clear • [Esc] controls")
+    }
 }
 
 fn active_overlay_mask(app: &AppState) -> u16 {
@@ -3998,6 +4024,61 @@ mod tests {
 
         assert!(rendered.contains("[,/.] tabs"), "{rendered}");
         assert!(!rendered.contains("[[]/]] tabs"), "{rendered}");
+    }
+
+    #[test]
+    fn status_bar_uses_exec_controls_hint_for_active_exec_tab() {
+        let mut app = app_with_view(AppView::Pods);
+        app.workbench_mut()
+            .open_tab(crate::workbench::WorkbenchTabState::Exec(
+                crate::workbench::ExecTabState::new(
+                    ResourceRef::Pod("api-0".into(), "default".into()),
+                    1,
+                    "api-0".into(),
+                    "default".into(),
+                ),
+            ));
+        app.focus = Focus::Workbench;
+        let exec_tab = app
+            .workbench_mut()
+            .active_tab_mut()
+            .and_then(|tab| match &mut tab.state {
+                crate::workbench::WorkbenchTabState::Exec(exec_tab) => Some(exec_tab),
+                _ => None,
+            })
+            .expect("exec tab exists");
+        exec_tab.command_mode = true;
+
+        let rendered = render_to_string_with_size(&app, &pods_snapshot_for_render_tests(), 240, 40);
+
+        assert!(
+            rendered.contains("exec controls: [z] maximize"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[r] restart"), "{rendered}");
+        assert!(rendered.contains("[y] copy"), "{rendered}");
+        assert!(!rendered.contains("[1/2/3] pod-sort"), "{rendered}");
+    }
+
+    #[test]
+    fn status_bar_uses_exec_input_hint_for_active_exec_tab() {
+        let mut app = app_with_view(AppView::Pods);
+        app.workbench_mut()
+            .open_tab(crate::workbench::WorkbenchTabState::Exec(
+                crate::workbench::ExecTabState::new(
+                    ResourceRef::Pod("api-0".into(), "default".into()),
+                    1,
+                    "api-0".into(),
+                    "default".into(),
+                ),
+            ));
+        app.focus = Focus::Workbench;
+
+        let rendered = render_to_string_with_size(&app, &pods_snapshot_for_render_tests(), 200, 40);
+
+        assert!(rendered.contains("exec input: [Enter] send"), "{rendered}");
+        assert!(rendered.contains("[Esc] controls"), "{rendered}");
+        assert!(!rendered.contains("[1/2/3] pod-sort"), "{rendered}");
     }
 
     #[test]
