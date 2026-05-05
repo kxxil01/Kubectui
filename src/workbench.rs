@@ -1551,6 +1551,7 @@ pub struct ExecTabState {
     pub error: Option<String>,
     pub exited: bool,
     pub pending_fragment: String,
+    pub command_mode: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1884,6 +1885,7 @@ impl ExecTabState {
             error: None,
             exited: false,
             pending_fragment: String::new(),
+            command_mode: false,
         }
     }
 
@@ -1937,6 +1939,7 @@ impl ExecTabState {
         self.error = None;
         self.exited = false;
         self.pending_fragment.clear();
+        self.command_mode = false;
         self.picking_container = false;
         self.container_cursor = 0;
         if let Some(container_name) = preset_container {
@@ -1956,6 +1959,7 @@ impl ExecTabState {
         self.loading = true;
         self.exited = false;
         self.error = None;
+        self.command_mode = false;
     }
 
     pub fn append_banner(&mut self, lines: &[String]) {
@@ -3942,6 +3946,7 @@ mod tests {
         tab.lines = vec!["old".into()];
         tab.scroll = 3;
         tab.loading = false;
+        tab.command_mode = true;
 
         tab.restart_session(9, "pod-0".into(), "default".into(), None);
 
@@ -3951,6 +3956,7 @@ mod tests {
         assert!(tab.lines.is_empty());
         assert_eq!(tab.scroll, 0);
         assert!(tab.loading);
+        assert!(!tab.command_mode);
         assert_eq!(tab.input, "echo hi");
         assert_eq!(tab.input_cursor, "echo hi".chars().count());
     }

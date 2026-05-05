@@ -199,7 +199,7 @@ impl AppState {
             WorkbenchTabState::DecodedSecret(tab) => tab.editing,
             WorkbenchTabState::PodLogs(tab) => tab.viewer.searching || tab.viewer.jumping_to_time,
             WorkbenchTabState::WorkloadLogs(tab) => tab.editing_text_filter || tab.jumping_to_time,
-            WorkbenchTabState::Exec(tab) => !tab.picking_container,
+            WorkbenchTabState::Exec(tab) => !tab.picking_container && !tab.command_mode,
             _ => false,
         }
     }
@@ -1420,9 +1420,21 @@ impl AppState {
                             .unwrap_or(AppAction::None),
                         _ => AppAction::None,
                     }
-                } else {
+                } else if tab.command_mode {
                     match key.code {
                         KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
+                        KeyCode::Enter | KeyCode::Char('i') if plain_shortcut(key) => {
+                            tab.command_mode = false;
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc if plain_shortcut(key) => {
+                            tab.command_mode = true;
+                            AppAction::None
+                        }
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ExecSendInput,
                         KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(&mut tab.input, &mut tab.input_cursor);

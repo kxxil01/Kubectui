@@ -1835,6 +1835,87 @@ fn workbench_common_shortcuts_do_not_leak_into_exec_input() {
 }
 
 #[test]
+fn exec_escape_enters_command_mode_for_workbench_controls() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::WorkbenchToggleMaximize
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.input, "z");
+    assert!(exec_tab.command_mode);
+}
+
+#[test]
+fn exec_command_mode_can_return_to_input_or_back_out() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('i'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.input, "z");
+    assert!(!exec_tab.command_mode);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)),
+        AppAction::EscapePressed
+    );
+}
+
+#[test]
 fn exec_input_ignores_alt_modified_chars() {
     let mut app = AppState::default();
     app.workbench.open_tab(WorkbenchTabState::Exec(

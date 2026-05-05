@@ -2841,6 +2841,8 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
         format!("{} loading", loading_spinner_char())
     } else if tab.picking_container {
         "select container".to_string()
+    } else if tab.command_mode {
+        "controls".to_string()
     } else if tab.exited {
         "exited".to_string()
     } else {
@@ -2864,7 +2866,11 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             ),
         ]),
         Line::from(Span::styled(
-            "[Enter] send  [Backspace] edit  [Esc] back",
+            if tab.command_mode {
+                "[z] maximize  [,/.] tabs  [Ctrl+W] close  [i/Enter] input  [Esc] back"
+            } else {
+                "[Enter] send  [Backspace] edit  [Esc] controls"
+            },
             theme.keybind_desc_style(),
         )),
     ];
@@ -4207,6 +4213,36 @@ mod tests {
         assert!(before.contains("Waiting for shell output..."));
         assert!(after.contains("Waiting for shell output..."));
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn exec_command_mode_renders_control_hints() {
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("api-0".into(), "default".into()),
+            1,
+            "api-0".into(),
+            "default".into(),
+        );
+        tab.loading = false;
+        tab.container_name = "main".into();
+        tab.command_mode = true;
+
+        terminal
+            .draw(|frame| render_exec_tab(frame, Rect::new(0, 0, 100, 12), &tab))
+            .expect("exec tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("controls"));
+        assert!(rendered.contains("[z] maximize"));
+        assert!(rendered.contains("[i/Enter] input"));
     }
 
     #[test]
