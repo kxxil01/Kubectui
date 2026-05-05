@@ -412,6 +412,19 @@ fn prepare_context_switch_ui(app: &mut kubectui::app::AppState) {
     app.sync_workbench_focus();
 }
 
+fn clear_port_forward_registries(app: &mut kubectui::app::AppState) {
+    app.tunnel_registry.update_tunnels(Vec::new());
+    if let Some(tab) = app
+        .workbench_mut()
+        .find_tab_mut(&WorkbenchTabKey::PortForward)
+        && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+    {
+        port_tab
+            .dialog
+            .update_registry(kubectui::state::port_forward::TunnelRegistry::new());
+    }
+}
+
 async fn stop_context_bound_background_activity(
     app: &mut kubectui::app::AppState,
     coordinator: &mut UpdateCoordinator,
@@ -441,7 +454,7 @@ async fn stop_context_bound_background_activity(
         spawn_node_debug_cleanup(session, node_debug_cleanup_tx.clone()).await;
     }
     port_forwarder.stop_all().await;
-    app.tunnel_registry.update_tunnels(Vec::new());
+    clear_port_forward_registries(app);
 }
 
 async fn apply_workspace_snapshot_and_refresh(
@@ -519,7 +532,7 @@ async fn apply_workspace_snapshot_and_refresh(
         .await;
     }
     runtime.port_forwarder.stop_all().await;
-    app.tunnel_registry.update_tunnels(Vec::new());
+    clear_port_forward_registries(app);
     app.apply_workspace_snapshot(snapshot);
     if previous_view != app.view() && should_request_navigation_refresh(app.view()) {
         request_refresh(
@@ -6260,7 +6273,7 @@ pub(crate) async fn run_app_inner(
                     }
                     if workspace_restore_pending {
                         port_forwarder.stop_all().await;
-                        app.tunnel_registry.update_tunnels(Vec::new());
+                        clear_port_forward_registries(&mut app);
                     }
                     status_message_clear_at = None;
                     app.clear_status();
