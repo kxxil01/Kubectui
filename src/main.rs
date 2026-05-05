@@ -412,6 +412,38 @@ fn prepare_context_switch_ui(app: &mut kubectui::app::AppState) {
     app.sync_workbench_focus();
 }
 
+async fn stop_context_bound_background_activity(
+    app: &mut kubectui::app::AppState,
+    coordinator: &mut UpdateCoordinator,
+    workload_log_sessions: &mut HashMap<u64, Vec<(String, String, String)>>,
+    exec_sessions: &mut HashMap<u64, ExecSessionHandle>,
+    node_debug_sessions: &mut HashMap<u64, NodeDebugSessionRuntime>,
+    node_debug_cleanup_tx: &tokio::sync::mpsc::Sender<NodeDebugCleanupAsyncResult>,
+    port_forwarder: &mut PortForwarderService,
+) {
+    let follow_streams_to_stop = workbench_all_follow_streams_to_stop(app);
+    for (pod_name, namespace, container_name) in follow_streams_to_stop {
+        let _ = coordinator
+            .stop_log_streaming(&pod_name, &namespace, &container_name)
+            .await;
+    }
+    for (_, streams) in workload_log_sessions.drain() {
+        for (pod_name, namespace, container_name) in streams {
+            let _ = coordinator
+                .stop_log_streaming(&pod_name, &namespace, &container_name)
+                .await;
+        }
+    }
+    for (_, handle) in exec_sessions.drain() {
+        let _ = handle.cancel_tx.send(());
+    }
+    for (_, session) in node_debug_sessions.drain() {
+        spawn_node_debug_cleanup(session, node_debug_cleanup_tx.clone()).await;
+    }
+    port_forwarder.stop_all().await;
+    app.tunnel_registry.update_tunnels(Vec::new());
+}
+
 async fn apply_workspace_snapshot_and_refresh(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::workspaces::WorkspaceSnapshot,
@@ -5099,19 +5131,17 @@ pub(crate) async fn run_app_inner(
                         Ok(Ok(new_client)) => {
                             // Context-bound long-lived services must be rebuilt to avoid
                             // continuing background work against the previous cluster.
+                            stop_context_bound_background_activity(
+                                &mut app,
+                                &mut coordinator,
+                                &mut workload_log_sessions,
+                                &mut exec_sessions,
+                                &mut node_debug_sessions,
+                                &node_debug_cleanup_tx,
+                                &mut port_forwarder,
+                            )
+                            .await;
                             let _ = coordinator.shutdown().await;
-                            for (_, handle) in exec_sessions.drain() {
-                                let _ = handle.cancel_tx.send(());
-                            }
-                            for (_, session) in node_debug_sessions.drain() {
-                                let _ = session
-                                    .client
-                                    .delete_node_debug_pod(&session.namespace, &session.pod_name)
-                                    .await;
-                            }
-                            workload_log_sessions.clear();
-                            port_forwarder.stop_all().await;
-                            app.tunnel_registry.update_tunnels(Vec::new());
 
                             watch_manager.stop_all();
 
@@ -6161,6 +6191,17 @@ pub(crate) async fn run_app_inner(
                     pending_flux_reconcile_verifications.clear();
                     // Show loading state immediately; TLS handshake runs in background.
                     invalidate_context_generation(&mut refresh_state);
+                    stop_context_bound_background_activity(
+                        &mut app,
+                        &mut coordinator,
+                        &mut workload_log_sessions,
+                        &mut exec_sessions,
+                        &mut node_debug_sessions,
+                        &node_debug_cleanup_tx,
+                        &mut port_forwarder,
+                    )
+                    .await;
+                    watch_manager.stop_all();
                     global_state.begin_loading_transition(true);
                     prepare_context_switch_ui(&mut app);
                     snapshot_dirty = true;
