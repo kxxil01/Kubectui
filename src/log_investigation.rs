@@ -508,14 +508,13 @@ fn extract_request_id(text: &str) -> Option<String> {
         "span-id",
     ];
 
-    let lower = text.to_ascii_lowercase();
     for key in KEYS {
         let mut search_start = 0usize;
-        while let Some(relative) = lower[search_start..].find(key) {
+        while let Some(relative) = find_ascii_ci(&text[search_start..], key) {
             let start = search_start + relative;
             let end = start + key.len();
-            if !is_left_token_boundary(lower.as_bytes(), start)
-                || !is_token_boundary(lower.as_bytes(), end)
+            if !is_left_token_boundary(text.as_bytes(), start)
+                || !is_token_boundary(text.as_bytes(), end)
             {
                 search_start = end;
                 continue;
@@ -549,10 +548,7 @@ fn extract_timestamp(text: &str) -> Option<AppTimestamp> {
 }
 
 fn substring_match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
-    let lower_text = text.to_ascii_lowercase();
-    let lower_query = query.to_ascii_lowercase();
-    lower_text
-        .match_indices(&lower_query)
+    ascii_ci_match_indices(text, query)
         .take(32)
         .map(|(start, _)| (start, start + query.len()))
         .collect()
@@ -572,11 +568,31 @@ fn contains_ci_ascii(haystack: &str, needle: &str) -> bool {
 }
 
 fn contains_token_ci(text: &str, token: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    let token = token.to_ascii_lowercase();
-    lower.match_indices(&token).any(|(start, _)| {
-        is_left_token_boundary(lower.as_bytes(), start)
-            && is_token_boundary(lower.as_bytes(), start + token.len())
+    ascii_ci_match_indices(text, token).any(|(start, _)| {
+        is_left_token_boundary(text.as_bytes(), start)
+            && is_token_boundary(text.as_bytes(), start + token.len())
+    })
+}
+
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    ascii_ci_match_indices(haystack, needle)
+        .next()
+        .map(|(idx, _)| idx)
+}
+
+fn ascii_ci_match_indices<'a>(
+    haystack: &'a str,
+    needle: &'a str,
+) -> impl Iterator<Item = (usize, &'a str)> + 'a {
+    haystack.char_indices().filter_map(move |(idx, _)| {
+        if needle.is_empty() {
+            return None;
+        }
+        let end = idx.checked_add(needle.len())?;
+        haystack
+            .get(idx..end)
+            .filter(|window| window.eq_ignore_ascii_case(needle))
+            .map(|window| (idx, window))
     })
 }
 
@@ -657,6 +673,26 @@ mod tests {
             entry.display_text(true),
             "ERROR trace_id=xyz-9 request failed"
         );
+    }
+
+    #[test]
+    fn plain_line_extracts_mixed_case_request_id_without_key_allocation() {
+        let entry = LogEntry::from_raw("warn Trace_ID: abc-9 request delayed");
+
+        assert_eq!(entry.severity(), Some(LogSeverity::Warn));
+        assert_eq!(entry.request_id(), Some("abc-9"));
+    }
+
+    #[test]
+    fn substring_highlight_ranges_match_ascii_case_insensitively() {
+        let ranges = highlight_ranges(
+            "INFO request failed; info retry",
+            "info",
+            LogQueryMode::Substring,
+            None,
+        );
+
+        assert_eq!(ranges, vec![(0, 4), (21, 25)]);
     }
 
     #[test]
