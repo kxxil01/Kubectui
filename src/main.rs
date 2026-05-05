@@ -1917,6 +1917,13 @@ fn format_ai_log_context_line(line: &str) -> String {
     truncate_ai_block(&redact_ai_inline_secrets(line), 180)
 }
 
+fn format_ai_log_unavailable_line(prefix: &str, error: &str) -> String {
+    truncate_ai_block(
+        &format!("{prefix} unavailable: {}", redact_ai_inline_secrets(error)),
+        220,
+    )
+}
+
 fn prioritize_ai_log_context_lines(
     status_lines: Vec<String>,
     content_lines: Vec<String>,
@@ -1966,9 +1973,12 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                         }));
                     }
                     Ok(_) => {}
-                    Err(err) => status_lines.push(format!(
-                        "pod {}/{} container {container} current logs unavailable: {err}",
-                        target.namespace, target.pod_name
+                    Err(err) => status_lines.push(format_ai_log_unavailable_line(
+                        &format!(
+                            "pod {}/{} container {container} current logs",
+                            target.namespace, target.pod_name
+                        ),
+                        &err.to_string(),
                     )),
                 }
 
@@ -2010,9 +2020,13 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
     let lines =
         match tokio::time::timeout(Duration::from_secs(AI_LIVE_LOG_TIMEOUT_SECS), fetch).await {
             Ok(Ok(lines)) => lines,
-            Ok(Err(err)) => vec![format!("live pod logs unavailable: {err}")],
-            Err(_) => vec![format!(
-                "live pod logs unavailable: timed out after {AI_LIVE_LOG_TIMEOUT_SECS}s"
+            Ok(Err(err)) => vec![format_ai_log_unavailable_line(
+                "live pod logs",
+                &err.to_string(),
+            )],
+            Err(_) => vec![format_ai_log_unavailable_line(
+                "live pod logs",
+                &format!("timed out after {AI_LIVE_LOG_TIMEOUT_SECS}s"),
             )],
         };
     context.log_lines = cap_ai_lines(lines, AI_LOG_MAX_LINES, AI_LOG_MAX_CHARS);
