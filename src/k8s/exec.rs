@@ -117,15 +117,47 @@ impl ExecConfig {
             .filter(|ctx| !ctx.trim().is_empty())
             .map(|ctx| format!("--context {}", shell_quote(ctx)))
             .unwrap_or_default();
-        let command = template
-            .replace("{context_arg}", &context_arg)
-            .replace("{context}", &context.map(shell_quote).unwrap_or_default())
-            .replace("{namespace}", &shell_quote(namespace))
-            .replace("{pod}", &shell_quote(pod))
-            .replace("{container}", &shell_quote(container))
-            .replace("{shell}", &shell_quote(&shell));
-        Ok(command)
+        let quoted_context = context.map(shell_quote).unwrap_or_default();
+        let quoted_namespace = shell_quote(namespace);
+        let quoted_pod = shell_quote(pod);
+        let quoted_container = shell_quote(container);
+        let quoted_shell = shell_quote(&shell);
+        Ok(render_external_terminal_template(
+            template,
+            &[
+                ("context_arg", context_arg.as_str()),
+                ("context", quoted_context.as_str()),
+                ("namespace", quoted_namespace.as_str()),
+                ("pod", quoted_pod.as_str()),
+                ("container", quoted_container.as_str()),
+                ("shell", quoted_shell.as_str()),
+            ],
+        ))
     }
+}
+
+fn render_external_terminal_template(template: &str, values: &[(&str, &str)]) -> String {
+    let mut rendered = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        rendered.push_str(&rest[..start]);
+        let after_open = &rest[start + 1..];
+        let Some(end) = after_open.find('}') else {
+            rendered.push_str(&rest[start..]);
+            return rendered;
+        };
+        let key = &after_open[..end];
+        if let Some((_, value)) = values.iter().find(|(candidate, _)| *candidate == key) {
+            rendered.push_str(value);
+        } else {
+            rendered.push('{');
+            rendered.push_str(key);
+            rendered.push('}');
+        }
+        rest = &after_open[end + 1..];
+    }
+    rendered.push_str(rest);
+    rendered
 }
 
 fn shell_quote(value: &str) -> String {
@@ -454,10 +486,16 @@ async fn run_exec_session(
                 }
             }
             maybe_size = resize_rx.recv() => {
-                if let Some(size) = maybe_size
-                    && let Some(writer) = &mut terminal_size_tx
-                {
-                    let _ = writer.send(size.into_kube()).await;
+                match maybe_size {
+                    Some(size) => {
+                        if let Some(writer) = &mut terminal_size_tx {
+                            let _ = writer.send(size.into_kube()).await;
+                        }
+                    }
+                    None => {
+                        attached.abort();
+                        break;
+                    }
                 }
             }
             status = &mut status_future => {
@@ -908,6 +946,26 @@ mod tests {
         assert_eq!(
             command,
             "kitty kubectl --context 'prod cluster' exec -it -n default 'api'\\'';rm' -c 'main container' -- /bin/bash"
+        );
+    }
+
+    #[test]
+    fn external_terminal_template_does_not_expand_inside_values() {
+        let config = ExecConfig {
+            shells: vec!["/bin/sh".to_string()],
+            login: false,
+            external_terminal_template: Some(
+                "cmd {context_arg} {context} {namespace} {pod} {unknown}".to_string(),
+            ),
+        };
+
+        let command = config
+            .external_terminal_command(Some("prod-{namespace}"), "default", "pod", "main")
+            .expect("external command");
+
+        assert_eq!(
+            command,
+            "cmd --context 'prod-{namespace}' 'prod-{namespace}' default pod {unknown}"
         );
     }
 
