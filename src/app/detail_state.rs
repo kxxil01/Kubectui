@@ -395,6 +395,13 @@ impl LogsViewerState {
             .collect()
     }
 
+    pub fn visible_lines(&self) -> impl Iterator<Item = &LogEntry> {
+        let now = crate::time::now();
+        self.lines
+            .iter()
+            .filter(move |line| self.matches_visible_filters_at(line, now))
+    }
+
     pub fn recent_visible_lines(&self, limit: usize) -> Vec<&LogEntry> {
         if limit == 0 {
             return Vec::new();

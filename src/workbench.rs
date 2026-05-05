@@ -2135,11 +2135,30 @@ impl ExecTabState {
     }
 
     pub fn output_text(&self) -> Option<String> {
-        let mut lines = self.lines.clone();
-        if !self.pending_fragment.is_empty() {
-            lines.push(self.pending_fragment.clone());
+        if self.lines.is_empty() && self.pending_fragment.is_empty() {
+            return None;
         }
-        (!lines.is_empty()).then(|| lines.join("\n"))
+
+        let line_bytes = self.lines.iter().map(String::len).sum::<usize>();
+        let separator_bytes =
+            self.lines.len().saturating_sub(1).saturating_add(
+                (!self.lines.is_empty() && !self.pending_fragment.is_empty()) as usize,
+            );
+        let mut output =
+            String::with_capacity(line_bytes + separator_bytes + self.pending_fragment.len());
+        for line in &self.lines {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(line);
+        }
+        if !self.pending_fragment.is_empty() {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&self.pending_fragment);
+        }
+        Some(output)
     }
 
     pub fn output_label(&self) -> String {
