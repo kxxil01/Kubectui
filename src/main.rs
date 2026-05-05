@@ -432,6 +432,20 @@ fn clear_port_forward_registries(app: &mut kubectui::app::AppState) {
     }
 }
 
+fn current_exec_terminal_size() -> ExecTerminalSize {
+    let (width, height) = crossterm::terminal::size().unwrap_or((120, 40));
+    ExecTerminalSize::from_terminal_resize(width, height)
+}
+
+fn remember_exec_session(
+    exec_sessions: &mut HashMap<u64, ExecSessionHandle>,
+    session_id: u64,
+    handle: ExecSessionHandle,
+) {
+    let _ = handle.resize_tx.try_send(current_exec_terminal_size());
+    exec_sessions.insert(session_id, handle);
+}
+
 async fn stop_context_bound_background_activity(
     app: &mut kubectui::app::AppState,
     coordinator: &mut UpdateCoordinator,
@@ -4485,7 +4499,7 @@ pub(crate) async fn run_app_inner(
                         .await
                         {
                             Ok(handle) => {
-                                exec_sessions.insert(session_id, handle);
+                                remember_exec_session(&mut exec_sessions, session_id, handle);
                                 if let Some(tab) = app
                                     .workbench_mut()
                                     .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
@@ -4611,7 +4625,11 @@ pub(crate) async fn run_app_inner(
                             .await
                             {
                                 Ok(handle) => {
-                                    exec_sessions.insert(result.session_id, handle);
+                                    remember_exec_session(
+                                        &mut exec_sessions,
+                                        result.session_id,
+                                        handle,
+                                    );
                                     app.complete_action_history(
                                         result.action_history_id,
                                         ActionStatus::Succeeded,
@@ -4799,7 +4817,11 @@ pub(crate) async fn run_app_inner(
                             .await
                             {
                                 Ok(handle) => {
-                                    exec_sessions.insert(result.session_id, handle);
+                                    remember_exec_session(
+                                        &mut exec_sessions,
+                                        result.session_id,
+                                        handle,
+                                    );
                                     node_debug_sessions.insert(
                                         result.session_id,
                                         NodeDebugSessionRuntime {
@@ -6851,7 +6873,7 @@ pub(crate) async fn run_app_inner(
                         .await
                         {
                             Ok(handle) => {
-                                exec_sessions.insert(session_id, handle);
+                                remember_exec_session(&mut exec_sessions, session_id, handle);
                             }
                             Err(err) => {
                                 if let Some(tab) = app
@@ -6982,7 +7004,7 @@ pub(crate) async fn run_app_inner(
                         .await
                         {
                             Ok(handle) => {
-                                exec_sessions.insert(session_id, handle);
+                                remember_exec_session(&mut exec_sessions, session_id, handle);
                             }
                             Err(err) => {
                                 if let Some(tab) = app
