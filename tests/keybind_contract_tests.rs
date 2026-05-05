@@ -7,7 +7,7 @@ use kubectui::{
     app::{AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef},
     events::route_keyboard_input,
     policy::DetailAction,
-    workbench::{ResourceYamlTabState, WorkbenchTabState},
+    workbench::{ExecTabState, ResourceYamlTabState, WorkbenchTabState},
     workspaces::{HotkeyAction, HotkeyBinding, HotkeyTarget, WorkspaceBank},
 };
 
@@ -532,6 +532,84 @@ fn readme_lists_exact_quit_sequence() {
     assert!(
         !readme.contains("| `q` | Quit |"),
         "README must not imply q exits"
+    );
+}
+
+#[test]
+fn readme_documents_exec_workbench_control_handoff() {
+    let readme = include_str!("../README.md");
+    assert!(
+        readme.contains("Press `Esc` once to enter\ncontrols mode"),
+        "README must document exec input to workbench controls handoff"
+    );
+    assert!(
+        readme.contains("then use `z`, `,`/`.`, or `Ctrl+W`"),
+        "README must list reachable exec controls after Esc"
+    );
+}
+
+#[test]
+fn exec_workbench_controls_require_controls_mode() {
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    app.workbench_mut()
+        .open_tab(WorkbenchTabState::Exec(ExecTabState::new(
+            ResourceRef::Pod("pod-a".into(), "default".into()),
+            1,
+            "pod-a".into(),
+            "default".into(),
+        )));
+    let exec_tab = app
+        .workbench_mut()
+        .active_tab_mut()
+        .and_then(|tab| match &mut tab.state {
+            WorkbenchTabState::Exec(tab) => Some(tab),
+            _ => None,
+        })
+        .expect("exec tab exists");
+    exec_tab.loading = false;
+    exec_tab.container_name = "main".into();
+
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('z')), &mut app),
+        AppAction::None,
+        "z must remain shell input while exec input owns keyboard"
+    );
+    assert_eq!(
+        route_keyboard_input(
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+            &mut app
+        ),
+        AppAction::None,
+        "Ctrl+W must not close exec tab while exec input owns keyboard"
+    );
+
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app),
+        AppAction::None
+    );
+    assert!(app.workbench().active_tab().is_some_and(|tab| {
+        matches!(&tab.state, WorkbenchTabState::Exec(exec) if exec.command_mode)
+    }));
+
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('z')), &mut app),
+        AppAction::WorkbenchToggleMaximize
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('.')), &mut app),
+        AppAction::WorkbenchNextTab
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char(',')), &mut app),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        route_keyboard_input(
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+            &mut app
+        ),
+        AppAction::WorkbenchCloseActiveTab
     );
 }
 
