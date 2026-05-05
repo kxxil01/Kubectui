@@ -237,9 +237,7 @@ pub(crate) fn apply_detail_error_to_workbench(
         && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
         && yaml_tab.pending_request_id == Some(request_id)
     {
-        yaml_tab.loading = false;
-        yaml_tab.error = Some(error.to_string());
-        yaml_tab.pending_request_id = None;
+        yaml_tab.update_content(None, Some(error.to_string()), None);
     }
 
     if let Some(tab) = app
@@ -250,6 +248,9 @@ pub(crate) fn apply_detail_error_to_workbench(
     {
         events_tab.loading = false;
         events_tab.error = Some(error.to_string());
+        events_tab.events.clear();
+        events_tab.timeline.clear();
+        events_tab.scroll = 0;
         events_tab.pending_request_id = None;
     }
 
@@ -949,7 +950,9 @@ mod tests {
     use kubectui::{
         k8s::portforward::{PortForwardTarget, PortForwardTunnelInfo, TunnelState},
         secret::{DecodedSecretEntry, DecodedSecretValue},
-        workbench::{DecodedSecretTabState, PodLogsTabState, ResourceYamlTabState},
+        workbench::{
+            DecodedSecretTabState, PodLogsTabState, ResourceEventsTabState, ResourceYamlTabState,
+        },
     };
     use std::{net::SocketAddr, str::FromStr};
 
@@ -1105,6 +1108,38 @@ mod tests {
     }
 
     #[test]
+    fn resource_yaml_async_error_clears_stale_payload() {
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = ResourceYamlTabState::new(resource.clone());
+        tab.update_content(
+            Some("kind: Pod\nmetadata:\n  name: stale\n".into()),
+            None,
+            None,
+        );
+        tab.loading = true;
+        tab.pending_request_id = Some(13);
+        tab.scroll = 2;
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::ResourceYaml(tab));
+
+        apply_detail_error_to_workbench(&mut app, 13, &resource, "remote read failed");
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing yaml tab");
+        };
+        let WorkbenchTabState::ResourceYaml(tab) = &tab.state else {
+            panic!("expected yaml tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.yaml.is_none());
+        assert_eq!(tab.yaml_line_count(), 0);
+        assert_eq!(tab.scroll, 0);
+        assert_eq!(tab.error.as_deref(), Some("remote read failed"));
+    }
+
+    #[test]
     fn decoded_secret_async_decode_error_clears_stale_entries() {
         let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
         let mut app = AppState::default();
@@ -1169,6 +1204,42 @@ mod tests {
         assert_eq!(tab.pending_request_id, None);
         assert!(tab.events.is_empty());
         assert_eq!(tab.error.as_deref(), Some("failed to read live events"));
+    }
+
+    #[test]
+    fn resource_events_async_error_clears_stale_payload() {
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = ResourceEventsTabState::new(resource.clone());
+        tab.events = vec![kubectui::k8s::events::EventInfo {
+            event_type: "Normal".into(),
+            reason: "Pulled".into(),
+            message: "stale image event".into(),
+            first_timestamp: kubectui::time::now(),
+            last_timestamp: kubectui::time::now(),
+            count: 1,
+        }];
+        tab.rebuild_timeline(&app.action_history);
+        tab.loading = true;
+        tab.pending_request_id = Some(14);
+        tab.scroll = 4;
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::ResourceEvents(tab));
+
+        apply_detail_error_to_workbench(&mut app, 14, &resource, "remote events failed");
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing events tab");
+        };
+        let WorkbenchTabState::ResourceEvents(tab) = &tab.state else {
+            panic!("expected events tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.events.is_empty());
+        assert!(tab.timeline.is_empty());
+        assert_eq!(tab.scroll, 0);
+        assert_eq!(tab.error.as_deref(), Some("remote events failed"));
     }
 
     #[test]
