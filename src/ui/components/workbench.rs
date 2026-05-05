@@ -2950,17 +2950,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 sections[1],
             );
         } else {
-            let mut lines: Vec<Line> = tab
-                .lines
-                .iter()
-                .map(|line| Line::from(line.as_str()))
-                .collect();
-
-            if !tab.pending_fragment.is_empty() {
-                lines.push(Line::from(tab.pending_fragment.as_str()));
-            }
-
-            render_wrapped_text_lines(frame, sections[1], lines, tab.scroll);
+            render_exec_output_lines(frame, sections[1], tab);
         }
     }
 
@@ -2976,6 +2966,77 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
         )),
         sections[2],
     );
+}
+
+fn exec_output_entry(tab: &crate::workbench::ExecTabState, index: usize) -> Option<&str> {
+    tab.lines
+        .get(index)
+        .map(String::as_str)
+        .or_else(|| (index == tab.lines.len()).then_some(tab.pending_fragment.as_str()))
+        .filter(|line| !line.is_empty() || index < tab.lines.len())
+}
+
+fn wrapped_str_row_count(value: &str, width: u16) -> usize {
+    let usable_width = usize::from(width.saturating_sub(1).max(1));
+    value.chars().count().max(1).div_ceil(usable_width)
+}
+
+fn exec_output_window_lines<'a>(
+    tab: &'a crate::workbench::ExecTabState,
+    width: u16,
+    height: u16,
+    scroll: usize,
+) -> (Vec<Line<'a>>, usize, usize, usize) {
+    let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
+    let viewport_rows = height.max(1) as usize;
+    let mut visual_total = 0usize;
+    let mut row_counts = Vec::with_capacity(total);
+    for index in 0..total {
+        let rows = exec_output_entry(tab, index)
+            .map(|line| wrapped_str_row_count(line, width))
+            .unwrap_or(1);
+        visual_total = visual_total.saturating_add(rows);
+        row_counts.push(rows);
+    }
+
+    let position = scroll.min(visual_total.saturating_sub(viewport_rows));
+    let mut rows_before = 0usize;
+    let mut start_index = 0usize;
+    for (index, rows) in row_counts.iter().enumerate() {
+        if rows_before + rows > position {
+            start_index = index;
+            break;
+        }
+        rows_before += rows;
+    }
+
+    let local_scroll = position.saturating_sub(rows_before);
+    let mut visible_rows = 0usize;
+    let mut lines = Vec::new();
+    for (offset, rows) in row_counts[start_index..].iter().enumerate() {
+        if visible_rows >= local_scroll + viewport_rows {
+            break;
+        }
+        let index = start_index + offset;
+        if let Some(line) = exec_output_entry(tab, index) {
+            lines.push(Line::from(line));
+            visible_rows = visible_rows.saturating_add(*rows);
+        }
+    }
+
+    (lines, visual_total, position, local_scroll)
+}
+
+fn render_exec_output_lines(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
+    let (lines, total, position, local_scroll) =
+        exec_output_window_lines(tab, area.width, area.height, tab.scroll);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((local_scroll.min(u16::MAX as usize) as u16, 0)),
+        area,
+    );
+    render_scrollbar(frame, area, total, position);
 }
 
 fn render_extension_output_tab(
@@ -3426,11 +3487,12 @@ fn scroll_window_scrollbar_position(
 #[cfg(test)]
 mod tests {
     use super::{
-        VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
-        render_decoded_secret_tab, render_events_tab, render_exec_tab, render_extension_output_tab,
-        render_helm_history_tab, render_helm_values_diff, render_logs_tab, render_rollout_tab,
-        render_workload_logs_tab, render_yaml_tab, scroll_window, scroll_window_scrollbar_position,
-        summarize_workload_log_filters, workload_log_render_window,
+        VisibleWindow, access_review_lines, centered_window, exec_output_window_lines,
+        render_connectivity_tab, render_decoded_secret_tab, render_events_tab, render_exec_tab,
+        render_extension_output_tab, render_helm_history_tab, render_helm_values_diff,
+        render_logs_tab, render_rollout_tab, render_workload_logs_tab, render_yaml_tab,
+        scroll_window, scroll_window_scrollbar_position, summarize_workload_log_filters,
+        workload_log_render_window,
     };
     use crate::{
         action_history::{ActionKind, ActionStatus},
@@ -4274,6 +4336,38 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("TAIL"));
+    }
+
+    #[test]
+    fn exec_output_window_avoids_allocating_all_retained_lines() {
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("api-0".into(), "default".into()),
+            1,
+            "api-0".into(),
+            "default".into(),
+        );
+        tab.lines = (0..crate::workbench::MAX_EXEC_OUTPUT_LINES)
+            .map(|idx| format!("line {idx}"))
+            .collect();
+        tab.scroll = tab.lines.len().saturating_sub(1);
+
+        let (lines, total, position, local_scroll) =
+            exec_output_window_lines(&tab, 80, 8, tab.scroll);
+
+        assert_eq!(total, crate::workbench::MAX_EXEC_OUTPUT_LINES);
+        assert!(position > 0);
+        assert_eq!(local_scroll, 0);
+        assert!(
+            lines.len() <= 8,
+            "render window should stay viewport-sized, got {}",
+            lines.len()
+        );
+        assert!(
+            lines
+                .first()
+                .is_some_and(|line| line.spans.iter().any(|span| span.content == "line 4992")),
+            "{lines:?}"
+        );
     }
 
     #[test]
