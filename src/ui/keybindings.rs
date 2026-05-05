@@ -44,10 +44,14 @@ pub fn ctrl_scroll_action(key: KeyEvent) -> Option<CtrlScrollAction> {
     }
 
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => Some(CtrlScrollAction::LineDown),
-        KeyCode::Char('k') | KeyCode::Up => Some(CtrlScrollAction::LineUp),
-        KeyCode::Char('d') | KeyCode::PageDown => Some(CtrlScrollAction::PageDown),
-        KeyCode::Char('u') | KeyCode::PageUp => Some(CtrlScrollAction::PageUp),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'j') => Some(CtrlScrollAction::LineDown),
+        KeyCode::Down => Some(CtrlScrollAction::LineDown),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'k') => Some(CtrlScrollAction::LineUp),
+        KeyCode::Up => Some(CtrlScrollAction::LineUp),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'d') => Some(CtrlScrollAction::PageDown),
+        KeyCode::PageDown => Some(CtrlScrollAction::PageDown),
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'u') => Some(CtrlScrollAction::PageUp),
+        KeyCode::PageUp => Some(CtrlScrollAction::PageUp),
         _ => None,
     }
 }
@@ -143,12 +147,37 @@ mod tests {
             )),
             None
         );
+    }
+
+    #[test]
+    fn ctrl_scroll_action_accepts_shifted_terminal_chars() {
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(
+                KeyCode::Char('J'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            Some(CtrlScrollAction::LineDown)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(
+                KeyCode::Char('K'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            Some(CtrlScrollAction::LineUp)
+        );
         assert_eq!(
             ctrl_scroll_action(KeyEvent::new(
                 KeyCode::Char('D'),
                 KeyModifiers::CONTROL | KeyModifiers::SHIFT
             )),
-            None
+            Some(CtrlScrollAction::PageDown)
+        );
+        assert_eq!(
+            ctrl_scroll_action(KeyEvent::new(
+                KeyCode::Char('U'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            Some(CtrlScrollAction::PageUp)
         );
     }
 
