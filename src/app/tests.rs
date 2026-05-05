@@ -1916,6 +1916,35 @@ fn exec_command_mode_can_return_to_input_or_back_out() {
 }
 
 #[test]
+fn exec_page_down_scrolls_wrapped_visual_output() {
+    let mut app = AppState::default();
+    let mut tab = crate::workbench::ExecTabState::new(
+        ResourceRef::Pod("pod-1".into(), "default".into()),
+        1,
+        "pod-1".into(),
+        "default".into(),
+    );
+    tab.loading = false;
+    tab.container_name = "main".into();
+    tab.lines.push("one very long line".into());
+    app.workbench.open_tab(WorkbenchTabState::Exec(tab));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::PageDown)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.scroll, 10);
+}
+
+#[test]
 fn exec_input_ignores_alt_modified_chars() {
     let mut app = AppState::default();
     app.workbench.open_tab(WorkbenchTabState::Exec(

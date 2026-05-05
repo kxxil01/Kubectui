@@ -1497,7 +1497,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageDown if plain_shortcut(key) => {
-                            tab.scroll = (tab.scroll + 10).min(tab.lines.len().saturating_sub(1));
+                            tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
                         KeyCode::Char(c) if plain_shortcut(key) => {

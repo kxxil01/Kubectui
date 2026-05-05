@@ -2950,24 +2950,17 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 sections[1],
             );
         } else {
-            let viewport_rows = sections[1].height.saturating_sub(1) as usize;
-            let window = scroll_window(total, tab.scroll, viewport_rows);
-            let complete_start = window.start.min(tab.lines.len());
-            let complete_end = window.end.min(tab.lines.len());
-            let mut lines: Vec<Line> = tab.lines[complete_start..complete_end]
+            let mut lines: Vec<Line> = tab
+                .lines
                 .iter()
-                .map(|line| Line::from(line.clone()))
+                .map(|line| Line::from(line.as_str()))
                 .collect();
 
             if !tab.pending_fragment.is_empty() {
-                let pending_idx = tab.lines.len();
-                if (window.start..window.end).contains(&pending_idx) {
-                    lines.push(Line::from(tab.pending_fragment.clone()));
-                }
+                lines.push(Line::from(tab.pending_fragment.as_str()));
             }
 
-            frame.render_widget(Paragraph::new(lines), sections[1]);
-            render_scroll_window_scrollbar(frame, sections[1], total, viewport_rows, window.start);
+            render_wrapped_text_lines(frame, sections[1], lines, tab.scroll);
         }
     }
 
@@ -3363,12 +3356,7 @@ fn render_ai_section(
     lines.push(Line::default());
 }
 
-fn render_wrapped_text_lines(
-    frame: &mut Frame,
-    area: Rect,
-    lines: Vec<Line<'static>>,
-    scroll: usize,
-) {
+fn render_wrapped_text_lines(frame: &mut Frame, area: Rect, lines: Vec<Line<'_>>, scroll: usize) {
     let total = wrapped_line_count(&lines, area.width);
     let position = scroll.min(total.saturating_sub(area.height.max(1) as usize));
     frame.render_widget(
@@ -4257,6 +4245,35 @@ mod tests {
         assert!(rendered.contains("[y] copy"));
         assert!(rendered.contains("[S] save"));
         assert!(rendered.contains("[i/Enter] input"));
+    }
+
+    #[test]
+    fn exec_output_wraps_long_lines() {
+        let backend = TestBackend::new(32, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = ExecTabState::new(
+            ResourceRef::Pod("api-0".into(), "default".into()),
+            1,
+            "api-0".into(),
+            "default".into(),
+        );
+        tab.loading = false;
+        tab.container_name = "main".into();
+        tab.lines
+            .push("0123456789abcdefghijklmnopqrstuvwxyzTAIL".into());
+
+        terminal
+            .draw(|frame| render_exec_tab(frame, Rect::new(0, 0, 32, 10), &tab))
+            .expect("exec tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("TAIL"));
     }
 
     #[test]
