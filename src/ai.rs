@@ -19,6 +19,7 @@ const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/comple
 const ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 const PROVIDER_ERROR_MAX_LINES: usize = 12;
 const PROVIDER_ERROR_MAX_CHARS: usize = 600;
+const PROVIDER_ERROR_SCAN_MAX_CHARS: usize = 8_000;
 const AI_OUTPUT_MAX_ITEMS: usize = 8;
 const AI_OUTPUT_MAX_LINES: usize = 8;
 const AI_OUTPUT_MAX_CHARS_PER_LINE: usize = 320;
@@ -637,21 +638,36 @@ fn sanitize_provider_error_message(message: &str) -> String {
     if message.is_empty() {
         return String::new();
     }
-    if provider_error_looks_like_prompt_echo(message) {
+    let scan_message = provider_error_scan_window(message);
+    if provider_error_looks_like_prompt_echo(scan_message) {
         return "provider error output redacted because it included AI context".to_string();
     }
 
-    let mut sanitized = message
-        .lines()
-        .take(PROVIDER_ERROR_MAX_LINES)
-        .map(sanitize_provider_error_line)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if message.lines().count() > PROVIDER_ERROR_MAX_LINES {
+    let mut saw_more_lines = false;
+    let mut sanitized_lines = Vec::new();
+    for (idx, line) in scan_message.lines().enumerate() {
+        if idx >= PROVIDER_ERROR_MAX_LINES {
+            saw_more_lines = true;
+            break;
+        }
+        let line = sanitize_provider_error_line(line);
+        if !line.is_empty() {
+            sanitized_lines.push(line);
+        }
+    }
+    let mut sanitized = sanitized_lines.join("\n");
+    if saw_more_lines || scan_message.len() < message.len() {
         sanitized.push_str("\n[truncated]");
     }
     truncate_provider_error(&sanitized)
+}
+
+fn provider_error_scan_window(message: &str) -> &str {
+    if message.len() <= PROVIDER_ERROR_SCAN_MAX_CHARS {
+        return message;
+    }
+    let cutoff = message.floor_char_boundary(PROVIDER_ERROR_SCAN_MAX_CHARS);
+    &message[..cutoff]
 }
 
 fn provider_error_looks_like_prompt_echo(message: &str) -> bool {
@@ -663,7 +679,7 @@ fn provider_error_looks_like_prompt_echo(message: &str) -> bool {
     {
         return true;
     }
-    if message.lines().any(|line| {
+    let has_section_header = message.lines().any(|line| {
         matches!(
             line.trim(),
             "Resource"
@@ -681,8 +697,8 @@ fn provider_error_looks_like_prompt_echo(message: &str) -> bool {
                 | "Logs"
                 | "YAML Excerpt"
         )
-    }) && message.lines().count() > 1
-    {
+    });
+    if has_section_header && message.lines().nth(1).is_some() {
         return true;
     }
     let markers = [
@@ -1204,6 +1220,21 @@ trailing note {also ignored}"#,
         assert!(!message.contains("hunter2"), "{message}");
         assert!(!message.contains("sk-live"), "{message}");
         assert!(!message.contains("live-token"), "{message}");
+    }
+
+    #[test]
+    fn provider_error_sanitizer_bounds_huge_error_scans() {
+        let huge = format!(
+            "request failed\n{}\npassword=hunter2",
+            "x".repeat(PROVIDER_ERROR_SCAN_MAX_CHARS + 2048)
+        );
+
+        let message = sanitize_provider_error_message(&huge);
+
+        assert!(message.contains("request failed"), "{message}");
+        assert!(message.ends_with('…'), "{message}");
+        assert!(message.chars().count() <= PROVIDER_ERROR_MAX_CHARS + 1);
+        assert!(!message.contains("hunter2"), "{message}");
     }
 
     #[test]
