@@ -90,6 +90,39 @@ fn clamp_picker_cursor(total: usize, cursor: usize) -> usize {
     }
 }
 
+fn container_picker_visible_lines(
+    containers: &[String],
+    include_all_containers: bool,
+    selected: usize,
+    window: VisibleWindow,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    (window.start..window.end)
+        .map(|picker_idx| {
+            let selected_row = picker_idx == selected;
+            let label = if include_all_containers && picker_idx == 0 {
+                "All Containers".to_string()
+            } else {
+                let container_idx = picker_idx - usize::from(include_all_containers);
+                containers.get(container_idx).cloned().unwrap_or_default()
+            };
+            Line::from(vec![
+                Span::raw(if selected_row { "> " } else { "  " }),
+                Span::styled(
+                    label,
+                    if selected_row {
+                        theme.selection_style().add_modifier(Modifier::BOLD)
+                    } else if include_all_containers && picker_idx == 0 {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.fg)
+                    },
+                ),
+            ])
+        })
+        .collect()
+}
+
 fn use_stacked_connectivity_layout(area: Rect) -> bool {
     area.width < STACKED_CONNECTIVITY_WIDTH
 }
@@ -2267,46 +2300,12 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
 
     if viewer.picking_container {
         let has_all = viewer.containers.len() > 1;
-        let mut entries: Vec<Line> = Vec::new();
         let total = viewer.containers.len() + usize::from(has_all);
         let selected = clamp_picker_cursor(total, viewer.container_cursor);
-
-        if has_all {
-            let selected = selected == 0;
-            entries.push(Line::from(vec![
-                Span::raw(if selected { "> " } else { "  " }),
-                Span::styled(
-                    "All Containers",
-                    if selected {
-                        theme.selection_style().add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().add_modifier(Modifier::BOLD)
-                    },
-                ),
-            ]));
-        }
-
-        for (idx, container) in viewer.containers.iter().enumerate() {
-            let picker_idx = if has_all { idx + 1 } else { idx };
-            let selected = picker_idx == selected;
-            entries.push(Line::from(vec![
-                Span::raw(if selected { "> " } else { "  " }),
-                Span::styled(
-                    container.clone(),
-                    if selected {
-                        theme.selection_style()
-                    } else {
-                        Style::default().fg(theme.fg)
-                    },
-                ),
-            ]));
-        }
-
         let window = centered_window(total, selected, log_area.height.max(1) as usize);
-        frame.render_widget(
-            Paragraph::new(entries[window.start..window.end].to_vec()),
-            log_area,
-        );
+        let entries =
+            container_picker_visible_lines(&viewer.containers, has_all, selected, window, &theme);
+        frame.render_widget(Paragraph::new(entries), log_area);
         render_scrollbar(frame, log_area, total, selected);
         return;
     }
@@ -2910,30 +2909,10 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     if tab.picking_container {
         let total = tab.containers.len();
         let selected = clamp_picker_cursor(total, tab.container_cursor);
-        let entries: Vec<Line> = tab
-            .containers
-            .iter()
-            .enumerate()
-            .map(|(idx, container)| {
-                let selected = idx == selected;
-                Line::from(vec![
-                    Span::raw(if selected { "> " } else { "  " }),
-                    Span::styled(
-                        container.clone(),
-                        if selected {
-                            theme.selection_style()
-                        } else {
-                            Style::default().fg(theme.fg)
-                        },
-                    ),
-                ])
-            })
-            .collect();
         let window = centered_window(total, selected, sections[1].height.max(1) as usize);
-        frame.render_widget(
-            Paragraph::new(entries[window.start..window.end].to_vec()),
-            sections[1],
-        );
+        let entries =
+            container_picker_visible_lines(&tab.containers, false, selected, window, &theme);
+        frame.render_widget(Paragraph::new(entries), sections[1]);
         render_scrollbar(frame, sections[1], total, selected);
     } else {
         let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
@@ -3575,11 +3554,11 @@ fn scroll_window_scrollbar_position(
 #[cfg(test)]
 mod tests {
     use super::{
-        VisibleWindow, access_review_lines, centered_window, exec_output_window_lines,
-        extension_output_window_lines, render_connectivity_tab, render_decoded_secret_tab,
-        render_events_tab, render_exec_tab, render_extension_output_tab, render_helm_history_tab,
-        render_helm_values_diff, render_logs_tab, render_rollout_tab, render_workload_logs_tab,
-        render_yaml_tab, scroll_window, scroll_window_scrollbar_position,
+        VisibleWindow, access_review_lines, centered_window, container_picker_visible_lines,
+        exec_output_window_lines, extension_output_window_lines, render_connectivity_tab,
+        render_decoded_secret_tab, render_events_tab, render_exec_tab, render_extension_output_tab,
+        render_helm_history_tab, render_helm_values_diff, render_logs_tab, render_rollout_tab,
+        render_workload_logs_tab, render_yaml_tab, scroll_window, scroll_window_scrollbar_position,
         summarize_workload_log_filters, workload_log_render_window,
     };
     use crate::{
@@ -3743,6 +3722,20 @@ mod tests {
         let window = centered_window(9, 7, 3);
         assert!(window.start <= 7);
         assert!(window.end > 7);
+    }
+
+    #[test]
+    fn container_picker_builds_only_visible_rows() {
+        let containers = (0..20)
+            .map(|idx| format!("container-{idx}"))
+            .collect::<Vec<_>>();
+        let window = VisibleWindow { start: 8, end: 12 };
+
+        let lines = container_picker_visible_lines(&containers, true, 10, window, &default_theme());
+
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].spans[1].content.as_ref(), "container-7");
+        assert_eq!(lines[2].spans[1].content.as_ref(), "container-9");
     }
 
     #[test]
