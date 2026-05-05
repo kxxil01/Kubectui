@@ -24,6 +24,9 @@ const READ_CHUNK_SIZE: usize = 1024;
 const DEBUG_CONTAINER_NAME_PREFIX: &str = "kubectui-debug";
 const DEBUG_CONTAINER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const DEBUG_CONTAINER_READY_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const EXEC_TERM: &str = "xterm-256color";
+const EXEC_COLUMNS: u16 = 120;
+const EXEC_LINES: u16 = 30;
 
 const DEFAULT_EXEC_SHELLS: &[&str] = &[
     "/bin/zsh",
@@ -95,6 +98,9 @@ fn normalize_shell_candidate(shell: &str) -> Option<String> {
         || shell.contains('\0')
         || shell.chars().any(char::is_whitespace)
         || shell.contains('/') && !shell.starts_with('/')
+        || !shell
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '+' | '-'))
     {
         return None;
     }
@@ -454,7 +460,23 @@ fn shell_command(shell: &str, login: bool) -> Vec<String> {
     } else {
         "-i"
     };
-    vec![shell.to_string(), flag.to_string()]
+    vec![
+        shell.to_string(),
+        "-c".to_string(),
+        shell_bootstrap_script(shell, flag),
+    ]
+}
+
+fn shell_bootstrap_script(shell: &str, flag: &str) -> String {
+    if shell.ends_with("fish") {
+        format!(
+            "set -gx TERM {EXEC_TERM}; set -gx COLUMNS {EXEC_COLUMNS}; set -gx LINES {EXEC_LINES}; exec {shell} {flag}"
+        )
+    } else {
+        format!(
+            "export TERM={EXEC_TERM}; export COLUMNS={EXEC_COLUMNS}; export LINES={EXEC_LINES}; exec {shell} {flag}"
+        )
+    }
 }
 
 fn supports_login_shell_flag(shell: &str) -> bool {
@@ -690,6 +712,8 @@ mod tests {
                 " /bin/fish ".to_string(),
                 "bad shell".to_string(),
                 "relative/path".to_string(),
+                "/bin/sh;rm".to_string(),
+                "/bin/$sh".to_string(),
                 "/bin/fish".to_string(),
                 "/bin/sh".to_string(),
             ],
@@ -708,16 +732,41 @@ mod tests {
     fn shell_command_uses_login_only_for_shells_that_support_it() {
         assert_eq!(
             shell_command("/bin/zsh", true),
-            vec!["/bin/zsh".to_string(), "-il".to_string()]
+            vec![
+                "/bin/zsh".to_string(),
+                "-c".to_string(),
+                "export TERM=xterm-256color; export COLUMNS=120; export LINES=30; exec /bin/zsh -il"
+                    .to_string(),
+            ]
         );
         assert_eq!(
             shell_command("/bin/sh", true),
-            vec!["/bin/sh".to_string(), "-i".to_string()]
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "export TERM=xterm-256color; export COLUMNS=120; export LINES=30; exec /bin/sh -i"
+                    .to_string(),
+            ]
         );
         assert_eq!(
             shell_command("/usr/bin/fish", false),
-            vec!["/usr/bin/fish".to_string(), "-i".to_string()]
+            vec![
+                "/usr/bin/fish".to_string(),
+                "-c".to_string(),
+                "set -gx TERM xterm-256color; set -gx COLUMNS 120; set -gx LINES 30; exec /usr/bin/fish -i"
+                    .to_string(),
+            ]
         );
+    }
+
+    #[test]
+    fn shell_bootstrap_script_sets_terminal_dimensions() {
+        let script = shell_bootstrap_script("/bin/bash", "-i");
+
+        assert!(script.contains("export TERM=xterm-256color"));
+        assert!(script.contains("export COLUMNS=120"));
+        assert!(script.contains("export LINES=30"));
+        assert!(script.ends_with("exec /bin/bash -i"));
     }
 
     #[test]
