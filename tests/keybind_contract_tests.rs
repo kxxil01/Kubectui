@@ -598,6 +598,17 @@ fn exec_workbench_controls_require_controls_mode() {
         AppAction::None,
         "r must remain shell input while exec input owns keyboard"
     );
+    assert_eq!(
+        route_keyboard_input(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &mut app
+        ),
+        AppAction::ExecSendRawInput(vec![0x03])
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Tab), &mut app),
+        AppAction::ExecSendRawInput(vec![b'\t'])
+    );
 
     assert_eq!(
         route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app),

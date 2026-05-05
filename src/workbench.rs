@@ -41,6 +41,8 @@ pub const MAX_WORKBENCH_HEIGHT: u16 = 40;
 pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
 pub const MAX_EXTENSION_OUTPUT_LINES: usize = 5_000;
+const EXEC_CLEAR_SCREEN: char = '\u{E000}';
+const EXEC_CLEAR_LINE: char = '\u{E001}';
 pub const MAX_EXEC_COMMAND_HISTORY: usize = 100;
 pub const MAX_TIMELINE_EVENTS: usize = 200;
 
@@ -1996,6 +1998,8 @@ impl ExecTabState {
         let chunk = normalize_exec_output_chunk(chunk);
         for c in chunk.chars() {
             match c {
+                EXEC_CLEAR_SCREEN => self.clear_output(),
+                EXEC_CLEAR_LINE => self.pending_fragment.clear(),
                 '\n' => self.lines.push(std::mem::take(&mut self.pending_fragment)),
                 '\r' => self.pending_fragment.clear(),
                 '\u{0008}' => {
@@ -2119,10 +2123,26 @@ fn strip_ansi_escape_sequences(input: &str) -> String {
         match chars.peek().copied() {
             Some('[') => {
                 chars.next();
+                let mut params = String::new();
                 for c in chars.by_ref() {
                     if ('@'..='~').contains(&c) {
+                        match c {
+                            'J' if params == "2" || params == "3" => {
+                                output.push(EXEC_CLEAR_SCREEN);
+                            }
+                            'K' if params.is_empty() || params == "0" || params == "2" => {
+                                output.push(EXEC_CLEAR_LINE);
+                            }
+                            'D' => {
+                                for _ in 0..parse_ansi_count(&params) {
+                                    output.push('\u{0008}');
+                                }
+                            }
+                            _ => {}
+                        }
                         break;
                     }
+                    params.push(c);
                 }
             }
             Some(']') => {
@@ -2145,6 +2165,16 @@ fn strip_ansi_escape_sequences(input: &str) -> String {
         }
     }
     output
+}
+
+fn parse_ansi_count(params: &str) -> usize {
+    params
+        .split(';')
+        .next()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
+        .min(256)
 }
 
 fn truncate_extension_lines(mut lines: Vec<String>) -> Vec<String> {
@@ -4195,6 +4225,34 @@ mod tests {
         tab.append_output("\u{001b}[31mred\u{001b}[0m\tok\u{0008}!\u{001b}]0;title\u{0007}\n");
 
         assert_eq!(tab.lines, vec!["red    o!"]);
+        assert!(tab.pending_fragment.is_empty());
+    }
+
+    #[test]
+    fn exec_output_clear_screen_sequence_resets_buffer() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("old\npartial");
+        tab.append_output("\u{001b}[2Jnew");
+
+        assert!(tab.lines.is_empty());
+        assert_eq!(tab.pending_fragment, "new");
+    }
+
+    #[test]
+    fn exec_output_clear_line_sequence_drops_pending_line() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("old\u{001b}[2Knew\n");
+
+        assert_eq!(tab.lines, vec!["new"]);
+        assert!(tab.pending_fragment.is_empty());
+    }
+
+    #[test]
+    fn exec_output_cursor_left_sequence_overwrites_pending_text() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("abc\u{001b}[2Dxy\n");
+
+        assert_eq!(tab.lines, vec!["axy"]);
         assert!(tab.pending_fragment.is_empty());
     }
 

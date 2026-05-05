@@ -3,13 +3,14 @@
 use std::{future::Future, pin::Pin, time::Duration};
 
 use anyhow::{Context, Result, anyhow};
+use futures::SinkExt;
 use k8s_openapi::{
     api::core::v1::{ContainerState, EphemeralContainer, Pod},
     apimachinery::pkg::apis::meta::v1::Status,
 };
 use kube::{
     Api,
-    api::{AttachParams, AttachedProcess, Patch, PatchParams},
+    api::{AttachParams, AttachedProcess, Patch, PatchParams, TerminalSize},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -175,7 +176,36 @@ pub struct DebugContainerLaunchResult {
 
 pub struct ExecSessionHandle {
     pub input_tx: mpsc::Sender<Vec<u8>>,
+    pub resize_tx: mpsc::Sender<ExecTerminalSize>,
     pub cancel_tx: oneshot::Sender<()>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecTerminalSize {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl ExecTerminalSize {
+    const MIN_WIDTH: u16 = 20;
+    const MIN_HEIGHT: u16 = 5;
+    const UI_CHROME_HEIGHT: u16 = 4;
+
+    pub fn from_terminal_resize(width: u16, height: u16) -> Self {
+        Self {
+            width: width.max(Self::MIN_WIDTH),
+            height: height
+                .saturating_sub(Self::UI_CHROME_HEIGHT)
+                .max(Self::MIN_HEIGHT),
+        }
+    }
+
+    fn into_kube(self) -> TerminalSize {
+        TerminalSize {
+            width: self.width,
+            height: self.height,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +311,7 @@ pub async fn spawn_exec_session(
     update_tx: mpsc::Sender<ExecEvent>,
 ) -> Result<ExecSessionHandle> {
     let (input_tx, input_rx) = mpsc::channel(128);
+    let (resize_tx, resize_rx) = mpsc::channel(16);
     let (cancel_tx, cancel_rx) = oneshot::channel();
     tokio::spawn(async move {
         if let Err(err) = run_exec_session(
@@ -291,6 +322,7 @@ pub async fn spawn_exec_session(
             container_name,
             config,
             input_rx,
+            resize_rx,
             cancel_rx,
             update_tx.clone(),
         )
@@ -307,6 +339,7 @@ pub async fn spawn_exec_session(
 
     Ok(ExecSessionHandle {
         input_tx,
+        resize_tx,
         cancel_tx,
     })
 }
@@ -320,6 +353,7 @@ async fn run_exec_session(
     container_name: String,
     config: ExecConfig,
     mut input_rx: mpsc::Receiver<Vec<u8>>,
+    mut resize_rx: mpsc::Receiver<ExecTerminalSize>,
     mut cancel_rx: oneshot::Receiver<()>,
     update_tx: mpsc::Sender<ExecEvent>,
 ) -> Result<()> {
@@ -337,6 +371,7 @@ async fn run_exec_session(
     let mut stdin = attached
         .stdin()
         .context("exec session missing stdin writer")?;
+    let mut terminal_size_tx = attached.terminal_size();
     let stdout = attached.stdout();
     let stderr = attached.stderr();
     let stdout_task = stdout.map(|reader| {
@@ -368,6 +403,13 @@ async fn run_exec_session(
                         attached.abort();
                         break;
                     }
+                }
+            }
+            maybe_size = resize_rx.recv() => {
+                if let Some(size) = maybe_size
+                    && let Some(writer) = &mut terminal_size_tx
+                {
+                    let _ = writer.send(size.into_kube()).await;
                 }
             }
             status = &mut status_future => {
@@ -423,11 +465,7 @@ async fn open_shell_process(
     let shells = config.normalized_shells();
     for shell in &shells {
         let command = shell_command(shell, config.login);
-        let attach = AttachParams::default()
-            .stdin(true)
-            .stdout(true)
-            .stderr(true)
-            .container(container_name.to_string());
+        let attach = exec_attach_params(container_name);
         let mut attached = pods
             .exec(pod_name, command.iter().map(String::as_str), &attach)
             .await
@@ -452,6 +490,10 @@ async fn open_shell_process(
         "No supported shell was found. Tried {}.",
         shells.join(", ")
     ))
+}
+
+fn exec_attach_params(container_name: &str) -> AttachParams {
+    AttachParams::interactive_tty().container(container_name.to_string())
 }
 
 fn shell_command(shell: &str, login: bool) -> Vec<String> {
@@ -767,6 +809,35 @@ mod tests {
         assert!(script.contains("export COLUMNS=120"));
         assert!(script.contains("export LINES=30"));
         assert!(script.ends_with("exec /bin/bash -i"));
+    }
+
+    #[test]
+    fn exec_attach_params_use_interactive_tty_without_stderr() {
+        let attach = exec_attach_params("app");
+
+        assert_eq!(attach.container.as_deref(), Some("app"));
+        assert!(attach.stdin);
+        assert!(attach.stdout);
+        assert!(!attach.stderr);
+        assert!(attach.tty);
+    }
+
+    #[test]
+    fn exec_terminal_size_clamps_and_reserves_ui_chrome() {
+        assert_eq!(
+            ExecTerminalSize::from_terminal_resize(120, 40),
+            ExecTerminalSize {
+                width: 120,
+                height: 36,
+            }
+        );
+        assert_eq!(
+            ExecTerminalSize::from_terminal_resize(1, 1),
+            ExecTerminalSize {
+                width: 20,
+                height: 5,
+            }
+        );
     }
 
     #[test]
