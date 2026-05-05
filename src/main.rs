@@ -60,7 +60,10 @@ use kubectui::{
     },
     k8s::{
         client::K8sClient,
-        exec::{ExecEvent, ExecSessionHandle, fetch_pod_containers, spawn_exec_session},
+        exec::{
+            ExecEvent, ExecSessionHandle, ExecTerminalSize, fetch_pod_containers,
+            spawn_exec_session,
+        },
         logs::{LogsClient, PodRef},
         portforward::PortForwarderService,
         probes::extract_probes_from_pod,
@@ -5290,7 +5293,11 @@ pub(crate) async fn run_app_inner(
             // Keyboard / terminal input — lowest priority so messages are drained first
             maybe_event = event_stream.next() => {
                 let key = match maybe_event {
-                    Some(Ok(Event::Resize(_, _))) => {
+                    Some(Ok(Event::Resize(width, height))) => {
+                        let size = ExecTerminalSize::from_terminal_resize(width, height);
+                        for handle in exec_sessions.values() {
+                            let _ = handle.resize_tx.try_send(size);
+                        }
                         needs_redraw = true;
                         continue;
                     }
@@ -6792,11 +6799,27 @@ pub(crate) async fn run_app_inner(
                             continue;
                         }
                         let mut bytes = exec_tab.input.clone().into_bytes();
-                        bytes.push(b'\n');
+                        bytes.push(b'\r');
                         let session_id = exec_tab.session_id;
                         let command = exec_tab.input.clone();
                         exec_tab.record_command_history(&command);
                         exec_tab.input.clear();
+                        if let Some(handle) = exec_sessions.get(&session_id) {
+                            if let Err(err) = handle.input_tx.send(bytes).await {
+                                exec_tab.error = Some(format!("failed to send exec input: {err}"));
+                            }
+                        } else {
+                            exec_tab.error = Some(
+                                "exec session is not running for the selected tab.".to_string(),
+                            );
+                        }
+                    }
+                }
+                AppAction::ExecSendRawInput(bytes) => {
+                    if let Some(tab) = app.workbench_mut().active_tab_mut()
+                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                    {
+                        let session_id = exec_tab.session_id;
                         if let Some(handle) = exec_sessions.get(&session_id) {
                             if let Err(err) = handle.input_tx.send(bytes).await {
                                 exec_tab.error = Some(format!("failed to send exec input: {err}"));

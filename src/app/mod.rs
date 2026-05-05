@@ -144,6 +144,7 @@ pub enum AppAction {
     ActionHistoryOpenSelected,
     ExecSelectContainer(String),
     ExecSendInput,
+    ExecSendRawInput(Vec<u8>),
     ExecClearOutput,
     ExecRestartSession,
     RolloutRestart,

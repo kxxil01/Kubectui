@@ -583,6 +583,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         }
         AppAction::ExecSelectContainer(_)
         | AppAction::ExecSendInput
+        | AppAction::ExecSendRawInput(_)
         | AppAction::ExecClearOutput
         | AppAction::ExecRestartSession => {
             // Handled in main.rs event loop (needs async exec session runtime)

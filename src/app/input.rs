@@ -1444,6 +1444,19 @@ impl AppState {
                         }
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ExecSendInput,
                         _ if ctrl_char(key, 'l') => AppAction::ExecClearOutput,
+                        _ if ctrl_char(key, 'c') => {
+                            tab.input.clear();
+                            tab.input_cursor = 0;
+                            tab.command_history_cursor = None;
+                            tab.command_history_draft = None;
+                            AppAction::ExecSendRawInput(vec![0x03])
+                        }
+                        _ if ctrl_char(key, 'd') => AppAction::ExecSendRawInput(vec![0x04]),
+                        _ if ctrl_char(key, 'z') => AppAction::ExecSendRawInput(vec![0x1a]),
+                        _ if ctrl_char(key, '\\') => AppAction::ExecSendRawInput(vec![0x1c]),
+                        KeyCode::Tab if plain_shortcut(key) => {
+                            AppAction::ExecSendRawInput(vec![b'\t'])
+                        }
                         KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(&mut tab.input, &mut tab.input_cursor);
                             AppAction::None
