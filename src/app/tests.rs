@@ -468,6 +468,10 @@ fn refresh_action_transitions() {
         app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
         AppAction::RefreshData
     );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+        AppAction::RefreshData
+    );
 }
 
 #[test]
@@ -483,6 +487,10 @@ fn flux_view_uppercase_r_triggers_reconcile_without_overriding_ctrl_r() {
         app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
         AppAction::RefreshData
     );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+        AppAction::RefreshData
+    );
 }
 
 #[test]
@@ -496,6 +504,10 @@ fn flux_alerts_view_uppercase_r_is_noop_but_ctrl_r_still_refreshes() {
     );
     assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
+        AppAction::RefreshData
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
         AppAction::RefreshData
     );
 }
