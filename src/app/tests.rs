@@ -3046,6 +3046,41 @@ fn modified_enter_does_not_confirm_quit() {
 }
 
 #[test]
+fn modified_enter_does_not_open_detail_child_resource() {
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::META,
+        KeyModifiers::SUPER,
+    ] {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CronJob("cron-0".to_string(), "ns".to_string())),
+            cronjob_history: vec![CronJobHistoryEntry {
+                job_name: "cron-0-123".to_string(),
+                namespace: "ns".to_string(),
+                status: "Succeeded".to_string(),
+                completions: "1/1".to_string(),
+                duration: Some("1s".to_string()),
+                pod_count: 1,
+                live_pod_count: 0,
+                completion_pct: Some(100),
+                active_pods: 0,
+                failed_pods: 0,
+                age: None,
+                created_at: None,
+                logs_authorized: None,
+            }],
+            ..DetailViewState::default()
+        });
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, modifiers));
+
+        assert_eq!(action, AppAction::None, "{modifiers:?}");
+    }
+}
+
+#[test]
 fn modified_esc_does_not_start_quit_confirmation() {
     for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
         let mut app = AppState::default();

@@ -39,8 +39,8 @@ pub struct ContextPicker {
 }
 
 fn context_picker_popup(area: Rect) -> Rect {
-    let preferred_width = (area.width * 3 / 5).clamp(50, 80);
-    let preferred_height = (area.height * 2 / 3).clamp(14, 32);
+    let preferred_width = crate::ui::scaled_popup_dimension(area.width, 3, 5, 50, 80);
+    let preferred_height = crate::ui::scaled_popup_dimension(area.height, 2, 3, 14, 32);
     crate::ui::bounded_popup_rect(area, preferred_width, preferred_height, 1, 1)
 }
 
@@ -825,6 +825,15 @@ mod tests {
         let popup = context_picker_popup(Rect::new(0, 0, 40, 10));
         assert!(popup.width <= 40);
         assert!(popup.height <= 10);
+    }
+
+    #[test]
+    fn context_picker_popup_handles_max_terminal_dimensions() {
+        let area = Rect::new(0, 0, u16::MAX, u16::MAX);
+        let popup = context_picker_popup(area);
+
+        assert!(popup.width <= area.width);
+        assert!(popup.height <= area.height);
     }
 
     #[test]
