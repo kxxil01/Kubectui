@@ -40,6 +40,7 @@ pub const MAX_WORKBENCH_HEIGHT: u16 = 40;
 pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
 pub const MAX_EXTENSION_OUTPUT_LINES: usize = 5_000;
+pub const MAX_EXEC_COMMAND_HISTORY: usize = 100;
 pub const MAX_TIMELINE_EVENTS: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1552,6 +1553,9 @@ pub struct ExecTabState {
     pub exited: bool,
     pub pending_fragment: String,
     pub command_mode: bool,
+    pub command_history: Vec<String>,
+    pub command_history_cursor: Option<usize>,
+    pub command_history_draft: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1886,6 +1890,9 @@ impl ExecTabState {
             exited: false,
             pending_fragment: String::new(),
             command_mode: false,
+            command_history: Vec::new(),
+            command_history_cursor: None,
+            command_history_draft: None,
         }
     }
 
@@ -1940,6 +1947,8 @@ impl ExecTabState {
         self.exited = false;
         self.pending_fragment.clear();
         self.command_mode = false;
+        self.command_history_cursor = None;
+        self.command_history_draft = None;
         self.picking_container = false;
         self.container_cursor = 0;
         if let Some(container_name) = preset_container {
@@ -1960,6 +1969,8 @@ impl ExecTabState {
         self.exited = false;
         self.error = None;
         self.command_mode = false;
+        self.command_history_cursor = None;
+        self.command_history_draft = None;
     }
 
     pub fn append_banner(&mut self, lines: &[String]) {
@@ -1998,6 +2009,69 @@ impl ExecTabState {
         if self.scroll >= max.saturating_sub(1) {
             self.scroll = max;
         }
+    }
+
+    pub fn record_command_history(&mut self, command: &str) {
+        let command = command.trim();
+        if command.is_empty() {
+            self.command_history_cursor = None;
+            self.command_history_draft = None;
+            return;
+        }
+        if self
+            .command_history
+            .last()
+            .is_some_and(|last| last == command)
+        {
+            self.command_history_cursor = None;
+            self.command_history_draft = None;
+            return;
+        }
+        self.command_history.push(command.to_string());
+        if self.command_history.len() > MAX_EXEC_COMMAND_HISTORY {
+            let excess = self.command_history.len() - MAX_EXEC_COMMAND_HISTORY;
+            self.command_history.drain(..excess);
+        }
+        self.command_history_cursor = None;
+        self.command_history_draft = None;
+    }
+
+    pub fn previous_command(&mut self) {
+        if self.command_history.is_empty() {
+            return;
+        }
+        if self.command_history_cursor.is_none() {
+            self.command_history_draft = Some(self.input.clone());
+        }
+        let next_cursor = self
+            .command_history_cursor
+            .map(|cursor| cursor.saturating_sub(1))
+            .unwrap_or_else(|| self.command_history.len().saturating_sub(1));
+        self.command_history_cursor = Some(next_cursor);
+        self.input = self.command_history[next_cursor].clone();
+        self.input_cursor = self.input.chars().count();
+    }
+
+    pub fn next_command(&mut self) {
+        let Some(cursor) = self.command_history_cursor else {
+            return;
+        };
+        if cursor + 1 >= self.command_history.len() {
+            self.command_history_cursor = None;
+            self.input = self.command_history_draft.take().unwrap_or_default();
+            self.input_cursor = self.input.chars().count();
+            return;
+        }
+        let next_cursor = cursor + 1;
+        self.command_history_cursor = Some(next_cursor);
+        self.input = self.command_history[next_cursor].clone();
+        self.input_cursor = self.input.chars().count();
+    }
+
+    pub fn clear_output(&mut self) {
+        self.lines.clear();
+        self.pending_fragment.clear();
+        self.scroll = 0;
     }
 }
 
@@ -3977,6 +4051,52 @@ mod tests {
         tab.scroll = 0; // user scrolled to top
         tab.append_output("line4\n");
         assert_eq!(tab.scroll, 0); // stays at top
+    }
+
+    #[test]
+    fn exec_command_history_dedupes_bounds_and_navigates() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.record_command_history("kubectl get pods");
+        tab.record_command_history("kubectl get pods");
+        tab.record_command_history("echo ready");
+
+        assert_eq!(tab.command_history.len(), 2);
+        tab.previous_command();
+        assert_eq!(tab.input, "echo ready");
+        tab.previous_command();
+        assert_eq!(tab.input, "kubectl get pods");
+        tab.next_command();
+        assert_eq!(tab.input, "echo ready");
+        tab.next_command();
+        assert!(tab.input.is_empty());
+    }
+
+    #[test]
+    fn exec_command_history_restores_current_draft() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.record_command_history("echo ready");
+        tab.input = "kubectl ".into();
+        tab.input_cursor = tab.input.chars().count();
+
+        tab.previous_command();
+        assert_eq!(tab.input, "echo ready");
+        tab.next_command();
+
+        assert_eq!(tab.input, "kubectl ");
+        assert_eq!(tab.input_cursor, 8);
+    }
+
+    #[test]
+    fn exec_clear_output_resets_lines_fragment_and_scroll() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("line1\npartial");
+        tab.scroll = 8;
+
+        tab.clear_output();
+
+        assert!(tab.lines.is_empty());
+        assert!(tab.pending_fragment.is_empty());
+        assert_eq!(tab.scroll, 0);
     }
 
     #[test]

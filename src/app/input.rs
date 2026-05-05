@@ -1436,6 +1436,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ExecSendInput,
+                        _ if ctrl_char(key, 'l') => AppAction::ExecClearOutput,
                         KeyCode::Backspace if edit_key(key) => {
                             delete_char_left_at_cursor(&mut tab.input, &mut tab.input_cursor);
                             AppAction::None
@@ -1461,11 +1462,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Up if edit_key(key) => {
-                            tab.scroll = tab.scroll.saturating_sub(1);
+                            tab.previous_command();
                             AppAction::None
                         }
                         KeyCode::Down if edit_key(key) => {
-                            tab.scroll = (tab.scroll + 1).min(tab.lines.len().saturating_sub(1));
+                            tab.next_command();
                             AppAction::None
                         }
                         KeyCode::PageUp if plain_shortcut(key) => {

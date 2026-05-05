@@ -2864,12 +2864,22 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 ),
                 theme.keybind_desc_style(),
             ),
+            Span::raw("  "),
+            Span::styled(
+                format!(
+                    "ns:{} shell:{} lines:{}",
+                    tab.namespace,
+                    tab.shell_name.as_deref().unwrap_or("pending"),
+                    tab.lines.len() + usize::from(!tab.pending_fragment.is_empty())
+                ),
+                theme.inactive_style(),
+            ),
         ]),
         Line::from(Span::styled(
             if tab.command_mode {
                 "[z] maximize  [,/.] tabs  [Ctrl+W] close  [i/Enter] input  [Esc] back"
             } else {
-                "[Enter] send  [Backspace] edit  [Esc] controls"
+                "[Enter] send  [Up/Down] history  [Ctrl+L] clear  [Esc] controls"
             },
             theme.keybind_desc_style(),
         )),

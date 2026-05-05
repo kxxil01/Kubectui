@@ -6790,6 +6790,8 @@ pub(crate) async fn run_app_inner(
                         let mut bytes = exec_tab.input.clone().into_bytes();
                         bytes.push(b'\n');
                         let session_id = exec_tab.session_id;
+                        let command = exec_tab.input.clone();
+                        exec_tab.record_command_history(&command);
                         exec_tab.input.clear();
                         if let Some(handle) = exec_sessions.get(&session_id) {
                             if let Err(err) = handle.input_tx.send(bytes).await {
@@ -6800,6 +6802,13 @@ pub(crate) async fn run_app_inner(
                                 "exec session is not running for the selected tab.".to_string(),
                             );
                         }
+                    }
+                }
+                AppAction::ExecClearOutput => {
+                    if let Some(tab) = app.workbench_mut().active_tab_mut()
+                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                    {
+                        exec_tab.clear_output();
                     }
                 }
                 AppAction::LogsViewerSelectContainer(container) => {

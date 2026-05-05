@@ -581,7 +581,9 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs event loop (needs resource jump / detail fetch)
             true
         }
-        AppAction::ExecSelectContainer(_) | AppAction::ExecSendInput => {
+        AppAction::ExecSelectContainer(_)
+        | AppAction::ExecSendInput
+        | AppAction::ExecClearOutput => {
             // Handled in main.rs event loop (needs async exec session runtime)
             true
         }
