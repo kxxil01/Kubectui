@@ -616,6 +616,30 @@ fn resource_template_dialog_ctrl_u_clears_active_field() {
 }
 
 #[test]
+fn resource_template_dialog_shifted_ctrl_u_clears_active_field() {
+    let mut app = AppState::default();
+    app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(
+        ResourceTemplateKind::Deployment,
+        "default",
+    ));
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('U'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+
+    assert_eq!(action, AppAction::None);
+    assert_eq!(
+        app.resource_template_dialog
+            .as_ref()
+            .expect("dialog should remain open")
+            .values
+            .name,
+        ""
+    );
+}
+
+#[test]
 fn resource_template_dialog_modified_ctrl_u_does_not_clear_active_field() {
     let mut app = AppState::default();
     app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(

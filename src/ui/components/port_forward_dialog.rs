@@ -12,7 +12,7 @@ use ratatui::{
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
 use crate::ui::components::{input_field::InputFieldWidget, render_vertical_scrollbar};
-use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
+use crate::ui::keybindings::{ctrl_char, edit_key, plain_shortcut};
 use crate::ui::{
     bounded_popup_rect, table_window, truncate_message, wrap_span_groups, wrapped_line_count,
 };
@@ -195,7 +195,7 @@ impl PortForwardDialog {
                 self.current_field_mut().cursor_right();
                 PortForwardAction::None
             }
-            KeyCode::Char('u') if ctrl_shortcut(key) => {
+            _ if ctrl_char(key, 'u') => {
                 self.current_field_mut().clear();
                 self.error = None;
                 PortForwardAction::None

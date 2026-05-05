@@ -1,6 +1,6 @@
 //! Namespace picker modal component.
 
-use crate::ui::keybindings::{ctrl_shortcut, edit_key, plain_shortcut};
+use crate::ui::keybindings::{ctrl_char, edit_key, plain_shortcut};
 use crate::ui::{
     clear_input_at_cursor, components::render_vertical_scrollbar, contains_ci,
     cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
@@ -194,7 +194,7 @@ impl NamespacePicker {
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
                 NamespacePickerAction::None
             }
-            KeyCode::Char('u') if ctrl_shortcut(key) => {
+            _ if ctrl_char(key, 'u') => {
                 if !self.search_query.is_empty() {
                     let selected_namespace = self
                         .selected_namespace_from_indices(&filtered)

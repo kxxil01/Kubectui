@@ -25,6 +25,11 @@ pub fn ctrl_shortcut(key: KeyEvent) -> bool {
             .is_empty()
 }
 
+pub fn ctrl_char(key: KeyEvent, expected: char) -> bool {
+    ctrl_shortcut(key)
+        && matches!(key.code, KeyCode::Char(actual) if actual.eq_ignore_ascii_case(&expected))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CtrlScrollAction {
     LineDown,
@@ -145,5 +150,31 @@ mod tests {
             )),
             None
         );
+    }
+
+    #[test]
+    fn ctrl_char_matches_shifted_and_unshifted_ascii() {
+        assert!(ctrl_char(
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+            'u'
+        ));
+        assert!(ctrl_char(
+            KeyEvent::new(
+                KeyCode::Char('U'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            ),
+            'u'
+        ));
+        assert!(!ctrl_char(
+            KeyEvent::new(
+                KeyCode::Char('u'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            ),
+            'u'
+        ));
+        assert!(!ctrl_char(
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+            'u'
+        ));
     }
 }

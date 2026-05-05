@@ -10,7 +10,7 @@ use ratatui::{
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::keybindings::{
-    CtrlScrollAction, ctrl_scroll_action, ctrl_shortcut, edit_key, plain_shortcut,
+    CtrlScrollAction, ctrl_char, ctrl_scroll_action, edit_key, plain_shortcut,
 };
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
@@ -172,7 +172,7 @@ impl DebugContainerDialogState {
                     move_cursor_end(&mut self.custom_image_cursor, &self.custom_image);
                     return DebugContainerDialogEvent::None;
                 }
-                KeyCode::Char('u') if ctrl_shortcut(key) => {
+                _ if ctrl_char(key, 'u') => {
                     clear_input_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor);
                     self.error_message = None;
                     return DebugContainerDialogEvent::None;
