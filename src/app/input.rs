@@ -59,7 +59,7 @@ fn workbench_control_action(
         KeyCode::Char('.') if workbench_open && plain_shortcut(key) => {
             Some(AppAction::WorkbenchNextTab)
         }
-        KeyCode::Char('w') if workbench_open && ctrl_shortcut(key) => {
+        KeyCode::Char('w') | KeyCode::Char('W') if workbench_open && ctrl_shortcut(key) => {
             Some(AppAction::WorkbenchCloseActiveTab)
         }
         KeyCode::Up if workbench_open && ctrl_shortcut(key) => {
@@ -2884,7 +2884,11 @@ impl AppState {
             KeyCode::Char('}') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::ApplyNextWorkspace
             }
-            KeyCode::Char('b') | KeyCode::Char(',') | KeyCode::Char('.') | KeyCode::Char('w')
+            KeyCode::Char('b')
+            | KeyCode::Char(',')
+            | KeyCode::Char('.')
+            | KeyCode::Char('w')
+            | KeyCode::Char('W')
                 if self.detail_view.is_none() =>
             {
                 workbench_control_action(key, self.workbench.open, false).unwrap_or(AppAction::None)
