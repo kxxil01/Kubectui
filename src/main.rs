@@ -6890,26 +6890,34 @@ pub(crate) async fn run_app_inner(
                     }
                 }
                 AppAction::ExecSendInput => {
+                    let send_request = app.workbench().active_tab().and_then(|tab| {
+                        if let WorkbenchTabState::Exec(exec_tab) = &tab.state {
+                            exec_tab
+                                .input_command_bytes()
+                                .map(|bytes| (exec_tab.session_id, bytes))
+                        } else {
+                            None
+                        }
+                    });
+                    let Some((session_id, bytes)) = send_request else {
+                        continue;
+                    };
+                    let send_result = if let Some(handle) = exec_sessions.get(&session_id) {
+                        handle
+                            .input_tx
+                            .send(bytes)
+                            .await
+                            .map_err(|err| format!("failed to send exec input: {err}"))
+                    } else {
+                        Err("exec session is not running for the selected tab.".to_string())
+                    };
                     if let Some(tab) = app.workbench_mut().active_tab_mut()
                         && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                        && exec_tab.session_id == session_id
                     {
-                        if exec_tab.input.is_empty() {
-                            continue;
-                        }
-                        let mut bytes = exec_tab.input.clone().into_bytes();
-                        bytes.push(b'\r');
-                        let session_id = exec_tab.session_id;
-                        let command = exec_tab.input.clone();
-                        exec_tab.record_command_history(&command);
-                        exec_tab.input.clear();
-                        if let Some(handle) = exec_sessions.get(&session_id) {
-                            if let Err(err) = handle.input_tx.send(bytes).await {
-                                exec_tab.error = Some(format!("failed to send exec input: {err}"));
-                            }
-                        } else {
-                            exec_tab.error = Some(
-                                "exec session is not running for the selected tab.".to_string(),
-                            );
+                        match send_result {
+                            Ok(()) => exec_tab.mark_input_sent(),
+                            Err(err) => exec_tab.error = Some(err),
                         }
                     }
                 }
