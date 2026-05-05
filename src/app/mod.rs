@@ -145,6 +145,7 @@ pub enum AppAction {
     ExecSelectContainer(String),
     ExecSendInput,
     ExecClearOutput,
+    ExecRestartSession,
     RolloutRestart,
     ToggleRolloutPauseResume,
     ConfirmRolloutUndo,

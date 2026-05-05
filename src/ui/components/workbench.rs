@@ -2877,7 +2877,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
         ]),
         Line::from(Span::styled(
             if tab.command_mode {
-                "[z] maximize/restore  [,/.] tabs  [Ctrl+W] close  [y] copy  [S] save  [i/Enter] input  [Esc] back"
+                "[z] maximize/restore  [,/.] tabs  [Ctrl+W] close  [r] restart  [y] copy  [S] save  [i/Enter] input  [Esc] back"
             } else {
                 "[Enter] send  [Up/Down] history  [Ctrl+L] clear  [Esc] controls for maximize/tabs/close"
             },
@@ -4252,6 +4252,7 @@ mod tests {
 
         assert!(rendered.contains("controls"));
         assert!(rendered.contains("[z] maximize"));
+        assert!(rendered.contains("[r] restart"));
         assert!(rendered.contains("[y] copy"));
         assert!(rendered.contains("[S] save"));
         assert!(rendered.contains("[i/Enter] input"));

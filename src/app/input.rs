@@ -1431,6 +1431,9 @@ impl AppState {
                         KeyCode::Char('S') | KeyCode::Char('s') if plain_shortcut(key) => {
                             AppAction::ExportExecOutput
                         }
+                        KeyCode::Char('R') | KeyCode::Char('r') if plain_shortcut(key) => {
+                            AppAction::ExecRestartSession
+                        }
                         _ => AppAction::None,
                     }
                 } else {
