@@ -585,7 +585,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         | AppAction::ExecSendInput
         | AppAction::ExecSendRawInput(_)
         | AppAction::ExecClearOutput
-        | AppAction::ExecRestartSession => {
+        | AppAction::ExecRestartSession
+        | AppAction::ExecOpenExternalTerminal => {
             // Handled in main.rs event loop (needs async exec session runtime)
             true
         }

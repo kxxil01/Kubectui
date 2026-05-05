@@ -1031,7 +1031,7 @@ fn exec_status_hint(app: &AppState) -> Option<&'static str> {
         Some("exec container: [j/k] choose • [Enter] start • [Esc] cancel")
     } else if exec_tab.command_mode {
         Some(
-            "exec controls: [z] maximize • [,/.] tabs • [Ctrl+W] close • [r] restart • [y] copy • [S] save • [i/Enter] input • [Esc] back",
+            "exec controls: [z] maximize • [,/.] tabs • [Ctrl+W] close • [r] restart • [t] external • [y] copy • [S] save • [i/Enter] input • [Esc] back",
         )
     } else {
         Some("exec input: [Enter] send • [Up/Down] history • [Ctrl+L] clear • [Esc] controls")
@@ -4056,6 +4056,7 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("[r] restart"), "{rendered}");
+        assert!(rendered.contains("[t] external"), "{rendered}");
         assert!(rendered.contains("[y] copy"), "{rendered}");
         assert!(!rendered.contains("[1/2/3] pod-sort"), "{rendered}");
     }
