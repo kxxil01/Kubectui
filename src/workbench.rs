@@ -1256,6 +1256,7 @@ impl WorkloadLogsTabState {
             }
         }
         self.editing_text_filter = false;
+        self.follow_mode = false;
         self.restore_filtered_scroll(preserved_line);
     }
 
@@ -1322,18 +1323,21 @@ impl WorkloadLogsTabState {
                 self.text_filter_error = Some(err);
             }
         }
+        self.follow_mode = false;
         self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_time_window(&mut self) {
         let preserved_line = self.selected_filtered_line_anchor();
         self.time_window = self.time_window.next();
+        self.follow_mode = false;
         self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_pod_filter(&mut self) {
         let preserved_line = self.selected_filtered_line_anchor();
         self.pod_filter = cycle_filter_value(&self.available_pods, self.pod_filter.as_deref());
+        self.follow_mode = false;
         self.restore_filtered_scroll(preserved_line);
     }
 
@@ -1341,6 +1345,7 @@ impl WorkloadLogsTabState {
         let preserved_line = self.selected_filtered_line_anchor();
         self.container_filter =
             cycle_filter_value(&self.available_containers, self.container_filter.as_deref());
+        self.follow_mode = false;
         self.restore_filtered_scroll(preserved_line);
     }
 
@@ -1349,6 +1354,7 @@ impl WorkloadLogsTabState {
         self.label_filter =
             cycle_filter_value(&self.available_labels, self.label_filter.as_deref());
         self.refresh_matching_label_pods();
+        self.follow_mode = false;
         self.restore_filtered_scroll(preserved_line);
     }
 
@@ -4704,6 +4710,48 @@ mod tests {
             Some("beta line")
         );
         assert_eq!(tab.scroll, 1);
+    }
+
+    #[test]
+    fn workload_log_filter_changes_disable_follow_mode() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.update_targets(&[crate::k8s::workload_logs::WorkloadLogTarget {
+            pod_name: "api-0".into(),
+            namespace: "default".into(),
+            containers: vec!["main".into()],
+            labels: vec![("app".into(), "api".into())],
+        }]);
+        tab.lines = vec![WorkloadLogLine {
+            pod_name: "api-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw("ready"),
+            is_stderr: false,
+        }];
+
+        tab.follow_mode = true;
+        tab.filter_input = "ready".into();
+        tab.commit_text_filter();
+        assert!(!tab.follow_mode);
+
+        tab.follow_mode = true;
+        tab.toggle_text_filter_mode();
+        assert!(!tab.follow_mode);
+
+        tab.follow_mode = true;
+        tab.cycle_time_window();
+        assert!(!tab.follow_mode);
+
+        tab.follow_mode = true;
+        tab.cycle_pod_filter();
+        assert!(!tab.follow_mode);
+
+        tab.follow_mode = true;
+        tab.cycle_container_filter();
+        assert!(!tab.follow_mode);
+
+        tab.follow_mode = true;
+        tab.cycle_label_filter();
+        assert!(!tab.follow_mode);
     }
 
     #[test]
