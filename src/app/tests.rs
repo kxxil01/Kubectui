@@ -1047,6 +1047,13 @@ fn workbench_keybindings_emit_expected_actions() {
         AppAction::WorkbenchCloseActiveTab
     );
     assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('W'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )),
+        AppAction::WorkbenchCloseActiveTab
+    );
+    assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
         AppAction::WorkbenchIncreaseHeight
     );
@@ -1303,6 +1310,13 @@ fn workbench_focus_supports_tab_resize_and_close_shortcuts() {
     }
     assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        AppAction::WorkbenchCloseActiveTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('W'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )),
         AppAction::WorkbenchCloseActiveTab
     );
     assert_eq!(
