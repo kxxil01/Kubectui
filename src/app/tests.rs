@@ -2285,6 +2285,46 @@ fn exec_input_supports_cursor_editing() {
 }
 
 #[test]
+fn exec_input_routes_history_and_clear_output_shortcuts() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &mut tab.state else {
+        panic!("expected exec tab");
+    };
+    exec_tab.record_command_history("echo ready");
+    exec_tab.append_output("old output\n");
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Up)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL)),
+        AppAction::ExecClearOutput
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.input, "echo ready");
+}
+
+#[test]
 fn context_picker_takes_precedence_over_global_context_shortcut() {
     let mut app = AppState::default();
     app.context_picker.open();
