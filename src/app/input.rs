@@ -12,7 +12,9 @@ use crate::{
     ui::components::{
         CommandPaletteAction, ContextPickerAction, NamespacePickerAction, scale_dialog::ScaleField,
     },
-    ui::keybindings::{ctrl_char, ctrl_shortcut, edit_key, plain_shortcut},
+    ui::keybindings::{
+        CtrlScrollAction, ctrl_char, ctrl_scroll_action, ctrl_shortcut, edit_key, plain_shortcut,
+    },
     ui::{
         clear_input_at_cursor, delete_char_left_at_cursor, delete_char_right_at_cursor,
         insert_char_at_cursor, move_cursor_end, move_cursor_home, move_cursor_left,
@@ -23,6 +25,22 @@ use crate::{
 
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
+}
+
+fn apply_ctrl_scroll_to_offset(scroll: &mut usize, action: CtrlScrollAction) {
+    match action {
+        CtrlScrollAction::LineDown => *scroll = scroll.saturating_add(1),
+        CtrlScrollAction::LineUp => *scroll = scroll.saturating_sub(1),
+        CtrlScrollAction::PageDown => *scroll = scroll.saturating_add(10),
+        CtrlScrollAction::PageUp => *scroll = scroll.saturating_sub(10),
+    }
+}
+
+fn workbench_ctrl_scroll_action(key: KeyEvent) -> Option<CtrlScrollAction> {
+    match key.code {
+        KeyCode::PageDown | KeyCode::PageUp => None,
+        _ => ctrl_scroll_action(key),
+    }
 }
 
 fn view_supports_selected_resource_shortcut(view: AppView, extension_in_instances: bool) -> bool {
@@ -469,59 +487,62 @@ impl AppState {
                 }
                 _ => AppAction::None,
             },
-            WorkbenchTabState::Runbook(tab) => match key.code {
-                KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down if ctrl_shortcut(key) => {
-                    tab.scroll_detail_down(1);
-                    AppAction::None
+            WorkbenchTabState::Runbook(tab) => {
+                if let Some(action) = workbench_ctrl_scroll_action(key) {
+                    match action {
+                        CtrlScrollAction::LineDown => tab.scroll_detail_down(1),
+                        CtrlScrollAction::LineUp => tab.scroll_detail_up(1),
+                        CtrlScrollAction::PageDown => tab.scroll_detail_down(10),
+                        CtrlScrollAction::PageUp => tab.scroll_detail_up(10),
+                    }
+                    return AppAction::None;
                 }
-                KeyCode::Char('k') | KeyCode::Up if ctrl_shortcut(key) => {
-                    tab.scroll_detail_up(1);
-                    AppAction::None
-                }
-                KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
-                    tab.scroll_detail_down(10);
-                    AppAction::None
-                }
-                KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
-                    tab.scroll_detail_up(10);
-                    AppAction::None
-                }
-                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
-                    tab.select_next();
-                    AppAction::None
-                }
-                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
-                    tab.select_previous();
-                    AppAction::None
-                }
-                KeyCode::Char('g') if plain_shortcut(key) => {
-                    tab.select_top();
-                    AppAction::None
-                }
-                KeyCode::Char('G') if plain_shortcut(key) => {
-                    tab.select_bottom();
-                    AppAction::None
-                }
-                KeyCode::PageDown if plain_shortcut(key) => {
-                    for _ in 0..10 {
+
+                match key.code {
+                    KeyCode::Esc if plain_shortcut(key) => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.select_next();
+                        AppAction::None
                     }
-                    AppAction::None
-                }
-                KeyCode::PageUp if plain_shortcut(key) => {
-                    for _ in 0..10 {
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                         tab.select_previous();
+                        AppAction::None
                     }
-                    AppAction::None
+                    KeyCode::Char('g') if plain_shortcut(key) => {
+                        tab.select_top();
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') if plain_shortcut(key) => {
+                        tab.select_bottom();
+                        AppAction::None
+                    }
+                    KeyCode::PageDown if plain_shortcut(key) => {
+                        for _ in 0..10 {
+                            tab.select_next();
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::PageUp if plain_shortcut(key) => {
+                        for _ in 0..10 {
+                            tab.select_previous();
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Char('d') if plain_shortcut(key) => AppAction::RunbookToggleStepDone,
+                    KeyCode::Char('s') if plain_shortcut(key) => {
+                        AppAction::RunbookToggleStepSkipped
+                    }
+                    KeyCode::Enter if plain_shortcut(key) => AppAction::RunbookExecuteSelectedStep,
+                    _ => AppAction::None,
                 }
-                KeyCode::Char('d') if plain_shortcut(key) => AppAction::RunbookToggleStepDone,
-                KeyCode::Char('s') if plain_shortcut(key) => AppAction::RunbookToggleStepSkipped,
-                KeyCode::Enter if plain_shortcut(key) => AppAction::RunbookExecuteSelectedStep,
-                _ => AppAction::None,
-            },
+            }
             WorkbenchTabState::HelmHistory(tab) => {
                 if tab.rollback_pending {
+                    if let Some(action) = workbench_ctrl_scroll_action(key) {
+                        apply_ctrl_scroll_to_offset(&mut tab.scroll, action);
+                        return AppAction::None;
+                    }
+
                     return match key.code {
                         KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_add(1);
@@ -539,20 +560,17 @@ impl AppState {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
-                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
-                            tab.scroll = tab.scroll.saturating_add(10);
-                            AppAction::None
-                        }
-                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
-                            tab.scroll = tab.scroll.saturating_sub(10);
-                            AppAction::None
-                        }
                         KeyCode::Esc if plain_shortcut(key) => AppAction::None,
                         _ => AppAction::None,
                     };
                 }
 
                 if tab.confirm_rollback_revision.is_some() {
+                    if let Some(action) = workbench_ctrl_scroll_action(key) {
+                        apply_ctrl_scroll_to_offset(&mut tab.scroll, action);
+                        return AppAction::None;
+                    }
+
                     return match key.code {
                         KeyCode::Esc if plain_shortcut(key) => {
                             tab.cancel_rollback_confirm();
@@ -571,14 +589,6 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageUp if plain_shortcut(key) => {
-                            tab.scroll = tab.scroll.saturating_sub(10);
-                            AppAction::None
-                        }
-                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
-                            tab.scroll = tab.scroll.saturating_add(10);
-                            AppAction::None
-                        }
-                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
@@ -676,6 +686,11 @@ impl AppState {
             }
             WorkbenchTabState::Rollout(tab) => {
                 if tab.mutation_pending.is_some() {
+                    if let Some(action) = workbench_ctrl_scroll_action(key) {
+                        apply_ctrl_scroll_to_offset(&mut tab.detail_scroll, action);
+                        return AppAction::None;
+                    }
+
                     return match key.code {
                         KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(1);
@@ -693,19 +708,16 @@ impl AppState {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
                             AppAction::None
                         }
-                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
-                            tab.detail_scroll = tab.detail_scroll.saturating_add(10);
-                            AppAction::None
-                        }
-                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
-                            tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
-                            AppAction::None
-                        }
                         _ => AppAction::None,
                     };
                 }
 
                 if tab.confirm_undo_revision.is_some() {
+                    if let Some(action) = workbench_ctrl_scroll_action(key) {
+                        apply_ctrl_scroll_to_offset(&mut tab.detail_scroll, action);
+                        return AppAction::None;
+                    }
+
                     return match key.code {
                         KeyCode::Esc if plain_shortcut(key) => {
                             tab.cancel_undo_confirm();
@@ -724,14 +736,6 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageUp if plain_shortcut(key) => {
-                            tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
-                            AppAction::None
-                        }
-                        KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
-                            tab.detail_scroll = tab.detail_scroll.saturating_add(10);
-                            AppAction::None
-                        }
-                        KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
                             AppAction::None
                         }
