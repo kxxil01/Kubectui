@@ -1,9 +1,6 @@
 //! Copy-to-clipboard and log-export action handlers.
 
-use kubectui::{
-    app::AppState, log_investigation::entry_matches_query, state::ClusterSnapshot,
-    workbench::WorkbenchTabState,
-};
+use kubectui::{app::AppState, state::ClusterSnapshot, workbench::WorkbenchTabState};
 
 use crate::selection_helpers::selected_resource;
 
@@ -154,34 +151,33 @@ fn empty_or_unsupported_exec_action_message(
 fn active_log_copy_content(tab: &kubectui::workbench::WorkbenchTab) -> Option<String> {
     match &tab.state {
         WorkbenchTabState::PodLogs(logs_tab) => {
-            let filtered = visible_pod_log_indices(logs_tab);
-            (!filtered.is_empty()).then(|| {
-                filtered
-                    .iter()
-                    .filter_map(|index| logs_tab.viewer.lines.get(*index))
-                    .map(|line| {
-                        line.display_text(logs_tab.viewer.structured_view)
-                            .to_string()
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
+            let mut content = String::new();
+            for line in logs_tab.viewer.visible_lines() {
+                append_line(
+                    &mut content,
+                    line.display_text(logs_tab.viewer.structured_view),
+                );
+            }
+            (!content.is_empty()).then_some(content)
         }
         WorkbenchTabState::WorkloadLogs(wl_tab) => {
-            let content = wl_tab
+            let mut content = String::new();
+            for line in wl_tab
                 .lines
                 .iter()
                 .filter(|line| wl_tab.matches_filter(line))
-                .map(|line| {
-                    format!(
+            {
+                append_line(
+                    &mut content,
+                    &format!(
                         "{}:{} {}",
                         line.pod_name,
                         line.container_name,
                         line.entry.display_text(wl_tab.structured_view)
-                    )
-                })
-                .collect::<Vec<_>>();
-            (!content.is_empty()).then(|| content.join("\n"))
+                    ),
+                );
+            }
+            (!content.is_empty()).then_some(content)
         }
         _ => None,
     }
@@ -210,19 +206,8 @@ fn active_log_export(tab: &kubectui::workbench::WorkbenchTab) -> Option<(String,
                 "{}-{}",
                 logs_tab.viewer.pod_name, logs_tab.viewer.container_name,
             );
-            let filtered = visible_pod_log_indices(logs_tab);
-            (!filtered.is_empty()).then(|| {
-                let content = filtered
-                    .iter()
-                    .filter_map(|index| logs_tab.viewer.lines.get(*index))
-                    .map(|line| {
-                        line.display_text(logs_tab.viewer.structured_view)
-                            .to_string()
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                (label, content)
-            })
+            let content = active_log_copy_content(tab)?;
+            Some((label, content))
         }
         WorkbenchTabState::WorkloadLogs(_) => active_log_copy_content(tab)
             .map(|content| (tab.state.title().replace(' ', "-"), content)),
@@ -230,23 +215,11 @@ fn active_log_export(tab: &kubectui::workbench::WorkbenchTab) -> Option<(String,
     }
 }
 
-fn visible_pod_log_indices(logs_tab: &kubectui::workbench::PodLogsTabState) -> Vec<usize> {
-    let viewer = &logs_tab.viewer;
-    viewer
-        .filtered_indices()
-        .into_iter()
-        .filter(|index| {
-            viewer.lines.get(*index).is_some_and(|line| {
-                entry_matches_query(
-                    line,
-                    &viewer.search_query,
-                    viewer.search_mode,
-                    viewer.compiled_search.as_ref(),
-                    viewer.structured_view,
-                )
-            })
-        })
-        .collect()
+fn append_line(content: &mut String, line: &str) {
+    if !content.is_empty() {
+        content.push('\n');
+    }
+    content.push_str(line);
 }
 
 #[cfg(test)]
