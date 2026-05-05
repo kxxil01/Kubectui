@@ -6815,6 +6815,107 @@ pub(crate) async fn run_app_inner(
                         exec_tab.clear_output();
                     }
                 }
+                AppAction::ExecRestartSession => {
+                    let shell_plan = app.exec_config.shell_summary();
+                    let restart_request = if let Some(tab) = app.workbench_mut().active_tab_mut()
+                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                    {
+                        let old_session_id = exec_tab.session_id;
+                        let session_id = next_exec_session_id;
+                        next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
+                        let resource = exec_tab.resource.clone();
+                        let pod_name = exec_tab.pod_name.clone();
+                        let namespace = exec_tab.namespace.clone();
+                        let container_name = (!exec_tab.container_name.is_empty())
+                            .then(|| exec_tab.container_name.clone());
+                        exec_tab.restart_session(
+                            session_id,
+                            pod_name.clone(),
+                            namespace.clone(),
+                            container_name.clone(),
+                        );
+                        exec_tab.set_shell_plan(shell_plan);
+                        Some((
+                            old_session_id,
+                            session_id,
+                            resource,
+                            pod_name,
+                            namespace,
+                            container_name,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    let Some((
+                        old_session_id,
+                        session_id,
+                        resource,
+                        pod_name,
+                        namespace,
+                        container_name,
+                    )) = restart_request
+                    else {
+                        app.set_error("Open an exec tab before restarting session.".to_string());
+                        continue;
+                    };
+
+                    if let Some(handle) = exec_sessions.remove(&old_session_id) {
+                        let _ = handle.cancel_tx.send(());
+                    }
+                    cleanup_node_debug_session_if_needed(
+                        old_session_id,
+                        &mut node_debug_sessions,
+                        &node_debug_cleanup_tx,
+                    )
+                    .await;
+
+                    if let Some(container_name) = container_name {
+                        match spawn_exec_session(
+                            client.clone(),
+                            session_id,
+                            pod_name,
+                            namespace,
+                            container_name,
+                            app.exec_config.clone(),
+                            exec_update_tx.clone(),
+                        )
+                        .await
+                        {
+                            Ok(handle) => {
+                                exec_sessions.insert(session_id, handle);
+                            }
+                            Err(err) => {
+                                if let Some(tab) = app
+                                    .workbench_mut()
+                                    .find_tab_mut(&WorkbenchTabKey::Exec(resource))
+                                    && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    && exec_tab.session_id == session_id
+                                {
+                                    exec_tab.loading = false;
+                                    exec_tab.error = Some(format!("{err:#}"));
+                                }
+                            }
+                        }
+                    } else {
+                        let context_generation = refresh_state.context_generation;
+                        let tx = exec_bootstrap_tx.clone();
+                        let client_clone = client.clone();
+                        tokio::spawn(async move {
+                            let result = fetch_pod_containers(&client_clone, &pod_name, &namespace)
+                                .await
+                                .map_err(|err| format!("{err:#}"));
+                            let _ = tx
+                                .send(ExecBootstrapResult {
+                                    session_id,
+                                    context_generation,
+                                    resource,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
                 AppAction::LogsViewerSelectContainer(container) => {
                     let mut logs_request: Option<(u64, String, String, String)> = None;
                     if let Some(tab) = app.workbench_mut().active_tab_mut()
