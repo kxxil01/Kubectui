@@ -1103,29 +1103,27 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
         return;
     }
 
-    let Some(yaml) = &tab_state.yaml else {
+    if tab_state.yaml.is_none() {
         frame.render_widget(
             Paragraph::new(Span::styled(" YAML not available", theme.inactive_style())),
             area,
         );
         return;
-    };
+    }
 
-    let total = yaml.lines().count();
+    let total = tab_state.yaml_line_count();
     let viewport_rows = area.height.saturating_sub(1) as usize;
     let window = scroll_window(total, scroll, viewport_rows);
     let body = if window.start < window.end {
-        yaml.lines()
-            .enumerate()
-            .skip(window.start)
-            .take(window.end.saturating_sub(window.start))
-            .map(|(idx, line)| {
+        (window.start..window.end)
+            .filter_map(|idx| {
+                let line = tab_state.yaml_line(idx)?;
                 let mut spans = vec![Span::styled(
                     format!("{:>4} ", idx + 1),
                     theme.muted_style(),
                 )];
                 spans.extend(highlight_yaml_line(line, &theme));
-                Line::from(spans)
+                Some(Line::from(spans))
             })
             .collect()
     } else {

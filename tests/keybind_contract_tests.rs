@@ -451,20 +451,20 @@ fn workbench_page_keys_reject_reserved_modifier_variants() {
     for modifiers in reserved_modifier_variants() {
         let mut app = AppState::default();
         app.focus = Focus::Workbench;
+        let mut tab = ResourceYamlTabState::new(ResourceRef::Pod("pod-a".into(), "default".into()));
+        tab.scroll = 5;
+        tab.update_content(
+            Some(
+                (0..30)
+                    .map(|idx| format!("line-{idx}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            None,
+            None,
+        );
         app.workbench_mut()
-            .open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState {
-                resource: ResourceRef::Pod("pod-a".into(), "default".into()),
-                pending_request_id: None,
-                yaml: Some(
-                    (0..30)
-                        .map(|idx| format!("line-{idx}"))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                ),
-                scroll: 5,
-                loading: false,
-                error: None,
-            }));
+            .open_tab(WorkbenchTabState::ResourceYaml(tab));
 
         let action = route_keyboard_input(KeyEvent::new(KeyCode::PageDown, modifiers), &mut app);
         assert_eq!(action, AppAction::None);

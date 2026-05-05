@@ -551,6 +551,7 @@ pub struct ResourceYamlTabState {
     pub resource: ResourceRef,
     pub pending_request_id: Option<u64>,
     pub yaml: Option<String>,
+    line_ranges: Vec<(usize, usize)>,
     pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
@@ -562,6 +563,7 @@ impl ResourceYamlTabState {
             resource,
             pending_request_id: None,
             yaml: None,
+            line_ranges: Vec::new(),
             scroll: 0,
             loading: true,
             error: None,
@@ -577,17 +579,42 @@ impl ResourceYamlTabState {
         let content_updated = yaml.is_some() || error.is_some() || pending_request_id.is_none();
         if content_updated {
             self.yaml = yaml;
-            let total_lines = self
+            self.line_ranges = self
                 .yaml
-                .as_ref()
-                .map(|yaml| yaml.lines().count())
-                .unwrap_or(0);
-            self.scroll = self.scroll.min(total_lines.saturating_sub(1));
+                .as_deref()
+                .map(yaml_line_ranges)
+                .unwrap_or_default();
+            self.scroll = self.scroll.min(self.yaml_line_count().saturating_sub(1));
         }
         self.loading = pending_request_id.is_some() || (self.yaml.is_none() && error.is_none());
         self.error = error;
         self.pending_request_id = pending_request_id;
     }
+
+    pub fn yaml_line_count(&self) -> usize {
+        match self.yaml.as_deref() {
+            Some(yaml) if self.line_ranges.is_empty() && !yaml.is_empty() => yaml.lines().count(),
+            Some(_) => self.line_ranges.len(),
+            None => 0,
+        }
+    }
+
+    pub fn yaml_line(&self, index: usize) -> Option<&str> {
+        let yaml = self.yaml.as_deref()?;
+        let Some((start, end)) = self.line_ranges.get(index).copied() else {
+            return yaml.lines().nth(index);
+        };
+        yaml.get(start..end).or_else(|| yaml.lines().nth(index))
+    }
+}
+
+fn yaml_line_ranges(yaml: &str) -> Vec<(usize, usize)> {
+    yaml.lines()
+        .map(|line| {
+            let start = line.as_ptr() as usize - yaml.as_ptr() as usize;
+            (start, start + line.len())
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -4056,6 +4083,7 @@ mod tests {
         state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState {
             resource: pod("pod-0"),
             yaml: None,
+            line_ranges: Vec::new(),
             scroll: 0,
             pending_request_id: None,
             loading: false,
@@ -4065,6 +4093,23 @@ mod tests {
         state.close_resource_tabs();
         assert!(!state.maximized);
         assert!(!state.open);
+    }
+
+    #[test]
+    fn resource_yaml_tab_caches_line_ranges_and_clamps_scroll() {
+        let mut tab = ResourceYamlTabState::new(pod("pod-0"));
+        tab.scroll = 99;
+        tab.update_content(
+            Some("apiVersion: v1\nkind: Pod\nmetadata:\n  name: api-0\n".to_string()),
+            None,
+            None,
+        );
+
+        assert_eq!(tab.yaml_line_count(), 4);
+        assert_eq!(tab.yaml_line(0), Some("apiVersion: v1"));
+        assert_eq!(tab.yaml_line(3), Some("  name: api-0"));
+        assert_eq!(tab.yaml_line(4), None);
+        assert_eq!(tab.scroll, 3);
     }
 
     #[test]
