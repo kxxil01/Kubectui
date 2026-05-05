@@ -6979,6 +6979,9 @@ pub(crate) async fn run_app_inner(
                     match std::process::Command::new("/bin/sh")
                         .arg("-lc")
                         .arg(&command)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
                         .spawn()
                     {
                         Ok(_) => {
