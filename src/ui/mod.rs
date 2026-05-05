@@ -18,15 +18,16 @@ use ratatui::{
         Table, TableState,
     },
 };
+#[cfg(test)]
+use std::cell::Cell as StdCell;
+#[cfg(not(test))]
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::{
     borrow::Cow,
     cell::RefCell,
     collections::HashMap,
     hash::{Hash, Hasher},
-    sync::{
-        Arc, LazyLock, Mutex,
-        atomic::{AtomicU8, Ordering},
-    },
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use crate::{
@@ -50,10 +51,21 @@ use crate::{
     workbench::WorkbenchTabState,
 };
 
+#[cfg(not(test))]
 static LOADING_SPINNER_TICK: AtomicU8 = AtomicU8::new(0);
+#[cfg(test)]
+thread_local! {
+    static LOADING_SPINNER_TICK: StdCell<u8> = const { StdCell::new(0) };
+}
 
+#[cfg(not(test))]
 fn set_loading_spinner_tick(tick: u8) {
     LOADING_SPINNER_TICK.store(tick % 8, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+fn set_loading_spinner_tick(tick: u8) {
+    LOADING_SPINNER_TICK.with(|cell| cell.set(tick % 8));
 }
 
 pub(crate) fn loading_spinner_char() -> char {
@@ -61,7 +73,11 @@ pub(crate) fn loading_spinner_char() -> char {
         '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
         '\u{2827}',
     ];
-    FRAMES[usize::from(LOADING_SPINNER_TICK.load(Ordering::Relaxed) % 8)]
+    #[cfg(not(test))]
+    let tick = LOADING_SPINNER_TICK.load(Ordering::Relaxed);
+    #[cfg(test)]
+    let tick = LOADING_SPINNER_TICK.with(StdCell::get);
+    FRAMES[usize::from(tick % 8)]
 }
 use filter_cache::{
     DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
