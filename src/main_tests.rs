@@ -381,6 +381,20 @@ fn ai_log_context_formatter_redacts_live_log_values() {
 }
 
 #[test]
+fn ai_live_log_unavailable_formatter_redacts_error_values() {
+    let rendered = super::format_ai_log_unavailable_line(
+        "pod prod/api-0 container main current logs",
+        "request failed Authorization: Bearer live-token dsn=postgres://super:db-pass@db.example:5432/app",
+    );
+
+    assert!(rendered.contains("unavailable"), "{rendered}");
+    assert!(rendered.contains("Authorization: [redacted]"), "{rendered}");
+    assert!(rendered.contains("[redacted-uri]"), "{rendered}");
+    assert!(!rendered.contains("live-token"), "{rendered}");
+    assert!(!rendered.contains("db-pass"), "{rendered}");
+}
+
+#[test]
 fn ai_live_log_context_keeps_gap_markers_before_log_payload() {
     let lines = super::prioritize_ai_log_context_lines(
         vec![
