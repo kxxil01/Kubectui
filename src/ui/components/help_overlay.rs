@@ -134,6 +134,19 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Exec (workbench)",
+        &[
+            ("Esc", "Enter controls mode from exec input"),
+            ("z", "Maximize / restore in controls mode"),
+            (", / .", "Previous / next tab in controls mode"),
+            ("Ctrl+W", "Close tab in controls mode"),
+            ("i / Enter", "Return to exec input from controls mode"),
+            ("Ctrl+L", "Clear exec output"),
+            ("Up / Down", "Previous / next command"),
+            ("PageUp / PageDown", "Scroll output"),
+        ],
+    ),
+    (
         "Helm History (workbench)",
         &[
             ("Enter", "Open values diff for selected revision"),
@@ -797,6 +810,27 @@ mod tests {
                 *key == "Ctrl+Up / Ctrl+Down" && *desc == "Resize workbench"
             })
         );
+    }
+
+    #[test]
+    fn exec_help_lists_controls_mode_escape_handoff() {
+        let section = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Exec (workbench)")
+            .expect("exec section exists")
+            .1;
+
+        assert!(section.iter().any(|(key, desc)| {
+            *key == "Esc" && *desc == "Enter controls mode from exec input"
+        }));
+        assert!(
+            section.iter().any(|(key, desc)| {
+                *key == "z" && *desc == "Maximize / restore in controls mode"
+            })
+        );
+        assert!(section.iter().any(|(key, desc)| {
+            *key == "i / Enter" && *desc == "Return to exec input from controls mode"
+        }));
     }
 
     #[test]

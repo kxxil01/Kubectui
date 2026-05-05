@@ -181,6 +181,10 @@ Press `Enter` on a resource, then:
 | `z` | Maximize |
 | `Ctrl+↑`/`↓` | Resize |
 
+Exec tabs reserve text input for the remote shell. Press `Esc` once to enter
+controls mode, then use `z`, `,`/`.`, or `Ctrl+W`; press `i` or `Enter` to
+return to shell input.
+
 ### Log viewer
 
 | Key | Action |
