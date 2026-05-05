@@ -3326,6 +3326,50 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_metrics_loading_spinner_animates_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.nodes.push(NodeInfo {
+            name: "node-a".to_string(),
+            ready: true,
+            ..NodeInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "pod-a".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+
+        let mut app = app_with_view(AppView::Dashboard);
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+
+        app.advance_spinner();
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(before.contains("loading..."));
+        assert!(after.contains("loading..."));
+        assert_ne!(before, after);
+    }
+
+    #[test]
     fn issues_view_marks_partial_coverage_until_backfill_finishes() {
         let snapshot = ClusterSnapshot {
             loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW,
