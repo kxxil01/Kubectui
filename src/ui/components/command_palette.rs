@@ -972,6 +972,38 @@ fn palette_scroll_metrics(item_heights: &[usize], offset: usize) -> (usize, usiz
     (total, position)
 }
 
+fn palette_visible_item_end(
+    item_heights: &[usize],
+    offset: usize,
+    viewport_height: usize,
+) -> usize {
+    if item_heights.is_empty() {
+        return 0;
+    }
+
+    let mut used_height = 0usize;
+    let mut end = offset.min(item_heights.len());
+    while end < item_heights.len() {
+        used_height = used_height.saturating_add(item_heights[end]);
+        end += 1;
+        if used_height >= viewport_height.max(1) {
+            break;
+        }
+    }
+    end
+}
+
+fn palette_section_header_for_index(
+    matches: &[PaletteEntry],
+    index: usize,
+) -> Option<&'static str> {
+    let section = matches.get(index).map(palette_entry_section)?;
+    let previous_section = index
+        .checked_sub(1)
+        .and_then(|previous| matches.get(previous).map(palette_entry_section));
+    (previous_section != Some(section)).then(|| section.title())
+}
+
 /// Modal command palette for jumping directly to any view.
 #[derive(Debug, Clone, Default)]
 pub struct CommandPalette {
@@ -1632,14 +1664,10 @@ impl CommandPalette {
         );
 
         let matches = self.filtered_entries();
-        let mut items: Vec<ListItem> = Vec::new();
         let mut item_heights = Vec::with_capacity(matches.len());
 
         if matches.is_empty() {
-            items.push(ListItem::new(Line::from(Span::styled(
-                "  No matches",
-                theme.inactive_style(),
-            ))));
+            item_heights.push(1);
         } else {
             let mut previous_section = None;
             for (selectable_idx, entry) in matches.iter().enumerate() {
@@ -1653,7 +1681,6 @@ impl CommandPalette {
                     section_header,
                 );
                 item_heights.push(lines.len());
-                items.push(ListItem::new(lines));
             }
         }
 
@@ -1675,9 +1702,31 @@ impl CommandPalette {
             })
             .unwrap_or_default();
         let (scroll_total, scroll_position) = palette_scroll_metrics(&item_heights, offset);
+        let mut items: Vec<ListItem> = Vec::new();
+        if matches.is_empty() {
+            items.push(ListItem::new(Line::from(Span::styled(
+                "  No matches",
+                theme.inactive_style(),
+            ))));
+        } else {
+            let end = palette_visible_item_end(&item_heights, offset, viewport_height);
+            for index in offset..end {
+                let Some(entry) = matches.get(index) else {
+                    continue;
+                };
+                let lines = palette_item_lines(
+                    entry,
+                    &theme,
+                    selected == Some(index),
+                    palette_section_header_for_index(&matches, index),
+                );
+                items.push(ListItem::new(lines));
+            }
+        }
+        let selected_in_window = selected.and_then(|selected| selected.checked_sub(offset));
         let mut state = ListState::default()
-            .with_selected(selected)
-            .with_offset(offset);
+            .with_selected(selected_in_window)
+            .with_offset(0);
         frame.render_stateful_widget(List::new(items).block(list_block), chunks[2], &mut state);
         render_vertical_scrollbar(frame, chunks[2], scroll_total, scroll_position);
 
@@ -2294,6 +2343,35 @@ mod tests {
         assert_eq!(palette_scroll_metrics(&heights, 0), (10, 0));
         assert_eq!(palette_scroll_metrics(&heights, 2), (10, 5));
         assert_eq!(palette_scroll_metrics(&heights, 99), (10, 6));
+    }
+
+    #[test]
+    fn palette_visible_item_end_stops_after_viewport_rows() {
+        let heights = vec![2, 3, 1, 4, 2];
+
+        assert_eq!(palette_visible_item_end(&heights, 0, 5), 2);
+        assert_eq!(palette_visible_item_end(&heights, 2, 5), 4);
+        assert_eq!(palette_visible_item_end(&heights, 4, 5), 5);
+    }
+
+    #[test]
+    fn palette_render_windows_large_workspace_lists() {
+        let mut palette = CommandPalette::default();
+        palette.set_workspace_info(
+            (0..200).map(|idx| format!("workspace-{idx:03}")).collect(),
+            Vec::new(),
+        );
+        palette.open();
+        for ch in "workspace".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+        let matches = palette.filtered_entries();
+        palette.selected_index = matches.len().saturating_sub(1);
+
+        let rendered = rendered_text(&palette, 100, 24);
+
+        assert!(rendered.contains("workspace-199"), "{rendered}");
+        assert!(!rendered.contains("workspace-000"), "{rendered}");
     }
 
     #[test]
