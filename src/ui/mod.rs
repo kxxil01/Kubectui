@@ -984,7 +984,7 @@ fn status_bar_message(
             ""
         };
         let workbench_hint = if app.workbench().open {
-            " • [H] history • [b] workbench • [,/.] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
+            " • [H] history • [b] workbench • [,/.] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+W] close-tab"
         } else {
             " • [H] history • [b] workbench"
         };
@@ -4012,7 +4012,8 @@ mod tests {
 
         let rendered = render_to_string_with_size(&app, &pods_snapshot_for_render_tests(), 120, 40);
 
-        assert!(rendered.contains("[Ctrl+w] close-tab"), "{rendered}");
+        assert!(rendered.contains("[Ctrl+W] close-tab"), "{rendered}");
+        assert!(!rendered.contains("[Ctrl+w] close-tab"), "{rendered}");
         assert!(rendered.contains("[Esc then Enter] quit"), "{rendered}");
     }
 
