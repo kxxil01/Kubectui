@@ -1306,11 +1306,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     let overlay_mask = active_overlay_mask(app);
     let secondary_pane_active = app.content_secondary_pane_active();
     let (status, is_status_error) = status_bar_message(app, cluster, secondary_pane_active);
-    let status_height = if app.workbench().maximized {
-        components::status_bar_height(area.width, &status, area.height)
-    } else {
-        2
-    };
+    let status_height = components::status_bar_height(area.width, &status, area.height);
 
     let root = {
         let _layout_scope = profiling::span_scope("layout");
@@ -4116,14 +4112,31 @@ mod tests {
     }
 
     #[test]
+    fn status_bar_wraps_long_hint_line_without_maximized_workbench() {
+        let mut app = app_with_view(AppView::Pods);
+        app.workbench_mut()
+            .open_tab(crate::workbench::WorkbenchTabState::ActionHistory(
+                crate::workbench::ActionHistoryTabState::default(),
+            ));
+        app.focus = Focus::Workbench;
+
+        let rendered = render_to_string_with_size(&app, &pods_snapshot_for_render_tests(), 120, 40);
+
+        assert!(rendered.contains("[Ctrl+W] close-tab"), "{rendered}");
+        assert!(rendered.contains("[Esc then Enter] quit"), "{rendered}");
+    }
+
+    #[test]
     fn status_bar_height_grows_for_wrapped_content_but_stays_bounded() {
         let short = components::status_bar_height(120, "ready", 40);
         let long = components::status_bar_height(80, &"hint ".repeat(80), 40);
+        let compact = components::status_bar_height(80, &"hint ".repeat(80), 24);
         let tiny = components::status_bar_height(80, &"hint ".repeat(80), 12);
 
         assert_eq!(short, 2);
         assert!(long > short, "{long}");
         assert!(long <= 6, "{long}");
+        assert_eq!(compact, 2);
         assert_eq!(tiny, 2);
     }
 

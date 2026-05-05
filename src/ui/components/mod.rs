@@ -313,6 +313,9 @@ fn cached_status_line(
 }
 
 pub fn status_bar_height(width: u16, message: &str, available_height: u16) -> u16 {
+    if available_height < 30 {
+        return 2;
+    }
     let max_height = available_height.saturating_sub(11).clamp(2, 6);
     if width <= 2 || max_height <= 2 {
         return 2;
