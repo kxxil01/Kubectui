@@ -198,24 +198,30 @@ pub(crate) fn apply_detail_state_to_workbench(
         secret_tab.source_yaml = state.yaml.clone();
         secret_tab.loading = false;
         secret_tab.pending_request_id = None;
-        secret_tab.error = state.yaml_error.clone().or_else(|| {
-            state
-                .yaml
-                .as_deref()
-                .map(decode_secret_yaml)
-                .transpose()
-                .map(|entries| {
-                    if let Some(entries) = entries {
-                        secret_tab.entries = entries;
-                        secret_tab.clamp_selected();
-                    } else {
-                        secret_tab.entries.clear();
-                        secret_tab.clamp_selected();
-                    }
-                })
-                .err()
-                .map(|err| err.to_string())
-        });
+        secret_tab.error = match state.yaml_error.clone() {
+            Some(error) => {
+                secret_tab.entries.clear();
+                secret_tab.clamp_selected();
+                Some(error)
+            }
+            None => match state.yaml.as_deref().map(decode_secret_yaml).transpose() {
+                Ok(Some(entries)) => {
+                    secret_tab.entries = entries;
+                    secret_tab.clamp_selected();
+                    None
+                }
+                Ok(None) => {
+                    secret_tab.entries.clear();
+                    secret_tab.clamp_selected();
+                    None
+                }
+                Err(err) => {
+                    secret_tab.entries.clear();
+                    secret_tab.clamp_selected();
+                    Some(err.to_string())
+                }
+            },
+        };
     }
 }
 
@@ -260,6 +266,9 @@ pub(crate) fn apply_detail_error_to_workbench(
         }
         secret_tab.loading = false;
         secret_tab.error = Some(error.to_string());
+        secret_tab.source_yaml = None;
+        secret_tab.entries.clear();
+        secret_tab.clamp_selected();
         secret_tab.pending_request_id = None;
     }
 }
@@ -1096,6 +1105,44 @@ mod tests {
     }
 
     #[test]
+    fn decoded_secret_async_decode_error_clears_stale_entries() {
+        let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = DecodedSecretTabState::new(resource.clone());
+        tab.loading = true;
+        tab.pending_request_id = Some(11);
+        tab.source_yaml = Some("kind: Secret\ndata:\n  TOKEN: b2xkLXZhbHVl\n".into());
+        tab.entries = vec![DecodedSecretEntry {
+            key: "TOKEN".into(),
+            value: DecodedSecretValue::Text {
+                current: "old-value".into(),
+                original: "old-value".into(),
+            },
+        }];
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+        let state = DetailViewState {
+            resource: Some(resource),
+            yaml: Some("kind: Secret\ndata: []\n".into()),
+            ..DetailViewState::default()
+        };
+        apply_detail_state_to_workbench(&mut app, 11, &state);
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing decoded secret tab");
+        };
+        let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+            panic!("expected decoded secret tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.error.is_some());
+        assert!(tab.entries.is_empty());
+        assert_eq!(tab.selected, 0);
+    }
+
+    #[test]
     fn resource_events_async_result_surfaces_event_error() {
         let resource = ResourceRef::Pod("api-0".into(), "prod".into());
         let mut app = AppState::default();
@@ -1185,5 +1232,39 @@ mod tests {
             tab.selected_entry().and_then(|entry| entry.editable_text()),
             Some("local-edit")
         );
+    }
+
+    #[test]
+    fn decoded_secret_async_error_clears_stale_entries_without_local_edits() {
+        let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = DecodedSecretTabState::new(resource.clone());
+        tab.loading = true;
+        tab.pending_request_id = Some(12);
+        tab.source_yaml = Some("kind: Secret\ndata:\n  TOKEN: b2xkLXZhbHVl\n".into());
+        tab.entries = vec![DecodedSecretEntry {
+            key: "TOKEN".into(),
+            value: DecodedSecretValue::Text {
+                current: "old-value".into(),
+                original: "old-value".into(),
+            },
+        }];
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+        apply_detail_error_to_workbench(&mut app, 12, &resource, "remote read failed");
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing decoded secret tab");
+        };
+        let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+            panic!("expected decoded secret tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert_eq!(tab.source_yaml, None);
+        assert_eq!(tab.error.as_deref(), Some("remote read failed"));
+        assert!(tab.entries.is_empty());
+        assert_eq!(tab.selected, 0);
     }
 }
