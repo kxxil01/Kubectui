@@ -308,8 +308,8 @@ impl PortForwardDialog {
             .map_err(|e| format!("Local port: {}", e))?;
 
         let target = PortForwardTarget::new(
-            &self.namespace_field.value,
-            &self.pod_name_field.value,
+            self.namespace_field.value.trim(),
+            self.pod_name_field.value.trim(),
             remote_port,
         );
 
@@ -804,12 +804,36 @@ mod tests {
     }
 
     #[test]
+    fn validation_trims_required_target_fields() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.namespace_field.value = " default ".to_string();
+        dialog.pod_name_field.value = " test-pod ".to_string();
+        dialog.remote_port_field.value = "8080".to_string();
+
+        let (target, _) = dialog.validate().expect("trimmed target should validate");
+
+        assert_eq!(target.namespace, "default");
+        assert_eq!(target.pod_name, "test-pod");
+    }
+
+    #[test]
     fn test_validation_errors_for_missing_required_fields() {
         let mut dialog = PortForwardDialog::new();
         dialog.pod_name_field.value.clear();
         dialog.remote_port_field.value = "8080".to_string();
 
         let err = dialog.validate().expect_err("missing pod name must fail");
+        assert!(err.contains("Pod name is required"));
+    }
+
+    #[test]
+    fn validation_rejects_whitespace_required_fields() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.pod_name_field.value = "   ".to_string();
+        dialog.remote_port_field.value = "8080".to_string();
+
+        let err = dialog.validate().expect_err("blank pod name must fail");
+
         assert!(err.contains("Pod name is required"));
     }
 
