@@ -1776,6 +1776,46 @@ fn pod_logs_search_mode_accepts_shortcut_characters_as_text() {
 }
 
 #[test]
+fn pod_logs_search_caps_at_input_limit() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+
+    for _ in 0..(crate::app::input::MAX_LOG_SEARCH_INPUT_CHARS + 10) {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+            AppAction::None
+        );
+    }
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(
+        logs_tab.viewer.search_input.chars().count(),
+        crate::app::input::MAX_LOG_SEARCH_INPUT_CHARS
+    );
+    assert_eq!(
+        logs_tab.viewer.search_cursor,
+        crate::app::input::MAX_LOG_SEARCH_INPUT_CHARS
+    );
+}
+
+#[test]
 fn workbench_common_shortcuts_do_not_leak_into_pod_logs_search() {
     let mut app = AppState::default();
     app.workbench
