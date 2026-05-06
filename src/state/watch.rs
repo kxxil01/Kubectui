@@ -7,18 +7,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use futures::TryStreamExt;
-use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
-use k8s_openapi::api::batch::v1::{CronJob, Job};
-use k8s_openapi::api::core::v1::{Namespace, Node, Pod, ReplicationController, Service};
-use kube::api::{ApiResource, DynamicObject, GroupVersionKind};
-use kube::core::PartialObjectMeta;
-use kube::runtime::WatchStreamExt;
-use kube::runtime::watcher::{self, Event};
-use kube::{Api, Client, ResourceExt};
-use tokio::sync::mpsc;
-use tracing::warn;
-
 use super::RefreshScope;
 use crate::k8s::client::{
     FluxWatchTarget, K8sClient, flux_dynamic_object_to_info, is_forbidden_error,
@@ -34,6 +22,16 @@ use crate::k8s::dtos::{
     NamespaceInfo, NodeInfo, PodInfo, ReplicaSetInfo, ReplicationControllerInfo, ServiceInfo,
     StatefulSetInfo,
 };
+use futures::TryStreamExt;
+use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
+use k8s_openapi::api::batch::v1::{CronJob, Job};
+use k8s_openapi::api::core::v1::{Namespace, Node, Pod, ReplicationController, Service};
+use kube::api::{ApiResource, DynamicObject, GroupVersionKind};
+use kube::core::PartialObjectMeta;
+use kube::runtime::WatchStreamExt;
+use kube::runtime::watcher::{self, Event};
+use kube::{Api, Client, ResourceExt};
+use tokio::sync::mpsc;
 
 const STREAMING_LISTS_MIN_MINOR: u32 = 34;
 const WATCH_PUBLISH_DEBOUNCE_MS: u64 = 75;
@@ -369,7 +367,7 @@ macro_rules! define_watcher {
                                                 break;
                                             }
                                         }
-                                        warn!(
+                                        log::warn!(
                                             concat!(stringify!($name), " watch stream ended unexpectedly")
                                         );
                                         let _ = watch_tx.send(WatchUpdate {
@@ -382,9 +380,9 @@ macro_rules! define_watcher {
                                         break;
                                     }
                                     Err(err) => {
-                                        warn!(
-                                            error = %err,
-                                            concat!(stringify!($name), " watch stream error"),
+                                        log::warn!(
+                                            "{} watch stream error: {err}",
+                                            stringify!($name)
                                         );
                                         let _ = watch_tx.send(WatchUpdate {
                                             resource: WatchedResource::$variant,
@@ -413,9 +411,10 @@ macro_rules! define_watcher {
                     Event::InitApply(obj) => {
                         let uid = obj.uid().unwrap_or_default();
                         if uid.is_empty() {
-                            warn!(
-                                name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                                concat!("skipping ", stringify!($name), " with empty UID during init"),
+                            log::warn!(
+                                "{} '{}' has empty UID during init; skipping",
+                                stringify!($name),
+                                obj.metadata.name.as_deref().unwrap_or("<unknown>")
                             );
                             return false;
                         }
@@ -426,9 +425,10 @@ macro_rules! define_watcher {
                     Event::Apply(obj) => {
                         let uid = obj.uid().unwrap_or_default();
                         if uid.is_empty() {
-                            warn!(
-                                name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                                concat!("skipping ", stringify!($name), " with empty UID on apply"),
+                            log::warn!(
+                                "{} '{}' has empty UID on apply; skipping",
+                                stringify!($name),
+                                obj.metadata.name.as_deref().unwrap_or("<unknown>")
                             );
                             return false;
                         }
@@ -437,9 +437,10 @@ macro_rules! define_watcher {
                     Event::Delete(obj) => {
                         let uid = obj.uid().unwrap_or_default();
                         if uid.is_empty() {
-                            warn!(
-                                name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                                concat!("skipping ", stringify!($name), " with empty UID on delete"),
+                            log::warn!(
+                                "{} '{}' has empty UID on delete; skipping",
+                                stringify!($name),
+                                obj.metadata.name.as_deref().unwrap_or("<unknown>")
                             );
                             return false;
                         }
@@ -518,9 +519,9 @@ fn process_flux_event(
         Event::InitApply(obj) => {
             let uid = obj.uid().unwrap_or_default();
             if uid.is_empty() {
-                warn!(
-                    name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping Flux resource with empty UID during init",
+                log::warn!(
+                    "Flux resource '{}' has empty UID during init; skipping",
+                    obj.metadata.name.as_deref().unwrap_or("<unknown>")
                 );
                 return false;
             }
@@ -531,9 +532,9 @@ fn process_flux_event(
         Event::Apply(obj) => {
             let uid = obj.uid().unwrap_or_default();
             if uid.is_empty() {
-                warn!(
-                    name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping Flux resource with empty UID on apply",
+                log::warn!(
+                    "Flux resource '{}' has empty UID on apply; skipping",
+                    obj.metadata.name.as_deref().unwrap_or("<unknown>")
                 );
                 return false;
             }
@@ -542,9 +543,9 @@ fn process_flux_event(
         Event::Delete(obj) => {
             let uid = obj.uid().unwrap_or_default();
             if uid.is_empty() {
-                warn!(
-                    name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping Flux resource with empty UID on delete",
+                log::warn!(
+                    "Flux resource '{}' has empty UID on delete; skipping",
+                    obj.metadata.name.as_deref().unwrap_or("<unknown>")
                 );
                 return false;
             }
@@ -653,11 +654,11 @@ fn start_flux_watch(
                             {
                                 break;
                             }
-                            warn!(
-                                group = target.group,
-                                kind = target.kind,
-                                version = target.version,
-                                "flux watch stream ended unexpectedly",
+                            log::warn!(
+                                "flux watch stream ended unexpectedly for {}/{}/{}",
+                                target.group,
+                                target.version,
+                                target.kind
                             );
                             let _ = watch_tx.send(WatchUpdate {
                                 resource: WatchedResource::Flux,
@@ -683,22 +684,20 @@ fn start_flux_watch(
                             {
                                 break;
                             }
-                            warn!(
-                                error = %err,
-                                group = target.group,
-                                kind = target.kind,
-                                version = target.version,
-                                "flux watch unavailable; watcher stopped",
+                            log::warn!(
+                                "flux watch unavailable for {}/{}/{}; watcher stopped: {err}",
+                                target.group,
+                                target.version,
+                                target.kind
                             );
                             break;
                         }
                         Err(err) => {
-                            warn!(
-                                error = %err,
-                                group = target.group,
-                                kind = target.kind,
-                                version = target.version,
-                                "flux watch stream error",
+                            log::warn!(
+                                "flux watch stream error for {}/{}/{}: {err}",
+                                target.group,
+                                target.version,
+                                target.kind
                             );
                             let _ = watch_tx.send(WatchUpdate {
                                 resource: WatchedResource::Flux,
@@ -1014,7 +1013,9 @@ impl WatchManager {
                     Ok(Some(targets)) => targets,
                     Ok(None) => return,
                     Err(err) => {
-                        warn!(error = %err, "failed discovering Flux watch targets; Flux watcher disabled");
+                        log::warn!(
+                            "failed discovering Flux watch targets; Flux watcher disabled: {err}"
+                        );
                         return;
                     }
                 };

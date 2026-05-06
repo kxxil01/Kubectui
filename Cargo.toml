@@ -33,8 +33,6 @@ dashmap = "5.5"
 dirs = "5"
 futures = "0.3"
 paste = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower = { version = "0.5.1", features = ["buffer", "retry"] }
 notify = "8.2.0"
 ureq = { version = "3", default-features = false, features = ["json", "rustls"] }
