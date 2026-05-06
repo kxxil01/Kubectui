@@ -26,6 +26,7 @@ use crate::{
 pub(crate) const MAX_SEARCH_QUERY_CHARS: usize = 256;
 pub(crate) const MAX_LOG_SEARCH_INPUT_CHARS: usize = 256;
 pub(crate) const MAX_LOG_TIME_JUMP_INPUT_CHARS: usize = 64;
+pub(crate) const MAX_DECODED_SECRET_EDIT_CHARS: usize = 4096;
 
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
@@ -849,7 +850,11 @@ impl AppState {
                             clear_input_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
                             AppAction::None
                         }
-                        KeyCode::Char(c) if plain_shortcut(key) => {
+                        KeyCode::Char(c)
+                            if plain_shortcut(key)
+                                && tab.edit_input.chars().count()
+                                    < MAX_DECODED_SECRET_EDIT_CHARS =>
+                        {
                             insert_char_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor, c);
                             AppAction::None
                         }

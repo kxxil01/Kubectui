@@ -5628,6 +5628,47 @@ fn decoded_secret_modified_edit_keys_do_not_mutate_input_or_cursor() {
 }
 
 #[test]
+fn decoded_secret_edit_caps_at_input_limit() {
+    use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
+    use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab =
+        DecodedSecretTabState::new(ResourceRef::Secret("app-secret".into(), "prod".into()));
+    tab.entries = vec![DecodedSecretEntry {
+        key: "TOKEN".into(),
+        value: DecodedSecretValue::Text {
+            current: String::new(),
+            original: String::new(),
+        },
+    }];
+    tab.masked = false;
+    tab.editing = true;
+    app.workbench
+        .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+    for _ in 0..(crate::app::input::MAX_DECODED_SECRET_EDIT_CHARS + 10) {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('s'))),
+            AppAction::None
+        );
+    }
+
+    let WorkbenchTabState::DecodedSecret(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected decoded secret tab");
+    };
+    assert_eq!(
+        tab.edit_input.chars().count(),
+        crate::app::input::MAX_DECODED_SECRET_EDIT_CHARS
+    );
+    assert_eq!(
+        tab.edit_cursor,
+        crate::app::input::MAX_DECODED_SECRET_EDIT_CHARS
+    );
+}
+
+#[test]
 fn reopen_clean_decoded_secret_tab_tracks_new_pending_fetch() {
     use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
     use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
