@@ -497,6 +497,8 @@ impl AppState {
     }
 
     pub fn apply_workspace_snapshot(&mut self, snapshot: &crate::workspaces::WorkspaceSnapshot) {
+        let snapshot = crate::workspaces::normalized_workspace_snapshot(snapshot);
+
         self.detail_view = None;
         self.reset_content_secondary_pane_state();
         self.search_query = snapshot.search_query.clone().unwrap_or_default();

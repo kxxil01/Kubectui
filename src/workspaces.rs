@@ -54,16 +54,46 @@ pub struct WorkspaceBank {
 impl WorkspaceBank {
     pub fn to_snapshot(&self) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
-            context: self.context.clone(),
-            namespace: self.namespace.clone(),
+            context: normalized_optional_text(self.context.as_deref()),
+            namespace: normalized_required_text(&self.namespace, "all"),
             view: self.view,
-            search_query: self.search_query.clone(),
+            search_query: normalized_optional_text(self.search_query.as_deref()),
             collapsed_groups: Vec::new(),
             workbench_open: false,
             workbench_height: DEFAULT_WORKBENCH_HEIGHT,
             workbench_maximized: false,
             action_history_tab: false,
         }
+    }
+}
+
+pub fn normalized_workspace_snapshot(snapshot: &WorkspaceSnapshot) -> WorkspaceSnapshot {
+    WorkspaceSnapshot {
+        context: normalized_optional_text(snapshot.context.as_deref()),
+        namespace: normalized_required_text(&snapshot.namespace, "all"),
+        view: snapshot.view,
+        search_query: normalized_optional_text(snapshot.search_query.as_deref()),
+        collapsed_groups: snapshot.collapsed_groups.clone(),
+        workbench_open: snapshot.workbench_open,
+        workbench_height: snapshot.workbench_height,
+        workbench_maximized: snapshot.workbench_maximized,
+        action_history_tab: snapshot.action_history_tab,
+    }
+}
+
+fn normalized_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn normalized_required_text(value: &str, fallback: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        fallback.to_string()
+    } else {
+        value.to_string()
     }
 }
 
@@ -255,6 +285,24 @@ mod tests {
         assert_eq!(snapshot.search_query.as_deref(), Some("checkout"));
         assert!(!snapshot.workbench_open);
         assert!(!snapshot.action_history_tab);
+    }
+
+    #[test]
+    fn bank_snapshot_normalizes_text_fields() {
+        let bank = WorkspaceBank {
+            name: "prod pods".into(),
+            context: Some(" prod ".into()),
+            namespace: " payments ".into(),
+            view: AppView::Pods,
+            hotkey: Some("alt+1".into()),
+            search_query: Some(" checkout ".into()),
+        };
+
+        let snapshot = bank.to_snapshot();
+
+        assert_eq!(snapshot.context.as_deref(), Some("prod"));
+        assert_eq!(snapshot.namespace, "payments");
+        assert_eq!(snapshot.search_query.as_deref(), Some("checkout"));
     }
 
     #[test]

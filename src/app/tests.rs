@@ -6963,6 +6963,48 @@ fn apply_workspace_snapshot_reopens_active_group() {
 }
 
 #[test]
+fn apply_workspace_snapshot_normalizes_text_fields() {
+    let mut app = AppState::default();
+    let snapshot = WorkspaceSnapshot {
+        context: Some(" prod ".into()),
+        namespace: " payments ".into(),
+        view: AppView::Pods,
+        search_query: Some(" checkout ".into()),
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    assert_eq!(app.get_namespace(), "payments");
+    assert_eq!(app.search_query(), "checkout");
+}
+
+#[test]
+fn apply_workspace_snapshot_falls_back_for_blank_text_fields() {
+    let mut app = AppState::default();
+    let snapshot = WorkspaceSnapshot {
+        context: Some("  ".into()),
+        namespace: "  ".into(),
+        view: AppView::Pods,
+        search_query: Some("  ".into()),
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    assert_eq!(app.get_namespace(), "all");
+    assert!(app.search_query().is_empty());
+}
+
+#[test]
 fn apply_workspace_snapshot_clears_selection_search_status() {
     let mut app = AppState {
         search_query: "stale".to_string(),
