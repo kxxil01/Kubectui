@@ -4,6 +4,8 @@ use std::{fs::OpenOptions, io::Write, path::PathBuf};
 
 use crate::time::format_local;
 
+const MAX_FILENAME_SEGMENT_BYTES: usize = 96;
+
 /// Writes `content` to a text file and returns the path.
 ///
 /// Default location: `$TMPDIR/kubectui-{kind}-{label}-{timestamp}.log`
@@ -49,16 +51,19 @@ pub fn save_logs_to_file(label: &str, content: &str) -> std::io::Result<PathBuf>
 }
 
 fn sanitize_filename_segment(value: &str) -> String {
-    let safe_label: String = value
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
+    let mut safe_label = String::new();
+    for c in value.chars() {
+        let safe = if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            c
+        } else {
+            '_'
+        };
+        if safe_label.len() + safe.len_utf8() > MAX_FILENAME_SEGMENT_BYTES {
+            break;
+        }
+        safe_label.push(safe);
+    }
+
     if safe_label.is_empty() {
         "output".to_string()
     } else {
@@ -120,5 +125,22 @@ mod tests {
 
         std::fs::remove_file(first).ok();
         std::fs::remove_file(second).ok();
+    }
+
+    #[test]
+    fn long_labels_are_capped_to_filesystem_safe_names() {
+        let long_kind = "k".repeat(200);
+        let long_label = "ns/".to_string() + &"pod".repeat(120) + ":container";
+        let path =
+            save_text_to_file_with_timestamp(&long_kind, &long_label, "data", "20260506-120000")
+                .unwrap();
+        let filename = path.file_name().unwrap().to_str().unwrap();
+
+        assert!(filename.len() <= 255, "{filename}");
+        assert!(filename.starts_with("kubectui-"));
+        assert!(!filename.contains('/'));
+        assert!(!filename.contains(':'));
+
+        std::fs::remove_file(path).ok();
     }
 }
