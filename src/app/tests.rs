@@ -1424,6 +1424,92 @@ fn relations_workbench_tab_escape_returns_from_workbench() {
 }
 
 #[test]
+fn workbench_tree_navigation_clamps_stale_cursors() {
+    use crate::k8s::relationships::{RelationKind, RelationNode};
+    use crate::workbench::{
+        ConnectivityTabFocus, ConnectivityTabState, NetworkPolicyTabState, RelationsTabState,
+        TrafficDebugTabState, WorkbenchTabState,
+    };
+
+    fn node(name: &str) -> RelationNode {
+        RelationNode {
+            resource: Some(ResourceRef::Pod(name.into(), "prod".into())),
+            label: name.into(),
+            status: None,
+            namespace: Some("prod".into()),
+            relation: RelationKind::Root,
+            not_found: false,
+            children: Vec::new(),
+        }
+    }
+
+    let expected = AppAction::OpenDetail(ResourceRef::Pod("sidecar".into(), "prod".into()));
+
+    let mut app = AppState::default();
+    let mut tab = RelationsTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+    tab.set_tree(vec![node("main"), node("sidecar")]);
+    tab.cursor = 99;
+    app.workbench.open_tab(WorkbenchTabState::Relations(tab));
+    app.focus = Focus::Workbench;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    let WorkbenchTabState::Relations(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected relations tab");
+    };
+    assert_eq!(tab.cursor, 1);
+
+    let mut app = AppState::default();
+    let mut tab = NetworkPolicyTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+    tab.tree = vec![node("main"), node("sidecar")];
+    tab.cursor = 99;
+    app.workbench
+        .open_tab(WorkbenchTabState::NetworkPolicy(tab));
+    app.focus = Focus::Workbench;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    let WorkbenchTabState::NetworkPolicy(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected network policy tab");
+    };
+    assert_eq!(tab.cursor, 0);
+
+    let mut app = AppState::default();
+    let mut tab = TrafficDebugTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+    tab.tree = vec![node("main"), node("sidecar")];
+    tab.cursor = 99;
+    app.workbench.open_tab(WorkbenchTabState::TrafficDebug(tab));
+    app.focus = Focus::Workbench;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        expected
+    );
+    let WorkbenchTabState::TrafficDebug(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected traffic debug tab");
+    };
+    assert_eq!(tab.cursor, 1);
+
+    let mut app = AppState::default();
+    let mut tab =
+        ConnectivityTabState::new(ResourceRef::Pod("api".into(), "prod".into()), Vec::new());
+    tab.focus = ConnectivityTabFocus::Result;
+    tab.tree = vec![node("main"), node("sidecar")];
+    tab.tree_cursor = 99;
+    app.workbench.open_tab(WorkbenchTabState::Connectivity(tab));
+    app.focus = Focus::Workbench;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::OpenDetail(ResourceRef::Pod("sidecar".into(), "prod".into()))
+    );
+    let WorkbenchTabState::Connectivity(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected connectivity tab");
+    };
+    assert_eq!(tab.tree_cursor, 1);
+}
+
+#[test]
 fn ctrl_alt_workbench_control_shortcuts_do_not_fire() {
     use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
 

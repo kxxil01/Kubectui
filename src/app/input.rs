@@ -41,6 +41,28 @@ fn apply_ctrl_scroll_to_offset(scroll: &mut usize, action: CtrlScrollAction) {
     }
 }
 
+fn clamp_tree_cursor(cursor: &mut usize, len: usize) {
+    if len == 0 {
+        *cursor = 0;
+    } else {
+        *cursor = (*cursor).min(len.saturating_sub(1));
+    }
+}
+
+fn select_next_tree_cursor(cursor: &mut usize, len: usize) {
+    if len == 0 {
+        *cursor = 0;
+    } else {
+        clamp_tree_cursor(cursor, len);
+        *cursor = (*cursor + 1).min(len.saturating_sub(1));
+    }
+}
+
+fn select_previous_tree_cursor(cursor: &mut usize, len: usize) {
+    clamp_tree_cursor(cursor, len);
+    *cursor = (*cursor).saturating_sub(1);
+}
+
 fn workbench_ctrl_scroll_action(key: KeyEvent) -> Option<CtrlScrollAction> {
     match key.code {
         KeyCode::PageDown | KeyCode::PageUp => None,
@@ -1548,13 +1570,12 @@ impl AppState {
             WorkbenchTabState::Relations(tab) => match key.code {
                 KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                    if !flat.is_empty() {
-                        tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
-                    }
+                    select_next_tree_cursor(&mut tab.cursor, flat.len());
                     AppAction::None
                 }
                 KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
-                    tab.cursor = tab.cursor.saturating_sub(1);
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    select_previous_tree_cursor(&mut tab.cursor, flat.len());
                     AppAction::None
                 }
                 KeyCode::Char('g') if plain_shortcut(key) => {
@@ -1568,6 +1589,7 @@ impl AppState {
                 }
                 KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor)
                         && node.has_children
                         && !node.expanded
@@ -1581,6 +1603,7 @@ impl AppState {
                 }
                 KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
                             tab.expanded.remove(&node.tree_index);
@@ -1600,6 +1623,7 @@ impl AppState {
                 }
                 KeyCode::Enter if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor)
                         && let Some(resource) = &node.resource
                         && !node.not_found
@@ -1615,13 +1639,12 @@ impl AppState {
             WorkbenchTabState::NetworkPolicy(tab) => match key.code {
                 KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                    if !flat.is_empty() {
-                        tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
-                    }
+                    select_next_tree_cursor(&mut tab.cursor, flat.len());
                     AppAction::None
                 }
                 KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
-                    tab.cursor = tab.cursor.saturating_sub(1);
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    select_previous_tree_cursor(&mut tab.cursor, flat.len());
                     AppAction::None
                 }
                 KeyCode::Char('g') if plain_shortcut(key) => {
@@ -1635,6 +1658,7 @@ impl AppState {
                 }
                 KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor)
                         && node.has_children
                         && !node.expanded
@@ -1649,6 +1673,7 @@ impl AppState {
                 }
                 KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
                             tab.expanded.remove(&node.tree_index);
@@ -1669,6 +1694,7 @@ impl AppState {
                 }
                 KeyCode::Enter if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor)
                         && let Some(resource) = &node.resource
                         && !node.not_found
@@ -1684,13 +1710,12 @@ impl AppState {
             WorkbenchTabState::TrafficDebug(tab) => match key.code {
                 KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                    if !flat.is_empty() {
-                        tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
-                    }
+                    select_next_tree_cursor(&mut tab.cursor, flat.len());
                     AppAction::None
                 }
                 KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
-                    tab.cursor = tab.cursor.saturating_sub(1);
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    select_previous_tree_cursor(&mut tab.cursor, flat.len());
                     AppAction::None
                 }
                 KeyCode::Char('g') if plain_shortcut(key) => {
@@ -1704,6 +1729,7 @@ impl AppState {
                 }
                 KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor)
                         && node.has_children
                         && !node.expanded
@@ -1717,6 +1743,7 @@ impl AppState {
                 }
                 KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
                             tab.expanded.remove(&node.tree_index);
@@ -1736,6 +1763,7 @@ impl AppState {
                 }
                 KeyCode::Enter if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    clamp_tree_cursor(&mut tab.cursor, flat.len());
                     if let Some(node) = flat.get(tab.cursor)
                         && let Some(resource) = &node.resource
                         && !node.not_found
@@ -1851,14 +1879,13 @@ impl AppState {
                     KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                        if !flat.is_empty() {
-                            tab.tree_cursor =
-                                (tab.tree_cursor + 1).min(flat.len().saturating_sub(1));
-                        }
+                        select_next_tree_cursor(&mut tab.tree_cursor, flat.len());
                         AppAction::None
                     }
                     KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
-                        tab.tree_cursor = tab.tree_cursor.saturating_sub(1);
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        select_previous_tree_cursor(&mut tab.tree_cursor, flat.len());
                         AppAction::None
                     }
                     KeyCode::Char('g') if plain_shortcut(key) => {
@@ -1874,6 +1901,7 @@ impl AppState {
                     KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        clamp_tree_cursor(&mut tab.tree_cursor, flat.len());
                         if let Some(node) = flat.get(tab.tree_cursor)
                             && node.has_children
                             && !node.expanded
@@ -1888,6 +1916,7 @@ impl AppState {
                     KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        clamp_tree_cursor(&mut tab.tree_cursor, flat.len());
                         if let Some(node) = flat.get(tab.tree_cursor) {
                             if node.expanded {
                                 tab.expanded.remove(&node.tree_index);
@@ -1910,6 +1939,7 @@ impl AppState {
                     KeyCode::Enter if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        clamp_tree_cursor(&mut tab.tree_cursor, flat.len());
                         if let Some(node) = flat.get(tab.tree_cursor)
                             && let Some(resource) = &node.resource
                             && !node.not_found
