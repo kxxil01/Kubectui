@@ -746,11 +746,9 @@ fn map_aliases(labels: &BTreeMap<String, String>) -> Vec<String> {
     labels
         .iter()
         .flat_map(|(key, value)| {
-            [
-                key.to_ascii_lowercase(),
-                format!("{key}={value}").to_ascii_lowercase(),
-                value.to_ascii_lowercase(),
-            ]
+            let key = key.to_ascii_lowercase();
+            let value = value.to_ascii_lowercase();
+            [key.clone(), format!("{key}={value}"), value]
         })
         .collect()
 }
@@ -759,11 +757,9 @@ fn pair_aliases(labels: &[(String, String)]) -> Vec<String> {
     labels
         .iter()
         .flat_map(|(key, value)| {
-            [
-                key.to_ascii_lowercase(),
-                format!("{key}={value}").to_ascii_lowercase(),
-                value.to_ascii_lowercase(),
-            ]
+            let key = key.to_ascii_lowercase();
+            let value = value.to_ascii_lowercase();
+            [key.clone(), format!("{key}={value}"), value]
         })
         .collect()
 }
@@ -772,11 +768,9 @@ fn labels_from_pairs<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) ->
     pairs
         .into_iter()
         .flat_map(|(key, value)| {
-            [
-                key.to_ascii_lowercase(),
-                value.to_ascii_lowercase(),
-                format!("{key}={value}").to_ascii_lowercase(),
-            ]
+            let key = key.to_ascii_lowercase();
+            let value = value.to_ascii_lowercase();
+            [key.clone(), value.clone(), format!("{key}={value}")]
         })
         .collect()
 }
