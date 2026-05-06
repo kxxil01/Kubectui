@@ -2265,6 +2265,47 @@ fn workload_logs_filter_ignores_alt_modified_chars() {
 }
 
 #[test]
+fn workload_logs_filter_caps_at_input_limit() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state else {
+        panic!("expected workload logs tab");
+    };
+    logs_tab.editing_text_filter = true;
+
+    for _ in 0..(crate::app::input::MAX_LOG_SEARCH_INPUT_CHARS + 10) {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('e'))),
+            AppAction::None
+        );
+    }
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(
+        logs_tab.filter_input.chars().count(),
+        crate::app::input::MAX_LOG_SEARCH_INPUT_CHARS
+    );
+    assert_eq!(
+        logs_tab.filter_input_cursor,
+        crate::app::input::MAX_LOG_SEARCH_INPUT_CHARS
+    );
+}
+
+#[test]
 fn pod_logs_search_supports_cursor_editing() {
     let mut app = AppState::default();
     app.workbench

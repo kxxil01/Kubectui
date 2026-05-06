@@ -1223,7 +1223,11 @@ impl AppState {
                             );
                             AppAction::None
                         }
-                        KeyCode::Char(c) if plain_shortcut(key) => {
+                        KeyCode::Char(c)
+                            if plain_shortcut(key)
+                                && tab.filter_input.chars().count()
+                                    < MAX_LOG_SEARCH_INPUT_CHARS =>
+                        {
                             insert_char_at_cursor(
                                 &mut tab.filter_input,
                                 &mut tab.filter_input_cursor,
