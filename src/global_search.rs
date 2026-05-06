@@ -662,9 +662,10 @@ fn push_flux_entry(
     let kind = resource.kind().to_string();
     let name = resource.name().to_string();
     let namespace = resource.namespace().map(str::to_string);
-    let mut aliases = base_aliases(&resource, view);
-    if let Some(namespace) = namespace.as_deref() {
-        aliases.push(format!("{kind} {namespace}/{name}").to_ascii_lowercase());
+    let (mut aliases, kind_lower, name_lower, namespace_lower) =
+        normalized_base_aliases(resource.kind(), resource.name(), resource.namespace(), view);
+    if let Some(namespace_lower) = namespace_lower.as_deref() {
+        aliases.push(format!("{kind_lower} {namespace_lower}/{name_lower}"));
     }
     let subtitle = match namespace {
         Some(namespace) => format!("{kind} · {namespace}"),
@@ -723,8 +724,15 @@ fn push_namespaced_entry(
 }
 
 fn base_aliases(resource: &ResourceRef, view: AppView) -> Vec<String> {
-    let kind = resource.kind();
-    let name = resource.name();
+    normalized_base_aliases(resource.kind(), resource.name(), resource.namespace(), view).0
+}
+
+fn normalized_base_aliases(
+    kind: &str,
+    name: &str,
+    namespace: Option<&str>,
+    view: AppView,
+) -> (Vec<String>, String, String, Option<String>) {
     let kind_lower = kind.to_ascii_lowercase();
     let name_lower = name.to_ascii_lowercase();
     let mut aliases = vec![
@@ -733,13 +741,13 @@ fn base_aliases(resource: &ResourceRef, view: AppView) -> Vec<String> {
         view.label().to_ascii_lowercase(),
         format!("{kind_lower} {name_lower}"),
     ];
-    if let Some(namespace) = resource.namespace() {
-        let namespace_lower = namespace.to_ascii_lowercase();
-        aliases.push(namespace_lower.clone());
+    let namespace_lower = namespace.map(str::to_ascii_lowercase);
+    if let Some(namespace_lower) = namespace_lower.as_deref() {
+        aliases.push(namespace_lower.to_string());
         aliases.push(format!("{namespace_lower}/{name_lower}"));
         aliases.push(format!("{kind_lower} {namespace_lower}"));
     }
-    aliases
+    (aliases, kind_lower, name_lower, namespace_lower)
 }
 
 fn map_aliases(labels: &BTreeMap<String, String>) -> Vec<String> {
