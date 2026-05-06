@@ -66,11 +66,14 @@ fn handle_cli_args(args: &[String]) -> Result<bool> {
             "--theme" => {
                 let name = next_option_value(&mut args, "--theme")?;
                 let idx = match name.to_lowercase().as_str() {
+                    "dark" => 0,
                     "nord" => 1,
                     "dracula" => 2,
                     "catppuccin" | "mocha" => 3,
                     "light" => 4,
-                    _ => 0,
+                    _ => anyhow::bail!(
+                        "unknown theme '{name}' (expected dark, nord, dracula, catppuccin, or light)"
+                    ),
                 };
                 kubectui::ui::theme::set_active_theme(idx);
             }
@@ -155,5 +158,12 @@ mod tests {
         let err = handle_cli_args(&args(&["kubectui", "manifest.yaml"]))
             .expect_err("unexpected positional");
         assert!(err.to_string().contains("unexpected positional"));
+    }
+
+    #[test]
+    fn cli_rejects_unknown_theme_before_terminal_startup() {
+        let err =
+            handle_cli_args(&args(&["kubectui", "--theme", "solarized"])).expect_err("bad theme");
+        assert!(err.to_string().contains("unknown theme"));
     }
 }
