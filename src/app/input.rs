@@ -1989,8 +1989,8 @@ impl AppState {
     /// | `Esc` | detail view open | Close detail view |
     /// | `Esc` | `focus == Content` | Return focus to sidebar |
     /// | `Esc` | — | Enter quit confirmation |
-    /// | `Tab` | — | Next view in [`AppView::ORDER`], sync sidebar cursor |
-    /// | `Shift+Tab` | — | Previous view in [`AppView::ORDER`], sync sidebar cursor |
+    /// | `Tab` | — | Next view in the canonical app-view order, sync sidebar cursor |
+    /// | `Shift+Tab` | — | Previous view in the canonical app-view order, sync sidebar cursor |
     /// | `j` / `↓` | no detail, `focus == Sidebar` | Move sidebar cursor down |
     /// | `j` / `↓` | no detail, `focus == Content` | Move content selection down |
     /// | `k` / `↑` | no detail, `focus == Sidebar` | Move sidebar cursor up |
