@@ -95,8 +95,8 @@ impl NodeDebugDialogState {
     }
 
     pub fn selected_namespace(&self) -> &str {
-        self.available_namespaces
-            .get(self.namespace_index)
+        self.clamped_namespace_index()
+            .and_then(|index| self.available_namespaces.get(index))
             .map(String::as_str)
             .unwrap_or("default")
     }
@@ -304,11 +304,19 @@ impl NodeDebugDialogState {
             return;
         }
         let len = self.available_namespaces.len();
+        let current = self.clamped_namespace_index().unwrap_or(0);
         self.namespace_index = if forward {
-            (self.namespace_index + 1) % len
+            (current + 1) % len
         } else {
-            self.namespace_index.checked_sub(1).unwrap_or(len - 1)
+            current.checked_sub(1).unwrap_or(len - 1)
         };
+    }
+
+    fn clamped_namespace_index(&self) -> Option<usize> {
+        (!self.available_namespaces.is_empty()).then(|| {
+            self.namespace_index
+                .min(self.available_namespaces.len().saturating_sub(1))
+        })
     }
 
     fn adjust_profile(&mut self, forward: bool) {
@@ -891,6 +899,25 @@ mod tests {
         );
         assert_eq!(state.selected_namespace(), "kube-system");
         assert!(!state.available_namespaces.iter().any(|ns| ns == "default"));
+    }
+
+    #[test]
+    fn namespace_selection_clamps_stale_index() {
+        let mut state = NodeDebugDialogState::new(
+            "node-0",
+            "default",
+            vec!["default".to_string(), "ops".to_string()],
+        );
+        state.namespace_index = 99;
+
+        assert_eq!(state.selected_namespace(), "ops");
+
+        state.adjust_namespace(false);
+        assert_eq!(state.namespace_index, 0);
+
+        state.namespace_index = 99;
+        state.adjust_namespace(true);
+        assert_eq!(state.namespace_index, 0);
     }
 
     #[test]
