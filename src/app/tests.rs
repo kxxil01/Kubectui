@@ -1,6 +1,6 @@
 use super::*;
 use crate::cronjob::CronJobHistoryEntry;
-use crate::k8s::dtos::PodInfo;
+use crate::k8s::dtos::{CustomResourceInfo, PodInfo};
 use crate::k8s::rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::{
@@ -1299,6 +1299,40 @@ fn content_selected_resource_shortcuts_ignore_non_resource_views() {
         )),
         AppAction::CopyResourceName
     );
+}
+
+#[test]
+fn extension_instance_navigation_clamps_stale_cursor() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Extensions,
+        extension_in_instances: true,
+        extension_instances: vec![
+            CustomResourceInfo {
+                name: "alpha".into(),
+                ..CustomResourceInfo::default()
+            },
+            CustomResourceInfo {
+                name: "beta".into(),
+                ..CustomResourceInfo::default()
+            },
+        ],
+        extension_instance_cursor: usize::MAX,
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    assert_eq!(app.extension_instance_cursor, 0);
+
+    app.extension_instance_cursor = usize::MAX;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    assert_eq!(app.extension_instance_cursor, 0);
 }
 
 #[test]

@@ -2850,8 +2850,11 @@ impl AppState {
                         if self.view == AppView::Extensions && self.extension_in_instances =>
                     {
                         if !self.extension_instances.is_empty() {
-                            self.extension_instance_cursor = (self.extension_instance_cursor + 1)
-                                % self.extension_instances.len();
+                            let current = self
+                                .extension_instance_cursor
+                                .min(self.extension_instances.len().saturating_sub(1));
+                            self.extension_instance_cursor =
+                                (current + 1) % self.extension_instances.len();
                         }
                     }
                     Focus::Content => self.select_next(),
@@ -2868,11 +2871,13 @@ impl AppState {
                         if self.view == AppView::Extensions && self.extension_in_instances =>
                     {
                         if !self.extension_instances.is_empty() {
-                            self.extension_instance_cursor = if self.extension_instance_cursor == 0
-                            {
+                            let current = self
+                                .extension_instance_cursor
+                                .min(self.extension_instances.len().saturating_sub(1));
+                            self.extension_instance_cursor = if current == 0 {
                                 self.extension_instances.len() - 1
                             } else {
-                                self.extension_instance_cursor - 1
+                                current - 1
                             };
                         }
                     }
