@@ -78,8 +78,9 @@ pub fn load_config_from_path(path: &Path) -> AppState {
     if let Ok(content) = fs::read_to_string(path)
         && let Ok(cfg) = serde_json::from_str::<AppConfig>(&content)
     {
-        if !cfg.namespace.trim().is_empty() {
-            app.set_namespace(cfg.namespace);
+        let namespace = cfg.namespace.trim();
+        if !namespace.is_empty() {
+            app.set_namespace(namespace.to_string());
         }
         if let Some(icon_mode) = &cfg.icon_mode {
             crate::icons::set_icon_mode(crate::icons::parse_icon_mode(icon_mode));
@@ -305,6 +306,20 @@ mod tests {
                 "kitty kubectl {context_arg} exec -it -n {namespace} {pod} -c {container} -- {shell}"
             )
         );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_config_trims_namespace() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-namespace-config-{}.json",
+            std::process::id()
+        ));
+        fs::write(&path, r#"{"namespace":" prod "}"#).expect("write config");
+
+        let app = load_config_from_path(&path);
+        assert_eq!(app.get_namespace(), "prod");
 
         let _ = fs::remove_file(path);
     }
