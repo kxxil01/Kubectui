@@ -535,23 +535,28 @@ fn stringify_ai_field(value: Value) -> String {
         Value::Array(items) => items
             .into_iter()
             .map(stringify_ai_field)
-            .filter(|value| !value.trim().is_empty())
+            .filter_map(normalize_nested_ai_text)
             .collect::<Vec<_>>()
             .join("; "),
         Value::Object(object) => object
             .into_iter()
             .map(|(key, value)| {
-                let value = stringify_ai_field(value);
-                if value.trim().is_empty() {
-                    key
-                } else {
+                let value = normalize_nested_ai_text(stringify_ai_field(value));
+                if let Some(value) = value {
                     format!("{key}: {value}")
+                } else {
+                    key
                 }
             })
             .collect::<Vec<_>>()
             .join("; "),
         Value::Null => String::new(),
     }
+}
+
+fn normalize_nested_ai_text(value: String) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 #[cold]
@@ -938,6 +943,31 @@ trailing note {also ignored}"#,
             vec!["action: inspect postgres service; command: kubectl get svc"]
         );
         assert_eq!(parsed.uncertainty, vec!["reason: logs truncated"]);
+    }
+
+    #[test]
+    fn parse_structured_response_trims_nested_cli_values() {
+        let parsed = parse_structured_response(
+            r#"{
+                "summary": ["  ok  ", "  ready  "],
+                "likely_causes": [
+                    {"cause": "  database unavailable  ", "evidence": ["  connection refused  ", "  backoff  "]}
+                ],
+                "next_steps": [["  inspect postgres service  ", "  check endpoints  "]],
+                "uncertainty": []
+            }"#,
+        )
+        .expect("nested provider output normalizes");
+
+        assert_eq!(parsed.summary, "ok; ready");
+        assert_eq!(
+            parsed.likely_causes,
+            vec!["cause: database unavailable; evidence: connection refused; backoff"]
+        );
+        assert_eq!(
+            parsed.next_steps,
+            vec!["inspect postgres service; check endpoints"]
+        );
     }
 
     #[test]
