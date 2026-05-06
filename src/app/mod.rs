@@ -153,6 +153,7 @@ pub enum AppAction {
     ConfirmRolloutUndo,
     ExecuteRolloutUndo,
     EditYaml,
+    ConfirmDeleteResource,
     DeleteResource,
     ForceDeleteResource,
     TriggerCronJob,

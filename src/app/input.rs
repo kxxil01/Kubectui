@@ -2598,10 +2598,8 @@ impl AppState {
                     .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
                     && plain_shortcut(key) =>
             {
-                // Toggle delete confirmation prompt
-                if let Some(detail) = &mut self.detail_view {
-                    detail.confirm_delete = true;
-                }
+                // Open delete confirmation prompt
+                self.open_delete_confirmation();
                 AppAction::None
             }
             KeyCode::Enter
