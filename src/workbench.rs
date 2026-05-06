@@ -3066,6 +3066,7 @@ impl WorkbenchState {
     /// stale after a context or namespace switch.  ActionHistory and PortForward
     /// are retained since they are not resource-scoped.
     pub fn close_resource_tabs(&mut self) {
+        let active_id = self.active_tab().map(|tab| tab.id);
         self.tabs.retain(|tab| {
             matches!(
                 tab.state.kind(),
@@ -3077,7 +3078,9 @@ impl WorkbenchState {
             self.maximized = false;
             self.active_tab = 0;
         } else {
-            self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
+            self.active_tab = active_id
+                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
+                .unwrap_or_else(|| self.active_tab.min(self.tabs.len().saturating_sub(1)));
         }
     }
 
@@ -4204,6 +4207,30 @@ mod tests {
         assert!(!state.has_tab(&WorkbenchTabKey::PortForward));
         assert_eq!(state.tabs.len(), 1);
         assert!(state.maximized);
+    }
+
+    #[test]
+    fn close_resource_tabs_preserves_active_retained_tab_identity() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
+            pod("pod-0"),
+        )));
+        state.open_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+        state.open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
+            None,
+            PortForwardDialog::new(),
+        )));
+        state.active_tab = 1;
+
+        state.close_resource_tabs();
+
+        assert_eq!(state.tabs.len(), 2);
+        assert!(matches!(
+            state.active_tab().map(|tab| &tab.state),
+            Some(WorkbenchTabState::ActionHistory(_))
+        ));
     }
 
     #[test]
