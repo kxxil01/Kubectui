@@ -78,15 +78,12 @@ pub fn toggle_bookmark(
     }
 
     bookmarks.insert(0, BookmarkEntry::new(resource));
-    bookmarks.sort_unstable_by(|left, right| {
-        right
-            .bookmarked_at_unix
-            .cmp(&left.bookmarked_at_unix)
-            .then_with(|| left.resource.kind().cmp(right.resource.kind()))
-            .then_with(|| left.resource.name().cmp(right.resource.name()))
-            .then_with(|| left.resource.namespace().cmp(&right.resource.namespace()))
-    });
+    sort_bookmarks_by_recency(bookmarks);
     Ok(BookmarkToggleResult::Added)
+}
+
+fn sort_bookmarks_by_recency(bookmarks: &mut [BookmarkEntry]) {
+    bookmarks.sort_by_key(|bookmark| std::cmp::Reverse(bookmark.bookmarked_at_unix));
 }
 
 pub fn resource_exists(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> bool {
@@ -594,6 +591,34 @@ mod tests {
         assert_eq!(filtered_bookmark_indices(&bookmarks, "secret"), vec![0]);
         assert_eq!(filtered_bookmark_indices(&bookmarks, "app"), vec![0]);
         assert_eq!(filtered_bookmark_indices(&bookmarks, "prod"), vec![0]);
+    }
+
+    #[test]
+    fn sort_bookmarks_by_recency_keeps_same_second_insertion_order() {
+        let mut bookmarks = vec![
+            BookmarkEntry {
+                resource: ResourceRef::Service("zeta".to_string(), "default".to_string()),
+                bookmarked_at_unix: 10,
+            },
+            BookmarkEntry {
+                resource: ResourceRef::Pod("alpha".to_string(), "default".to_string()),
+                bookmarked_at_unix: 10,
+            },
+            BookmarkEntry {
+                resource: ResourceRef::Deployment("api".to_string(), "default".to_string()),
+                bookmarked_at_unix: 9,
+            },
+        ];
+
+        sort_bookmarks_by_recency(&mut bookmarks);
+
+        assert_eq!(
+            bookmarks
+                .iter()
+                .map(|bookmark| bookmark.resource.name())
+                .collect::<Vec<_>>(),
+            vec!["zeta", "alpha", "api"]
+        );
     }
 
     #[test]
