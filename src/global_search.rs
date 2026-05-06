@@ -710,16 +710,21 @@ fn push_namespaced_entry(
 }
 
 fn base_aliases(resource: &ResourceRef, view: AppView) -> Vec<String> {
+    let kind = resource.kind();
+    let name = resource.name();
+    let kind_lower = kind.to_ascii_lowercase();
+    let name_lower = name.to_ascii_lowercase();
     let mut aliases = vec![
-        resource.kind().to_ascii_lowercase(),
-        resource.name().to_ascii_lowercase(),
+        kind_lower.clone(),
+        name_lower.clone(),
         view.label().to_ascii_lowercase(),
-        format!("{} {}", resource.kind(), resource.name()).to_ascii_lowercase(),
+        format!("{kind_lower} {name_lower}"),
     ];
     if let Some(namespace) = resource.namespace() {
-        aliases.push(namespace.to_ascii_lowercase());
-        aliases.push(format!("{namespace}/{}", resource.name()).to_ascii_lowercase());
-        aliases.push(format!("{} {namespace}", resource.kind()).to_ascii_lowercase());
+        let namespace_lower = namespace.to_ascii_lowercase();
+        aliases.push(namespace_lower.clone());
+        aliases.push(format!("{namespace_lower}/{name_lower}"));
+        aliases.push(format!("{kind_lower} {namespace_lower}"));
     }
     aliases
 }
