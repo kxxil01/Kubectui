@@ -17,8 +17,9 @@ use super::{
     selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
     should_animate_loading_spinner, should_include_flux_in_auto_refresh,
     should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
-    should_request_periodic_redraw, strip_active_watch_scope_from_refresh, ui_staleness_visible,
-    watch_scope_for_view, workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
+    should_request_periodic_redraw, stop_port_forward_sessions,
+    strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
+    workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
 use crate::ai::{AiAnalysisContext, AiAnalysisResult};
 use crate::async_types::{
@@ -1118,6 +1119,61 @@ fn clear_port_forward_registries_clears_workbench_dialog_copy() {
 
     clear_port_forward_registries(&mut app);
 
+    assert!(app.tunnel_registry.is_empty());
+    let tab = app
+        .workbench()
+        .tabs
+        .iter()
+        .find(|tab| tab.state.key() == kubectui::workbench::WorkbenchTabKey::PortForward)
+        .expect("port-forward tab remains open");
+    let WorkbenchTabState::PortForward(port_tab) = &tab.state else {
+        panic!("expected port-forward tab");
+    };
+    assert!(port_tab.dialog.registry.is_empty());
+}
+
+#[tokio::test]
+async fn stop_port_forward_sessions_clears_service_registry_and_workbench_copy() {
+    use kubectui::{
+        k8s::portforward::{
+            PortForwardConfig, PortForwardTarget, PortForwardTunnelInfo, PortForwarderService,
+            TunnelState,
+        },
+        state::port_forward::TunnelRegistry,
+        ui::components::port_forward_dialog::{PortForwardDialog, PortForwardMode},
+    };
+    use std::{
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        sync::Arc,
+    };
+
+    let service = PortForwarderService::new(Arc::new(kubectui::k8s::client::K8sClient::dummy()));
+    let target = PortForwardTarget::new("default", "api", 8080);
+    service
+        .start_forward(target.clone(), PortForwardConfig::default())
+        .await
+        .expect("seed active tunnel");
+
+    let tunnel = PortForwardTunnelInfo {
+        id: target.id(),
+        target,
+        local_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 18080)),
+        state: TunnelState::Active,
+    };
+    let mut registry = TunnelRegistry::new();
+    registry.add_tunnel(tunnel.clone());
+
+    let mut dialog = PortForwardDialog::new();
+    dialog.mode = PortForwardMode::List;
+    dialog.update_registry(registry);
+
+    let mut app = AppState::default();
+    app.tunnel_registry.add_tunnel(tunnel);
+    app.open_port_forward_tab(None, dialog);
+
+    stop_port_forward_sessions(&mut app, &service).await;
+
+    assert!(service.list_tunnels().is_empty());
     assert!(app.tunnel_registry.is_empty());
     let tab = app
         .workbench()

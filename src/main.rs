@@ -437,6 +437,14 @@ fn clear_port_forward_registries(app: &mut kubectui::app::AppState) {
     }
 }
 
+async fn stop_port_forward_sessions(
+    app: &mut kubectui::app::AppState,
+    port_forwarder: &PortForwarderService,
+) {
+    port_forwarder.stop_all().await;
+    clear_port_forward_registries(app);
+}
+
 fn current_exec_terminal_size() -> ExecTerminalSize {
     let (width, height) = crossterm::terminal::size().unwrap_or((120, 40));
     ExecTerminalSize::from_terminal_resize(width, height)
@@ -6299,7 +6307,6 @@ pub(crate) async fn run_app_inner(
                 }
                 AppAction::SelectNamespace(namespace) => {
                     let selected_namespace = namespace.clone();
-                    let workspace_restore_pending = app.pending_workspace_restore.is_some();
                     app.set_namespace(namespace);
                     pending_flux_reconcile_verifications.clear();
                     app.selected_idx = 0;
@@ -6335,10 +6342,7 @@ pub(crate) async fn run_app_inner(
                                 .await;
                         }
                     }
-                    if workspace_restore_pending {
-                        port_forwarder.stop_all().await;
-                        clear_port_forward_registries(&mut app);
-                    }
+                    stop_port_forward_sessions(&mut app, &port_forwarder).await;
                     status_message_clear_at = None;
                     app.clear_status();
                     // Drop old namespace data immediately to prevent inconsistent mixed views.
