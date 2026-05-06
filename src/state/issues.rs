@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::app::ResourceRef;
-use crate::k8s::dtos::AlertSeverity;
+use crate::k8s::dtos::{AlertSeverity, PodInfo, ServiceInfo};
 use crate::k8s::selectors::{selector_is_empty, selector_matches_map};
 use crate::state::vulnerabilities::compute_vulnerability_findings;
 use crate::state::{ClusterSnapshot, RefreshScope};
@@ -944,19 +944,11 @@ fn detect_service_port_mismatches(snapshot: &ClusterSnapshot, issues: &mut Vec<C
             continue;
         }
 
-        let matching_pods = snapshot
+        if !snapshot
             .pods
             .iter()
-            .filter(|pod| {
-                pod.namespace == service.namespace
-                    && service.selector.iter().all(|(key, expected)| {
-                        pod.labels.iter().any(|(label_key, label_value)| {
-                            label_key == key && label_value == expected
-                        })
-                    })
-            })
-            .collect::<Vec<_>>();
-        if matching_pods.is_empty() {
+            .any(|pod| service_matches_pod_selector(service, pod))
+        {
             continue;
         }
 
@@ -965,18 +957,22 @@ fn detect_service_port_mismatches(snapshot: &ClusterSnapshot, issues: &mut Vec<C
             .iter()
             .filter(|port| {
                 let protocol = port.protocol.as_str();
-                matching_pods.iter().all(|pod| {
-                    pod.container_ports.iter().all(|container_port| {
-                        if container_port.protocol != protocol {
-                            return true;
-                        }
-                        match (port.target_port_number, port.target_port_name.as_deref()) {
-                            (Some(number), _) => container_port.container_port != number,
-                            (None, Some(name)) => container_port.name.as_deref() != Some(name),
-                            (None, None) => container_port.container_port != port.port,
-                        }
+                snapshot
+                    .pods
+                    .iter()
+                    .filter(|pod| service_matches_pod_selector(service, pod))
+                    .all(|pod| {
+                        pod.container_ports.iter().all(|container_port| {
+                            if container_port.protocol != protocol {
+                                return true;
+                            }
+                            match (port.target_port_number, port.target_port_name.as_deref()) {
+                                (Some(number), _) => container_port.container_port != number,
+                                (None, Some(name)) => container_port.name.as_deref() != Some(name),
+                                (None, None) => container_port.container_port != port.port,
+                            }
+                        })
                     })
-                })
             })
             .map(|port| port.port.to_string())
             .collect::<Vec<_>>();
@@ -999,6 +995,15 @@ fn detect_service_port_mismatches(snapshot: &ClusterSnapshot, issues: &mut Vec<C
             resource_ref: ResourceRef::Service(service.name.clone(), service.namespace.clone()),
         });
     }
+}
+
+fn service_matches_pod_selector(service: &ServiceInfo, pod: &PodInfo) -> bool {
+    pod.namespace == service.namespace
+        && service.selector.iter().all(|(key, expected)| {
+            pod.labels
+                .iter()
+                .any(|(label_key, label_value)| label_key == key && label_value == expected)
+        })
 }
 
 fn detect_unused_config_maps(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
