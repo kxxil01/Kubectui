@@ -20,7 +20,7 @@ use crate::{
         insert_char_at_cursor, move_cursor_end, move_cursor_home, move_cursor_left,
         move_cursor_right,
     },
-    workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
+    workbench::{AccessReviewFocus, ConnectivityTabFocus, MAX_EXEC_INPUT_CHARS, WorkbenchTabState},
 };
 
 pub(crate) const MAX_SEARCH_QUERY_CHARS: usize = 256;
@@ -1525,7 +1525,10 @@ impl AppState {
                             tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::Char(c) if plain_shortcut(key) => {
+                        KeyCode::Char(c)
+                            if plain_shortcut(key)
+                                && tab.input.chars().count() < MAX_EXEC_INPUT_CHARS =>
+                        {
                             insert_char_at_cursor(&mut tab.input, &mut tab.input_cursor, c);
                             AppAction::None
                         }
