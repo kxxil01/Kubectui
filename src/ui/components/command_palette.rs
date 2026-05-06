@@ -196,6 +196,27 @@ pub struct PaletteRunbookAction {
     pub resource: Option<ResourceRef>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PaletteWorkspace {
+    name: String,
+    query_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PaletteWorkspaceBank {
+    name: String,
+    query_name: String,
+    hotkey: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PaletteColumnInfo {
+    id: String,
+    label: String,
+    query_label: String,
+    visible: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ActionEntry {
     pub action: DetailAction,
@@ -1016,13 +1037,12 @@ pub struct CommandPalette {
     activity_entries: Vec<PaletteActivityEntry>,
     resource_entries: Arc<Vec<PaletteResourceEntry>>,
     resource_context: Option<ResourceActionContext>,
-    /// Column toggle info for current view: (id, label, currently_visible).
-    columns_info: Option<Vec<(String, String, bool)>>,
+    columns_info: Option<Vec<PaletteColumnInfo>>,
     extension_actions: Vec<PaletteExtensionAction>,
     ai_actions: Vec<PaletteAiAction>,
     runbooks: Vec<PaletteRunbookAction>,
-    saved_workspaces: Vec<String>,
-    workspace_banks: Vec<(String, Option<String>)>,
+    saved_workspaces: Vec<PaletteWorkspace>,
+    workspace_banks: Vec<PaletteWorkspaceBank>,
 }
 
 impl CommandPalette {
@@ -1124,7 +1144,17 @@ impl CommandPalette {
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
         let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
-        self.columns_info = info;
+        self.columns_info = info.map(|columns| {
+            columns
+                .into_iter()
+                .map(|(id, label, visible)| PaletteColumnInfo {
+                    id,
+                    query_label: label.to_ascii_lowercase(),
+                    label,
+                    visible,
+                })
+                .collect()
+        });
         self.update_loaded_entries(selected_entry);
     }
 
@@ -1185,8 +1215,21 @@ impl CommandPalette {
         workspace_banks: Vec<(String, Option<String>)>,
     ) {
         let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
-        self.saved_workspaces = saved_workspaces;
-        self.workspace_banks = workspace_banks;
+        self.saved_workspaces = saved_workspaces
+            .into_iter()
+            .map(|name| PaletteWorkspace {
+                query_name: name.to_ascii_lowercase(),
+                name,
+            })
+            .collect();
+        self.workspace_banks = workspace_banks
+            .into_iter()
+            .map(|(name, hotkey)| PaletteWorkspaceBank {
+                query_name: name.to_ascii_lowercase(),
+                name,
+                hotkey,
+            })
+            .collect();
         self.update_loaded_entries(selected_entry);
     }
 
@@ -1482,43 +1525,40 @@ impl CommandPalette {
             }
         }
 
-        for name in &self.saved_workspaces {
-            let lower = name.to_ascii_lowercase();
+        for workspace in &self.saved_workspaces {
             if self.query.is_empty()
-                || fuzzy_match(&lower, &q_lower)
+                || fuzzy_match(&workspace.query_name, &q_lower)
                 || fuzzy_match("workspace", &q_lower)
             {
-                result.push(PaletteEntry::Workspace(name.clone()));
+                result.push(PaletteEntry::Workspace(workspace.name.clone()));
             }
         }
 
-        for (name, hotkey) in &self.workspace_banks {
-            let lower = name.to_ascii_lowercase();
+        for bank in &self.workspace_banks {
             if self.query.is_empty()
-                || fuzzy_match(&lower, &q_lower)
+                || fuzzy_match(&bank.query_name, &q_lower)
                 || fuzzy_match("bank", &q_lower)
                 || fuzzy_match("workspace bank", &q_lower)
             {
                 result.push(PaletteEntry::WorkspaceBank {
-                    name: name.clone(),
-                    hotkey: hotkey.clone(),
+                    name: bank.name.clone(),
+                    hotkey: bank.hotkey.clone(),
                 });
             }
         }
 
         // Column toggles (when query matches "columns", "toggle", or a column label)
         if let Some(cols) = &self.columns_info {
-            for (id, label, visible) in cols {
-                let label_lower = label.to_ascii_lowercase();
+            for column in cols {
                 if q_lower.is_empty()
                     || fuzzy_match("columns", &q_lower)
                     || fuzzy_match("toggle", &q_lower)
-                    || fuzzy_match(&label_lower, &q_lower)
+                    || fuzzy_match(&column.query_label, &q_lower)
                 {
                     result.push(PaletteEntry::ColumnToggle {
-                        id: id.clone(),
-                        label: label.clone(),
-                        visible: *visible,
+                        id: column.id.clone(),
+                        label: column.label.clone(),
+                        visible: column.visible,
                     });
                 }
             }
