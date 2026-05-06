@@ -13,6 +13,7 @@ fn default_workbench_height() -> u16 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
@@ -33,12 +34,14 @@ pub struct WorkspaceSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SavedWorkspace {
     pub name: String,
     pub snapshot: WorkspaceSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceBank {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,7 +101,7 @@ fn normalized_required_text(value: &str, fallback: &str) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HotkeyTarget {
     View { view: AppView },
     Action { action: HotkeyAction },
@@ -120,12 +123,14 @@ pub enum HotkeyAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HotkeyBinding {
     pub key: String,
     pub target: HotkeyTarget,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspacePreferences {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub saved: Vec<SavedWorkspace>,
