@@ -145,7 +145,7 @@ impl UpdateCoordinator {
                 cancel_rx,
             ));
             if futures::FutureExt::catch_unwind(fut).await.is_err() {
-                tracing::error!("probe polling task panicked for {key_clone}");
+                log::error!("probe polling task panicked for {key_clone}");
             }
 
             // Clean up the task handle
@@ -211,7 +211,7 @@ impl UpdateCoordinator {
                 cancel_rx,
             ));
             if futures::FutureExt::catch_unwind(fut).await.is_err() {
-                tracing::error!("log streaming task panicked for {key_clone}");
+                log::error!("log streaming task panicked for {key_clone}");
             }
 
             // Clean up the task handle

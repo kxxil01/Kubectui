@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tracing::{info, instrument};
 
 pub use crate::k8s::portforward_errors::PortForwardError;
 
@@ -102,7 +101,6 @@ impl PortForwarderService {
 
     /// Create and start a port forward tunnel asynchronously.
     /// Returns tunnel ID immediately, continues in background.
-    #[instrument(skip(self))]
     pub async fn create_tunnel_async(
         &self,
         target: PortForwardTarget,
@@ -148,9 +146,10 @@ impl PortForwarderService {
         let remote_port_for_task = target.remote_port;
         let task = tokio::spawn(async move {
             // Real port-forward: accept TCP connections and proxy through kube API
-            info!(
+            log::info!(
                 "Tunnel {} accepting connections on {}",
-                id, local_addr_clone
+                id,
+                local_addr_clone
             );
             loop {
                 match listener.accept().await {
@@ -169,12 +168,12 @@ impl PortForwarderService {
                             )
                             .await
                             {
-                                tracing::warn!("port-forward proxy error: {e}");
+                                log::warn!("port-forward proxy error: {e}");
                             }
                         });
                     }
                     Err(e) => {
-                        tracing::warn!("port-forward accept error: {e}");
+                        log::warn!("port-forward accept error: {e}");
                         break;
                     }
                 }
@@ -193,7 +192,6 @@ impl PortForwarderService {
         Ok(tunnel_id)
     }
 
-    #[instrument(skip(self))]
     pub async fn start_forward(
         &self,
         target: PortForwardTarget,
@@ -211,7 +209,7 @@ impl PortForwarderService {
             .with_context(|| format!("Failed to bind to {}", bind_addr))?;
 
         let local_addr = listener.local_addr()?;
-        info!("Port forward listening on {}", local_addr);
+        log::info!("Port forward listening on {}", local_addr);
 
         let tunnel = PortForwardTunnelInfo {
             id: tunnel_id.clone(),
@@ -231,7 +229,7 @@ impl PortForwarderService {
         }
 
         if self.tunnels.remove(tunnel_id).is_some() {
-            info!("Stopped tunnel {}", tunnel_id);
+            log::info!("Stopped tunnel {}", tunnel_id);
         }
         Ok(())
     }
