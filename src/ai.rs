@@ -876,10 +876,13 @@ fn is_sensitive_error_key(key: &str) -> bool {
         || key == "secret"
         || key == "token"
         || key == "api_key"
+        || key == "api-key"
         || key == "apikey"
+        || key == "x-api-key"
         || key.ends_with("_password")
         || key.ends_with("_secret")
         || key.ends_with("_token")
+        || key.ends_with("-api-key")
 }
 
 fn truncate_provider_error(message: &str) -> String {
@@ -1241,13 +1244,27 @@ trailing note {also ignored}"#,
     #[test]
     fn provider_error_sanitizer_redacts_inline_auth_scheme_values() {
         let message = sanitize_provider_error_message(
-            "request failed Authorization:Bearer live-token api_key=Basic second-token",
+            "request failed Authorization:Bearer live-token x-api-key=Basic second-token",
         );
 
         assert!(message.contains("Authorization:<redacted>"), "{message}");
-        assert!(message.contains("api_key=<redacted>"), "{message}");
+        assert!(message.contains("x-api-key=<redacted>"), "{message}");
         assert!(!message.contains("live-token"), "{message}");
         assert!(!message.contains("second-token"), "{message}");
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_header_key_variants() {
+        let message = sanitize_provider_error_message(
+            "bad request x-api-key=sk-live api-key: sk-other service-api-key third-token",
+        );
+
+        assert!(message.contains("x-api-key=<redacted>"), "{message}");
+        assert!(message.contains("api-key: [redacted]"), "{message}");
+        assert!(message.contains("service-api-key [redacted]"), "{message}");
+        assert!(!message.contains("sk-live"), "{message}");
+        assert!(!message.contains("sk-other"), "{message}");
+        assert!(!message.contains("third-token"), "{message}");
     }
 
     #[test]
