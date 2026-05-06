@@ -101,17 +101,19 @@ impl ProbePanelState {
     /// Handle navigation: move to next container.
     pub fn select_next(&mut self) {
         if !self.container_probes.is_empty() {
-            self.selected_index = (self.selected_index + 1) % self.container_probes.len();
+            let current = clamp_probe_selection(self.container_probes.len(), self.selected_index);
+            self.selected_index = (current + 1) % self.container_probes.len();
         }
     }
 
     /// Handle navigation: move to previous container.
     pub fn select_prev(&mut self) {
         if !self.container_probes.is_empty() {
-            self.selected_index = if self.selected_index == 0 {
+            let current = clamp_probe_selection(self.container_probes.len(), self.selected_index);
+            self.selected_index = if current == 0 {
                 self.container_probes.len() - 1
             } else {
-                self.selected_index - 1
+                current - 1
             };
         }
     }
@@ -510,6 +512,23 @@ mod tests {
 
         assert_eq!(state.container_probes[state.selected_index].0, "container2");
         assert_eq!(state.error.as_deref(), Some("fetch failed"));
+    }
+
+    #[test]
+    fn probe_panel_navigation_clamps_stale_selection() {
+        let probes = vec![
+            ("container1".to_string(), ContainerProbes::default()),
+            ("container2".to_string(), ContainerProbes::default()),
+        ];
+        let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        state.selected_index = 99;
+
+        state.select_prev();
+        assert_eq!(state.container_probes[state.selected_index].0, "container1");
+
+        state.selected_index = 99;
+        state.select_next();
+        assert_eq!(state.container_probes[state.selected_index].0, "container1");
     }
 
     #[test]
