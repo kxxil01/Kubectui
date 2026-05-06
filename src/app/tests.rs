@@ -1598,6 +1598,49 @@ fn workbench_local_editor_blocks_global_tab_shortcuts() {
 }
 
 #[test]
+fn pod_logs_picker_navigation_clamps_stale_container_cursor() {
+    use crate::{
+        events::input::apply_action,
+        workbench::{PodLogsTabState, WorkbenchTabState},
+    };
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = PodLogsTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+    tab.viewer.containers = vec!["main".into(), "sidecar".into()];
+    tab.viewer.picking_container = true;
+    tab.viewer.container_cursor = 99;
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::LogsViewerPickerDown);
+    assert!(apply_action(action, &mut app));
+    let WorkbenchTabState::PodLogs(tab) = &mut app.workbench.active_tab_mut().unwrap().state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(tab.viewer.container_cursor, 2);
+
+    tab.viewer.container_cursor = 99;
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::LogsViewerPickerUp);
+    assert!(apply_action(action, &mut app));
+    let WorkbenchTabState::PodLogs(tab) = &mut app.workbench.active_tab_mut().unwrap().state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(tab.viewer.container_cursor, 1);
+
+    tab.viewer.container_cursor = 99;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::LogsViewerSelectContainer("sidecar".into())
+    );
+    let WorkbenchTabState::PodLogs(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(tab.viewer.container_cursor, 2);
+}
+
+#[test]
 fn ai_workbench_tab_supports_scrolling_shortcuts() {
     use crate::workbench::{AiAnalysisTabState, WorkbenchTabState};
 
