@@ -320,15 +320,15 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
         actions.push(LoadedExtensionAction {
             id: id.to_string(),
             title: title.to_string(),
-            description: action.description.filter(|value| !value.trim().is_empty()),
+            description: normalized_optional_text(action.description),
             aliases,
             resource_kinds,
-            shortcut: action.shortcut.filter(|value| !value.trim().is_empty()),
+            shortcut: normalized_optional_text(action.shortcut),
             mode: action.mode,
             command: ExtensionCommandConfig {
                 program: program.to_string(),
                 args: action.command.args,
-                cwd: action.command.cwd.filter(|value| !value.trim().is_empty()),
+                cwd: normalized_optional_text(action.command.cwd),
                 env: action.command.env,
             },
         });
@@ -339,6 +339,12 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
         warnings,
         path,
     }
+}
+
+fn normalized_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn substitute_template(value: &str, context: &ExtensionSubstitutionContext) -> String {
@@ -522,6 +528,41 @@ mod tests {
         assert_eq!(result.registry.actions().len(), 1);
         assert_eq!(result.registry.actions()[0].id, "kubectl_describe");
         assert_eq!(result.registry.actions()[0].badge_label(), "BG");
+    }
+
+    #[test]
+    fn validate_registry_trims_optional_text() {
+        let result = validate_extensions(
+            ExtensionsConfig {
+                actions: vec![ExtensionActionConfig {
+                    id: " describe ".into(),
+                    title: " Describe ".into(),
+                    description: Some("  Describe selected resource  ".into()),
+                    aliases: vec![" Inspect ".into()],
+                    resource_kinds: vec![" Pod ".into()],
+                    shortcut: Some("  Shift+D  ".into()),
+                    mode: ExtensionExecutionMode::Background,
+                    command: ExtensionCommandConfig {
+                        program: " kubectl ".into(),
+                        args: vec!["describe".into()],
+                        cwd: Some("  /tmp/kubectui  ".into()),
+                        env: BTreeMap::new(),
+                    },
+                }],
+            },
+            PathBuf::from("/tmp/extensions.yaml"),
+        );
+
+        let action = &result.registry.actions()[0];
+        assert_eq!(action.id, "describe");
+        assert_eq!(action.title, "Describe");
+        assert_eq!(
+            action.description.as_deref(),
+            Some("Describe selected resource")
+        );
+        assert_eq!(action.shortcut.as_deref(), Some("Shift+D"));
+        assert_eq!(action.command.program, "kubectl");
+        assert_eq!(action.command.cwd.as_deref(), Some("/tmp/kubectui"));
     }
 
     #[test]
