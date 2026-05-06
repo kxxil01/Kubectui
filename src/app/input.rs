@@ -1323,7 +1323,10 @@ impl AppState {
                                     tab.scroll = tab.scroll.saturating_add(1);
                                 }
                             } else {
-                                tab.scroll = (tab.scroll + 1).min(filtered_len.saturating_sub(1));
+                                tab.scroll = tab
+                                    .scroll
+                                    .saturating_add(1)
+                                    .min(filtered_len.saturating_sub(1));
                             }
                             tab.follow_mode = false;
                             AppAction::None
@@ -1366,7 +1369,10 @@ impl AppState {
                                     tab.scroll = tab.scroll.saturating_add(10);
                                 }
                             } else {
-                                tab.scroll = (tab.scroll + 10).min(filtered_len.saturating_sub(1));
+                                tab.scroll = tab
+                                    .scroll
+                                    .saturating_add(10)
+                                    .min(filtered_len.saturating_sub(1));
                             }
                             tab.follow_mode = false;
                             AppAction::None

@@ -6698,6 +6698,57 @@ fn workload_logs_single_filtered_line_allows_row_scroll_offsets() {
 }
 
 #[test]
+fn workload_logs_scroll_down_clamps_stale_bottom_sentinel() {
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = crate::workbench::WorkloadLogsTabState::new(
+        ResourceRef::Deployment("api".into(), "prod".into()),
+        7,
+    );
+    tab.loading = false;
+    tab.follow_mode = false;
+    tab.scroll = usize::MAX;
+    tab.lines = vec![
+        crate::workbench::WorkloadLogLine {
+            pod_name: "api-0".into(),
+            container_name: "main".into(),
+            entry: crate::log_investigation::LogEntry::from_raw("first"),
+            is_stderr: false,
+        },
+        crate::workbench::WorkloadLogLine {
+            pod_name: "api-0".into(),
+            container_name: "main".into(),
+            entry: crate::log_investigation::LogEntry::from_raw("second"),
+            is_stderr: false,
+        },
+    ];
+    app.workbench.open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+        AppAction::None
+    );
+    let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(tab.scroll, 1);
+
+    let WorkbenchTabState::WorkloadLogs(tab) = &mut app.workbench.active_tab_mut().unwrap().state
+    else {
+        panic!("expected workload logs tab");
+    };
+    tab.scroll = usize::MAX;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(tab.scroll, 1);
+}
+
+#[test]
 fn reopen_exec_tab_preserves_selected_container_while_resetting_session() {
     use crate::workbench::{ExecTabState, WorkbenchTabState};
 
