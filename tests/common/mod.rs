@@ -378,72 +378,156 @@ impl ClusterDataSource for MockDataSource {
     }
 
     async fn fetch_endpoints(&self, _namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock endpoints error"));
+        }
         Ok(vec![])
     }
     async fn fetch_ingresses(&self, _namespace: Option<&str>) -> Result<Vec<IngressInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock ingresses error"));
+        }
         Ok(vec![])
     }
     async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock ingressclasses error"));
+        }
         Ok(vec![])
     }
     async fn fetch_gateway_classes(&self) -> Result<Vec<GatewayClassInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock gatewayclasses error"));
+        }
         Ok(vec![])
     }
     async fn fetch_gateways(&self, _namespace: Option<&str>) -> Result<Vec<GatewayInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock gateways error"));
+        }
         Ok(vec![])
     }
     async fn fetch_http_routes(&self, _namespace: Option<&str>) -> Result<Vec<HttpRouteInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock httproutes error"));
+        }
         Ok(vec![])
     }
     async fn fetch_grpc_routes(&self, _namespace: Option<&str>) -> Result<Vec<GrpcRouteInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock grpcroutes error"));
+        }
         Ok(vec![])
     }
     async fn fetch_reference_grants(
         &self,
         _namespace: Option<&str>,
     ) -> Result<Vec<ReferenceGrantInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock referencegrants error"));
+        }
         Ok(vec![])
     }
     async fn fetch_network_policies(
         &self,
         _namespace: Option<&str>,
     ) -> Result<Vec<NetworkPolicyInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock networkpolicies error"));
+        }
         Ok(vec![])
     }
     async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock configmaps error"));
+        }
         Ok(vec![])
     }
     async fn fetch_secrets(&self, _namespace: Option<&str>) -> Result<Vec<SecretInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock secrets error"));
+        }
         Ok(vec![])
     }
     async fn fetch_hpas(&self, _namespace: Option<&str>) -> Result<Vec<HpaInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock hpas error"));
+        }
         Ok(vec![])
     }
     async fn fetch_pvcs(&self, _namespace: Option<&str>) -> Result<Vec<PvcInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock pvcs error"));
+        }
         Ok(vec![])
     }
     async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock pvs error"));
+        }
         Ok(vec![])
     }
     async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock storageclasses error"));
+        }
         Ok(vec![])
     }
     async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock namespacelist error"));
+        }
         Ok(vec![])
     }
     async fn fetch_events(&self, _namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock events error"));
+        }
         Ok(vec![])
     }
     async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock priorityclasses error"));
+        }
         Ok(vec![])
     }
     async fn fetch_helm_releases(&self, _namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock helmreleases error"));
+        }
         Ok(vec![])
     }
     async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock nodemetrics error"));
+        }
         Ok(vec![])
     }
     async fn fetch_all_pod_metrics(&self, _namespace: Option<&str>) -> Result<Vec<PodMetricsInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock podmetrics error"));
+        }
         Ok(vec![])
     }
 }
