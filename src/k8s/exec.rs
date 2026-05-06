@@ -28,6 +28,7 @@ const DEBUG_CONTAINER_READY_POLL_INTERVAL: Duration = Duration::from_millis(250)
 const EXEC_TERM: &str = "xterm-256color";
 const EXEC_COLUMNS: u16 = 120;
 const EXEC_LINES: u16 = 30;
+pub const MAX_DEBUG_IMAGE_LEN: usize = 1024;
 
 const DEFAULT_EXEC_SHELLS: &[&str] = &[
     "/bin/zsh",
@@ -237,6 +238,15 @@ impl DebugImagePreset {
             Self::Custom => None,
         }
     }
+}
+
+pub fn validate_debug_image(image: &str) -> std::result::Result<(), String> {
+    if image.chars().count() > MAX_DEBUG_IMAGE_LEN {
+        return Err(format!(
+            "debug image must be {MAX_DEBUG_IMAGE_LEN} characters or fewer"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1109,6 +1119,15 @@ mod tests {
             Some("nicolaka/netshoot:latest")
         );
         assert_eq!(DebugImagePreset::Custom.default_image(), None);
+    }
+
+    #[test]
+    fn debug_image_validation_rejects_oversized_values() {
+        assert!(validate_debug_image("busybox:1.37").is_ok());
+
+        let error =
+            validate_debug_image(&"x".repeat(MAX_DEBUG_IMAGE_LEN + 1)).expect_err("oversized");
+        assert!(error.contains("debug image"));
     }
 
     #[test]

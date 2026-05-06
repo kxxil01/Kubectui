@@ -7,7 +7,9 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
+use crate::k8s::exec::{
+    DebugContainerLaunchRequest, DebugImagePreset, MAX_DEBUG_IMAGE_LEN, validate_debug_image,
+};
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::keybindings::{
     CtrlScrollAction, ctrl_char, ctrl_scroll_action, edit_key, plain_shortcut,
@@ -178,7 +180,13 @@ impl DebugContainerDialogState {
                     return DebugContainerDialogEvent::None;
                 }
                 KeyCode::Char(c) if plain_shortcut(key) => {
-                    insert_char_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor, c);
+                    if self.custom_image.chars().count() < MAX_DEBUG_IMAGE_LEN {
+                        insert_char_at_cursor(
+                            &mut self.custom_image,
+                            &mut self.custom_image_cursor,
+                            c,
+                        );
+                    }
                     self.error_message = None;
                     return DebugContainerDialogEvent::None;
                 }
@@ -235,6 +243,7 @@ impl DebugContainerDialogState {
         let image = self
             .selected_image()
             .ok_or_else(|| "Select a preset image or enter a custom debug image.".to_string())?;
+        validate_debug_image(&image)?;
         if self.loading_targets {
             return Err("Container metadata is still loading. Try again in a moment.".to_string());
         }
@@ -836,6 +845,17 @@ mod tests {
     }
 
     #[test]
+    fn build_request_rejects_oversized_custom_image() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.selected_preset = DebugImagePreset::Custom;
+        state.custom_image = "x".repeat(MAX_DEBUG_IMAGE_LEN + 1);
+        state.loading_targets = false;
+
+        let error = state.build_launch_request().expect_err("validation error");
+        assert!(error.contains("debug image"));
+    }
+
+    #[test]
     fn handle_key_cycles_presets() {
         let mut state = DebugContainerDialogState::new("api-0", "default");
         assert_eq!(state.selected_preset, DebugImagePreset::Busybox);
@@ -858,6 +878,21 @@ mod tests {
 
         assert_eq!(state.custom_image, "ghjkl");
         assert_eq!(state.focus_field, DebugContainerField::CustomImage);
+    }
+
+    #[test]
+    fn custom_image_input_caps_at_debug_image_limit() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = DebugContainerField::CustomImage;
+
+        for _ in 0..(MAX_DEBUG_IMAGE_LEN + 10) {
+            let event = state.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+            assert_eq!(event, DebugContainerDialogEvent::None);
+        }
+
+        assert_eq!(state.custom_image.chars().count(), MAX_DEBUG_IMAGE_LEN);
+        assert_eq!(state.custom_image_cursor, MAX_DEBUG_IMAGE_LEN);
     }
 
     #[test]
