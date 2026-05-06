@@ -2753,12 +2753,14 @@ pub(crate) fn insert_char_at_cursor(value: &mut String, cursor: &mut usize, ch: 
 }
 
 pub(crate) fn delete_char_left_at_cursor(value: &mut String, cursor: &mut usize) {
-    if *cursor == 0 {
+    let clamped_cursor = (*cursor).min(value.chars().count());
+    if clamped_cursor == 0 {
+        *cursor = 0;
         return;
     }
-    if let Some((byte_idx, _)) = value.char_indices().nth(*cursor - 1) {
+    if let Some((byte_idx, _)) = value.char_indices().nth(clamped_cursor - 1) {
         value.remove(byte_idx);
-        *cursor = cursor.saturating_sub(1);
+        *cursor = clamped_cursor.saturating_sub(1);
     }
 }
 
@@ -2851,6 +2853,17 @@ mod tests {
 
         assert_eq!(value, "abcd");
         assert_eq!(cursor, 4);
+    }
+
+    #[test]
+    fn delete_char_left_at_cursor_clamps_stale_cursor() {
+        let mut value = "abc".to_string();
+        let mut cursor = usize::MAX;
+
+        delete_char_left_at_cursor(&mut value, &mut cursor);
+
+        assert_eq!(value, "ab");
+        assert_eq!(cursor, 2);
     }
 
     fn draw(app: &AppState, snapshot: &ClusterSnapshot) {
