@@ -9,7 +9,7 @@ mod refresh;
 pub mod vulnerabilities;
 pub mod watch;
 
-use crate::time::AppTimestamp;
+use crate::time::{AppTimestamp, now};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::{
@@ -1302,6 +1302,9 @@ impl GlobalState {
                     // snapshot data. The watch stream's built-in backoff will
                     // reconnect automatically.
                 }
+            }
+            if changed {
+                snap.last_updated = Some(now());
             }
         }
         if changed {
@@ -3923,6 +3926,7 @@ mod tests {
         assert_eq!(state.snapshot.pods.len(), 2);
         assert_eq!(state.snapshot.pods[0].name, "pod-a");
         assert!(state.snapshot.snapshot_version > initial_version);
+        assert!(state.snapshot.last_updated.is_some());
     }
 
     #[test]
@@ -3947,6 +3951,31 @@ mod tests {
         };
         state.apply_watch_update(update);
         assert_eq!(state.snapshot.snapshot_version, version_after_first);
+    }
+
+    #[test]
+    fn apply_watch_update_refreshes_timestamp_only_when_data_changes() {
+        let mut state = GlobalState::default();
+        let initial_timestamp = AppTimestamp::from_second(1_000).expect("valid timestamp");
+        Arc::make_mut(&mut state.snapshot).last_updated = Some(initial_timestamp);
+        let pods = vec![make_pod_info("pod-a")];
+
+        state.apply_watch_update(watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(pods.clone()),
+        });
+
+        let changed_timestamp = state.snapshot.last_updated.expect("timestamp refreshed");
+        assert!(changed_timestamp > initial_timestamp);
+
+        state.apply_watch_update(watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(pods),
+        });
+
+        assert_eq!(state.snapshot.last_updated, Some(changed_timestamp));
     }
 
     #[test]
