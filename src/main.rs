@@ -138,6 +138,10 @@ fn should_include_flux_in_auto_refresh(auto_refresh_count: u64) -> bool {
     auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY)
 }
 
+fn auto_refresh_interval_secs(refresh_interval_secs: u64) -> Option<u64> {
+    (refresh_interval_secs != 0).then_some(refresh_interval_secs)
+}
+
 fn current_view_has_visible_loading_surface(app: &AppState, snapshot: &ClusterSnapshot) -> bool {
     let view = app.view();
     let scope = GlobalState::view_ready_scope(view);
@@ -2976,12 +2980,9 @@ pub(crate) async fn run_app_inner(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Auto-refresh: periodically re-fetch cluster data
-    let refresh_secs = if app.refresh_interval_secs == 0 {
-        86400
-    } else {
-        app.refresh_interval_secs
-    };
-    let mut auto_refresh = tokio::time::interval(Duration::from_secs(refresh_secs));
+    let auto_refresh_interval_secs = auto_refresh_interval_secs(app.refresh_interval_secs);
+    let mut auto_refresh =
+        tokio::time::interval(Duration::from_secs(auto_refresh_interval_secs.unwrap_or(1)));
     auto_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Skip the first immediate tick — we already fetched at startup
     auto_refresh.reset();
@@ -5336,7 +5337,7 @@ pub(crate) async fn run_app_inner(
             }
 
             // Auto-refresh: re-fetch cluster data periodically
-            _ = auto_refresh.tick() => {
+            _ = auto_refresh.tick(), if auto_refresh_interval_secs.is_some() => {
                 // Skip auto-refresh if a detail view is open (avoid disrupting user)
                 // or if we're in a backoff period from consecutive failures
                 // or if a refresh is already in flight

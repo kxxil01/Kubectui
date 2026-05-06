@@ -6,7 +6,7 @@ use super::flux_reconcile::{
 };
 use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
-    apply_extension_fetch_result, clear_port_forward_registries,
+    apply_extension_fetch_result, auto_refresh_interval_secs, clear_port_forward_registries,
     close_resource_tabs_and_refresh_palette_activity, detail_debug_launch_owned,
     detail_node_debug_launch_owned, fail_context_switch, map_palette_detail_action,
     mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
@@ -1539,6 +1539,12 @@ fn auto_refresh_includes_flux_only_on_periodic_fallback_ticks() {
     assert!(!should_include_flux_in_auto_refresh(2));
     assert!(should_include_flux_in_auto_refresh(3));
     assert!(should_include_flux_in_auto_refresh(6));
+}
+
+#[test]
+fn auto_refresh_interval_zero_disables_periodic_refresh() {
+    assert_eq!(auto_refresh_interval_secs(0), None);
+    assert_eq!(auto_refresh_interval_secs(30), Some(30));
 }
 
 #[test]
