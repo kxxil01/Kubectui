@@ -1097,19 +1097,11 @@ impl AppState {
                             }
                         }
                         KeyCode::Enter if tab.viewer.picking_container && plain_shortcut(key) => {
-                            if tab.viewer.container_cursor == 0 && tab.viewer.containers.len() > 1 {
-                                // "All Containers" entry at index 0
+                            if tab.viewer.selected_picker_is_all_containers() {
                                 AppAction::LogsViewerSelectAllContainers
                             } else {
-                                // Single container: offset by 1 to skip the "All" entry
-                                let real_idx = if tab.viewer.containers.len() > 1 {
-                                    tab.viewer.container_cursor.saturating_sub(1)
-                                } else {
-                                    tab.viewer.container_cursor
-                                };
                                 tab.viewer
-                                    .containers
-                                    .get(real_idx)
+                                    .selected_picker_container()
                                     .cloned()
                                     .map(AppAction::LogsViewerSelectContainer)
                                     .unwrap_or(AppAction::None)

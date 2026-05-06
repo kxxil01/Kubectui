@@ -169,20 +169,68 @@ impl LogsViewerState {
 
     pub fn apply_containers(&mut self, containers: Vec<String>) {
         let selected_container = if self.picking_container {
-            self.containers.get(self.container_cursor).cloned()
+            self.selected_picker_container().cloned()
         } else if self.container_name.is_empty() {
             None
         } else {
             Some(self.container_name.clone())
         };
         self.containers = containers;
-        self.container_cursor = selected_container
+        let selected_index = selected_container
             .and_then(|name| {
                 self.containers
                     .iter()
                     .position(|container| container == &name)
             })
             .unwrap_or(0);
+        self.container_cursor = if self.picking_container && self.containers.len() > 1 {
+            selected_index + 1
+        } else {
+            selected_index
+        };
+    }
+
+    pub fn container_picker_len(&self) -> usize {
+        self.containers.len() + usize::from(self.containers.len() > 1)
+    }
+
+    pub fn clamp_container_cursor(&mut self) {
+        let len = self.container_picker_len();
+        if len == 0 {
+            self.container_cursor = 0;
+        } else {
+            self.container_cursor = self.container_cursor.min(len.saturating_sub(1));
+        }
+    }
+
+    pub fn select_previous_container(&mut self) {
+        self.clamp_container_cursor();
+        self.container_cursor = self.container_cursor.saturating_sub(1);
+    }
+
+    pub fn select_next_container(&mut self) {
+        let len = self.container_picker_len();
+        if len == 0 {
+            self.container_cursor = 0;
+        } else {
+            self.clamp_container_cursor();
+            self.container_cursor = (self.container_cursor + 1).min(len.saturating_sub(1));
+        }
+    }
+
+    pub fn selected_picker_is_all_containers(&mut self) -> bool {
+        self.clamp_container_cursor();
+        self.container_cursor == 0 && self.containers.len() > 1
+    }
+
+    pub fn selected_picker_container(&mut self) -> Option<&String> {
+        self.clamp_container_cursor();
+        let real_idx = if self.containers.len() > 1 {
+            self.container_cursor.saturating_sub(1)
+        } else {
+            self.container_cursor
+        };
+        self.containers.get(real_idx)
     }
 
     /// Appends a log line, evicting the oldest lines if the buffer exceeds [`MAX_LOG_LINES`].
@@ -922,7 +970,7 @@ mod tests {
                 "metrics".to_string(),
             ],
             picking_container: true,
-            container_cursor: 1,
+            container_cursor: 2,
             ..LogsViewerState::default()
         };
 
@@ -932,8 +980,11 @@ mod tests {
             "main".to_string(),
         ]);
 
-        assert_eq!(viewer.container_cursor, 0);
-        assert_eq!(viewer.containers[viewer.container_cursor], "sidecar");
+        assert_eq!(viewer.container_cursor, 1);
+        assert_eq!(
+            viewer.selected_picker_container().map(String::as_str),
+            Some("sidecar")
+        );
     }
 
     #[test]

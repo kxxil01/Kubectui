@@ -185,8 +185,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
                 && logs_tab.viewer.picking_container
             {
-                logs_tab.viewer.container_cursor =
-                    logs_tab.viewer.container_cursor.saturating_sub(1);
+                logs_tab.viewer.select_previous_container();
                 return true;
             }
             false
@@ -196,14 +195,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
                 && logs_tab.viewer.picking_container
             {
-                // Extra "All Containers" entry when 2+ containers
-                let extra = if logs_tab.viewer.containers.len() > 1 {
-                    1
-                } else {
-                    0
-                };
-                let max = (logs_tab.viewer.containers.len() + extra).saturating_sub(1);
-                logs_tab.viewer.container_cursor = (logs_tab.viewer.container_cursor + 1).min(max);
+                logs_tab.viewer.select_next_container();
                 return true;
             }
             false
