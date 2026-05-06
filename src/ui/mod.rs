@@ -2743,12 +2743,13 @@ fn visible_input_segments(
 }
 
 pub(crate) fn insert_char_at_cursor(value: &mut String, cursor: &mut usize, ch: char) {
+    let clamped_cursor = (*cursor).min(value.chars().count());
     let byte_idx = value
         .char_indices()
-        .nth(*cursor)
+        .nth(clamped_cursor)
         .map_or(value.len(), |(idx, _)| idx);
     value.insert(byte_idx, ch);
-    *cursor += 1;
+    *cursor = clamped_cursor.saturating_add(1);
 }
 
 pub(crate) fn delete_char_left_at_cursor(value: &mut String, cursor: &mut usize) {
@@ -2839,6 +2840,17 @@ mod tests {
         move_cursor_right(&mut cursor, "abc");
 
         assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn insert_char_at_cursor_clamps_stale_cursor() {
+        let mut value = "abc".to_string();
+        let mut cursor = usize::MAX;
+
+        insert_char_at_cursor(&mut value, &mut cursor, 'd');
+
+        assert_eq!(value, "abcd");
+        assert_eq!(cursor, 4);
     }
 
     fn draw(app: &AppState, snapshot: &ClusterSnapshot) {
