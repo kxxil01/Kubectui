@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::k8s::{
-    exec::DebugImagePreset,
+    exec::{DebugImagePreset, MAX_DEBUG_IMAGE_LEN, validate_debug_image},
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
 use crate::ui::components::render_vertical_scrollbar;
@@ -122,6 +122,7 @@ impl NodeDebugDialogState {
     pub fn build_launch_request(&self) -> Result<NodeDebugLaunchRequest, String> {
         let image = default_debug_image(self.selected_preset, &self.custom_image)
             .ok_or_else(|| "Select a preset image or enter a custom debug image.".to_string())?;
+        validate_debug_image(&image)?;
         Ok(NodeDebugLaunchRequest {
             node_name: self.node_name.clone(),
             namespace: self.selected_namespace().to_string(),
@@ -184,7 +185,13 @@ impl NodeDebugDialogState {
                     return NodeDebugDialogEvent::None;
                 }
                 KeyCode::Char(c) if plain_shortcut(key) => {
-                    insert_char_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor, c);
+                    if self.custom_image.chars().count() < MAX_DEBUG_IMAGE_LEN {
+                        insert_char_at_cursor(
+                            &mut self.custom_image,
+                            &mut self.custom_image_cursor,
+                            c,
+                        );
+                    }
                     self.error_message = None;
                     return NodeDebugDialogEvent::None;
                 }
@@ -819,6 +826,16 @@ mod tests {
     }
 
     #[test]
+    fn build_request_rejects_oversized_custom_image() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.selected_preset = DebugImagePreset::Custom;
+        state.custom_image = "x".repeat(MAX_DEBUG_IMAGE_LEN + 1);
+
+        let error = state.build_launch_request().expect_err("validation error");
+        assert!(error.contains("debug image"));
+    }
+
+    #[test]
     fn custom_image_edit_accepts_hjkl() {
         let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
         state.selected_preset = DebugImagePreset::Custom;
@@ -828,6 +845,21 @@ mod tests {
         state.handle_key(KeyEvent::from(KeyCode::Char('k')));
         state.handle_key(KeyEvent::from(KeyCode::Char('l')));
         assert_eq!(state.custom_image, "hjkl");
+    }
+
+    #[test]
+    fn custom_image_edit_caps_at_debug_image_limit() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = NodeDebugField::CustomImage;
+
+        for _ in 0..(MAX_DEBUG_IMAGE_LEN + 10) {
+            let event = state.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+            assert_eq!(event, NodeDebugDialogEvent::None);
+        }
+
+        assert_eq!(state.custom_image.chars().count(), MAX_DEBUG_IMAGE_LEN);
+        assert_eq!(state.custom_image_cursor, MAX_DEBUG_IMAGE_LEN);
     }
 
     #[test]
