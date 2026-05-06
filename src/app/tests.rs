@@ -404,6 +404,21 @@ fn search_query_supports_unicode_cursor_editing() {
     assert_eq!(app.search_query(), "ab");
 }
 
+#[test]
+fn search_query_caps_at_input_limit() {
+    let mut app = AppState::default();
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+
+    for _ in 0..(crate::app::input::MAX_SEARCH_QUERY_CHARS + 10) {
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+    }
+
+    assert_eq!(
+        app.search_query().chars().count(),
+        crate::app::input::MAX_SEARCH_QUERY_CHARS
+    );
+}
+
 /// Verifies pressing Esc in search mode exits mode and clears query.
 #[test]
 fn search_mode_esc_clears_and_exits() {
