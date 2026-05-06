@@ -1335,7 +1335,7 @@ impl CommandPalette {
                 let len = self.filtered_entries().len();
                 if len > 0 {
                     self.clamp_selected_index(len);
-                    self.selected_index = (self.selected_index + 1) % len;
+                    self.selected_index = self.selected_index.saturating_add(1) % len;
                     self.selection_anchor = self.selected_entry_snapshot();
                 }
                 CommandPaletteAction::None
@@ -2004,7 +2004,7 @@ mod tests {
         p.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(p.selected_index, last.saturating_sub(1));
 
-        p.selected_index = 999;
+        p.selected_index = usize::MAX;
         p.handle_key(KeyEvent::from(KeyCode::Down));
         assert_eq!(p.selected_index, 0);
 

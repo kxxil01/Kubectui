@@ -139,7 +139,7 @@ impl NamespacePicker {
                 let len = filtered.len();
                 if len > 0 {
                     self.clamp_selected_index(len);
-                    self.selected_index = (self.selected_index + 1) % len;
+                    self.selected_index = self.selected_index.saturating_add(1) % len;
                     self.selection_anchor = self
                         .selected_namespace_from_indices(&filtered)
                         .map(ToOwned::to_owned);
@@ -531,7 +531,7 @@ mod tests {
         picker.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(picker.selected_index(), 1);
 
-        picker.selected_index = 99;
+        picker.selected_index = usize::MAX;
         picker.handle_key(KeyEvent::from(KeyCode::Down));
         assert_eq!(picker.selected_index(), 0);
 
