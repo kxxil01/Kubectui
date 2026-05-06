@@ -56,7 +56,7 @@ pub fn cycle_icon_mode() -> IconMode {
 
 /// Parses an icon mode from a config string.
 pub fn parse_icon_mode(s: &str) -> IconMode {
-    match s {
+    match s.trim().to_ascii_lowercase().as_str() {
         "emoji" => IconMode::Emoji,
         "plain" => IconMode::Plain,
         _ => IconMode::Nerd,
@@ -602,6 +602,12 @@ mod tests {
         for mode in [IconMode::Nerd, IconMode::Emoji, IconMode::Plain] {
             assert_eq!(parse_icon_mode(icon_mode_name(mode)), mode);
         }
+    }
+
+    #[test]
+    fn parse_normalizes_config_text() {
+        assert_eq!(parse_icon_mode(" Plain "), IconMode::Plain);
+        assert_eq!(parse_icon_mode(" EMOJI "), IconMode::Emoji);
     }
 
     #[test]

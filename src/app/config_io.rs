@@ -86,7 +86,7 @@ pub fn load_config_from_path(path: &Path) -> AppState {
             crate::icons::set_icon_mode(crate::icons::parse_icon_mode(icon_mode));
         }
         if let Some(theme_name) = &cfg.theme {
-            let idx = match theme_name.to_lowercase().as_str() {
+            let idx = match theme_name.trim().to_ascii_lowercase().as_str() {
                 "nord" => 1,
                 "dracula" => 2,
                 "catppuccin" | "mocha" => 3,
@@ -320,6 +320,41 @@ mod tests {
 
         let app = load_config_from_path(&path);
         assert_eq!(app.get_namespace(), "prod");
+
+        let _ = fs::remove_file(path);
+    }
+
+    struct ThemeResetGuard(u8);
+
+    impl Drop for ThemeResetGuard {
+        fn drop(&mut self) {
+            crate::ui::theme::set_active_theme(self.0);
+        }
+    }
+
+    #[test]
+    fn load_config_normalizes_visual_preferences() {
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        crate::icons::set_icon_mode(crate::icons::IconMode::Nerd);
+        crate::ui::theme::set_active_theme(0);
+
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-visual-config-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","theme":" Light ","icon_mode":" Plain "}"#,
+        )
+        .expect("write config");
+
+        let _app = load_config_from_path(&path);
+        assert_eq!(crate::ui::theme::active_theme().name, "light");
+        assert_eq!(
+            crate::icons::active_icon_mode(),
+            crate::icons::IconMode::Plain
+        );
 
         let _ = fs::remove_file(path);
     }
