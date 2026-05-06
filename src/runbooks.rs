@@ -353,10 +353,10 @@ fn validate_runbooks(config: RunbooksConfig) -> RunbookLoadResult {
         runbooks.push(LoadedRunbook {
             id: id.to_string(),
             title: title.to_string(),
-            description: runbook.description.filter(|value| !value.trim().is_empty()),
+            description: normalized_optional_text(runbook.description),
             aliases,
             resource_kinds,
-            shortcut: runbook.shortcut.filter(|value| !value.trim().is_empty()),
+            shortcut: normalized_optional_text(runbook.shortcut),
             steps,
         });
     }
@@ -397,7 +397,7 @@ fn validate_runbook_steps(
                 }
                 LoadedRunbookStep {
                     title,
-                    description: description.filter(|value| !value.trim().is_empty()),
+                    description: normalized_optional_text(description),
                     kind: LoadedRunbookStepKind::Checklist { items },
                 }
             }
@@ -419,7 +419,7 @@ fn validate_runbook_steps(
                 }
                 LoadedRunbookStep {
                     title,
-                    description: description.filter(|value| !value.trim().is_empty()),
+                    description: normalized_optional_text(description),
                     kind: LoadedRunbookStepKind::Workspace {
                         name,
                         target: target.unwrap_or(RunbookWorkspaceTarget::SavedWorkspace),
@@ -442,7 +442,7 @@ fn validate_runbook_steps(
                 }
                 LoadedRunbookStep {
                     title,
-                    description: description.filter(|value| !value.trim().is_empty()),
+                    description: normalized_optional_text(description),
                     kind: LoadedRunbookStepKind::DetailAction { action },
                 }
             }
@@ -463,7 +463,7 @@ fn validate_runbook_steps(
                 }
                 LoadedRunbookStep {
                     title,
-                    description: description.filter(|value| !value.trim().is_empty()),
+                    description: normalized_optional_text(description),
                     kind: LoadedRunbookStepKind::ExtensionAction { action_id },
                 }
             }
@@ -483,7 +483,7 @@ fn validate_runbook_steps(
                 }
                 LoadedRunbookStep {
                     title,
-                    description: description.filter(|value| !value.trim().is_empty()),
+                    description: normalized_optional_text(description),
                     kind: LoadedRunbookStepKind::AiWorkflow { workflow },
                 }
             }
@@ -491,6 +491,12 @@ fn validate_runbook_steps(
         loaded.push(loaded_step);
     }
     loaded
+}
+
+fn normalized_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn built_in_runbooks() -> Vec<LoadedRunbook> {
@@ -810,5 +816,37 @@ mod tests {
 
         assert!(result.registry.runbooks.is_empty());
         assert!(!result.warnings.is_empty());
+    }
+
+    #[test]
+    fn custom_runbook_validation_trims_optional_text() {
+        let result = validate_runbooks(RunbooksConfig {
+            runbooks: vec![RunbookConfig {
+                id: " padded ".into(),
+                title: " Padded ".into(),
+                description: Some("  Description  ".into()),
+                aliases: vec![" Alias ".into()],
+                resource_kinds: vec![" Pod ".into()],
+                shortcut: Some("  Shift+P  ".into()),
+                steps: vec![RunbookStepConfig::Checklist {
+                    title: " Step ".into(),
+                    description: Some("  Step description  ".into()),
+                    items: vec![" item ".into()],
+                }],
+            }],
+        });
+
+        let runbook = result
+            .registry
+            .get("padded")
+            .expect("validated runbook should exist");
+        assert_eq!(runbook.title, "Padded");
+        assert_eq!(runbook.description.as_deref(), Some("Description"));
+        assert_eq!(runbook.shortcut.as_deref(), Some("Shift+P"));
+        assert_eq!(runbook.steps[0].title, "Step");
+        assert_eq!(
+            runbook.steps[0].description.as_deref(),
+            Some("Step description")
+        );
     }
 }
