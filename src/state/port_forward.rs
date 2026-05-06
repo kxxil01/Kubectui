@@ -64,12 +64,14 @@ impl TunnelRegistry {
     /// Navigation
     pub fn select_next(&mut self) {
         if !self.tunnel_ids.is_empty() {
-            self.selected_index = (self.selected_index + 1) % self.tunnel_ids.len();
+            self.clamp_selected_index();
+            self.selected_index = self.selected_index.saturating_add(1) % self.tunnel_ids.len();
         }
     }
 
     pub fn select_prev(&mut self) {
         if !self.tunnel_ids.is_empty() {
+            self.clamp_selected_index();
             self.selected_index = self.selected_index.saturating_sub(1);
         }
     }
@@ -265,6 +267,23 @@ mod tests {
         registry.remove_tunnel("test-2");
         assert_eq!(registry.selected().map(|t| t.id.as_str()), Some("test-1"));
         assert_eq!(registry.selected_index(), 0);
+    }
+
+    #[test]
+    fn navigation_clamps_stale_selected_index() {
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(create_test_tunnel("test-1"));
+        registry.add_tunnel(create_test_tunnel("test-2"));
+        registry.selected_index = usize::MAX;
+
+        registry.select_next();
+        assert_eq!(registry.selected_index(), 0);
+        assert_eq!(registry.selected().map(|t| t.id.as_str()), Some("test-1"));
+
+        registry.selected_index = usize::MAX;
+        registry.select_prev();
+        assert_eq!(registry.selected_index(), 0);
+        assert_eq!(registry.selected().map(|t| t.id.as_str()), Some("test-1"));
     }
 
     #[test]
