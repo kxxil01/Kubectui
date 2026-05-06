@@ -86,6 +86,7 @@ impl RunbookDetailAction {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
 pub enum RunbookStepConfig {
     Checklist {
         title: String,
@@ -122,6 +123,7 @@ pub enum RunbookStepConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunbookConfig {
     pub id: String,
     pub title: String,
@@ -137,6 +139,7 @@ pub struct RunbookConfig {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunbooksConfig {
     #[serde(default)]
     pub runbooks: Vec<RunbookConfig>,
@@ -848,5 +851,56 @@ mod tests {
             runbook.steps[0].description.as_deref(),
             Some("Step description")
         );
+    }
+
+    #[test]
+    fn runbooks_config_rejects_unknown_top_level_fields() {
+        let err = serde_yaml::from_str::<RunbooksConfig>(
+            r#"
+runbooks: []
+legacy: true
+"#,
+        )
+        .expect_err("unknown top-level field should fail");
+
+        assert!(err.to_string().contains("unknown field `legacy`"));
+    }
+
+    #[test]
+    fn runbooks_config_rejects_unknown_runbook_fields() {
+        let err = serde_yaml::from_str::<RunbooksConfig>(
+            r#"
+runbooks:
+  - id: typo
+    title: Typo
+    steps:
+      - kind: checklist
+        title: Check
+        items: ["look"]
+    shortcut_typo: shift+t
+"#,
+        )
+        .expect_err("unknown runbook field should fail");
+
+        assert!(err.to_string().contains("unknown field `shortcut_typo`"));
+    }
+
+    #[test]
+    fn runbooks_config_rejects_unknown_step_fields() {
+        let err = serde_yaml::from_str::<RunbooksConfig>(
+            r#"
+runbooks:
+  - id: typo
+    title: Typo
+    steps:
+      - kind: checklist
+        title: Check
+        items: ["look"]
+        itemz: ["typo"]
+"#,
+        )
+        .expect_err("unknown step field should fail");
+
+        assert!(err.to_string().contains("unknown field `itemz`"));
     }
 }
