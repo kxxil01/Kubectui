@@ -367,11 +367,9 @@ fn build_custom_ai_action(
         .map(|alias| alias.trim().to_ascii_lowercase())
         .filter(|alias| !alias.is_empty())
         .collect::<Vec<_>>();
-    if !aliases
-        .iter()
-        .any(|alias| alias == &title.to_ascii_lowercase())
-    {
-        aliases.push(title.to_ascii_lowercase());
+    let normalized_title = title.to_ascii_lowercase();
+    if !aliases.iter().any(|alias| alias == &normalized_title) {
+        aliases.push(normalized_title);
     }
     aliases.sort();
     aliases.dedup();
@@ -474,16 +472,14 @@ fn add_provider_aliases(aliases: &mut Vec<String>, provider: &AiProviderConfig) 
     let label = provider.provider.label().to_ascii_lowercase();
     let display_label = provider_display_label(provider).to_ascii_lowercase();
     let slug = provider.provider.slug().replace('_', " ");
+    let default_title = DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase();
     aliases.extend([
         label.clone(),
         display_label.clone(),
         slug.clone(),
-        format!("{} {label}", DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()),
-        format!(
-            "{} {display_label}",
-            DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()
-        ),
-        format!("{} {slug}", DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()),
+        format!("{default_title} {label}"),
+        format!("{default_title} {display_label}"),
+        format!("{default_title} {slug}"),
     ]);
     aliases.sort();
     aliases.dedup();
