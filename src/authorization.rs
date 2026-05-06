@@ -623,30 +623,10 @@ mod tests {
 
     #[test]
     fn unknown_blocks_all_strict_actions() {
-        let strict_actions = [
-            DetailAction::ViewDecodedSecret,
-            DetailAction::ViewRollout,
-            DetailAction::ViewHelmHistory,
-            DetailAction::Exec,
-            DetailAction::DebugContainer,
-            DetailAction::PortForward,
-            DetailAction::Scale,
-            DetailAction::Restart,
-            DetailAction::PauseRollout,
-            DetailAction::ResumeRollout,
-            DetailAction::RollbackRollout,
-            DetailAction::FluxReconcile,
-            DetailAction::RollbackHelm,
-            DetailAction::EditYaml,
-            DetailAction::Delete,
-            DetailAction::Trigger,
-            DetailAction::SuspendCronJob,
-            DetailAction::ResumeCronJob,
-            DetailAction::Cordon,
-            DetailAction::Uncordon,
-            DetailAction::Drain,
-        ];
-        for action in strict_actions {
+        for &action in DetailAction::ALL {
+            if !detail_action_requires_strict_authorization(action) {
+                continue;
+            }
             assert!(
                 !DetailActionAuthorization::Unknown.permits(action),
                 "Unknown should block strict action {:?}",
