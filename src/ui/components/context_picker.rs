@@ -18,6 +18,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 
+use super::MAX_PICKER_SEARCH_QUERY_CHARS;
+
 /// Actions emitted by context picker keyboard handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextPickerAction {
@@ -197,7 +199,10 @@ impl ContextPicker {
                 }
                 ContextPickerAction::None
             }
-            KeyCode::Char(c) if plain_shortcut(key) => {
+            KeyCode::Char(c)
+                if plain_shortcut(key)
+                    && self.search_query.chars().count() < MAX_PICKER_SEARCH_QUERY_CHARS =>
+            {
                 let selected_context = self
                     .selected_context_from_indices(&filtered)
                     .map(ToOwned::to_owned)
@@ -673,6 +678,23 @@ mod tests {
 
         assert_eq!(picker.search_query, "ab");
         assert_eq!(picker.search_cursor, 1);
+    }
+
+    #[test]
+    fn context_picker_search_caps_at_picker_limit() {
+        let mut picker = ContextPicker::new(vec!["default".to_string()], None);
+        picker.open();
+
+        for _ in 0..(MAX_PICKER_SEARCH_QUERY_CHARS + 10) {
+            let action = picker.handle_key(KeyEvent::from(KeyCode::Char('x')));
+            assert_eq!(action, ContextPickerAction::None);
+        }
+
+        assert_eq!(
+            picker.search_query.chars().count(),
+            MAX_PICKER_SEARCH_QUERY_CHARS
+        );
+        assert_eq!(picker.search_cursor, MAX_PICKER_SEARCH_QUERY_CHARS);
     }
 
     #[test]

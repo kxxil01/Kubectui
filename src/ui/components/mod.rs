@@ -18,6 +18,8 @@ pub mod resource_template_dialog;
 pub mod scale_dialog;
 pub mod workbench;
 
+pub(crate) const MAX_PICKER_SEARCH_QUERY_CHARS: usize = 256;
+
 pub use command_palette::{CommandPalette, CommandPaletteAction};
 pub use context_picker::{ContextPicker, ContextPickerAction};
 pub use debug_container_dialog::{
