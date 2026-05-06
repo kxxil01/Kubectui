@@ -165,10 +165,11 @@ pub(crate) fn apply_detail_state_to_workbench(
         && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
         && yaml_tab.pending_request_id == Some(request_id)
     {
-        yaml_tab.yaml = state.yaml.clone();
-        yaml_tab.loading = false;
-        yaml_tab.error = state.yaml_error.clone().or_else(|| state.error.clone());
-        yaml_tab.pending_request_id = None;
+        yaml_tab.update_content(
+            state.yaml.clone(),
+            state.yaml_error.clone().or_else(|| state.error.clone()),
+            None,
+        );
     }
 
     if let Some(tab) = app
@@ -1105,6 +1106,43 @@ mod tests {
         assert_eq!(tab.pending_request_id, None);
         assert!(tab.yaml.is_none());
         assert_eq!(tab.error.as_deref(), Some("failed to read live YAML"));
+    }
+
+    #[test]
+    fn resource_yaml_async_result_rebuilds_line_cache_and_clamps_scroll() {
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = ResourceYamlTabState::new(resource.clone());
+        tab.update_content(
+            Some("apiVersion: v1\nkind: Pod\nmetadata:\n  name: old\nspec: {}\n".into()),
+            None,
+            None,
+        );
+        tab.loading = true;
+        tab.pending_request_id = Some(14);
+        tab.scroll = 99;
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::ResourceYaml(tab));
+
+        let state = DetailViewState {
+            resource: Some(resource),
+            yaml: Some("kind: Pod\nmetadata:\n  name: fresh\n".into()),
+            ..DetailViewState::default()
+        };
+        apply_detail_state_to_workbench(&mut app, 14, &state);
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing yaml tab");
+        };
+        let WorkbenchTabState::ResourceYaml(tab) = &tab.state else {
+            panic!("expected yaml tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert_eq!(tab.yaml_line_count(), 3);
+        assert_eq!(tab.yaml_line(2), Some("  name: fresh"));
+        assert_eq!(tab.scroll, 2);
+        assert!(tab.error.is_none());
     }
 
     #[test]
