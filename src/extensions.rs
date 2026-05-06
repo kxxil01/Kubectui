@@ -301,11 +301,9 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
             .map(|alias| alias.trim().to_ascii_lowercase())
             .filter(|alias| !alias.is_empty())
             .collect::<Vec<_>>();
-        if !aliases
-            .iter()
-            .any(|alias| alias == &title.to_ascii_lowercase())
-        {
-            aliases.push(title.to_ascii_lowercase());
+        let normalized_title = title.to_ascii_lowercase();
+        if !aliases.iter().any(|alias| alias == &normalized_title) {
+            aliases.push(normalized_title);
         }
         aliases.sort();
         aliases.dedup();
