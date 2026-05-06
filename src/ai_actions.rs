@@ -143,6 +143,7 @@ impl AiWorkflowKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AiActionConfig {
     #[serde(default = "default_ai_action_id")]
     pub id: String,
@@ -161,6 +162,7 @@ pub struct AiActionConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AiProviderConfig {
     pub provider: AiProviderKind,
     #[serde(default)]
@@ -205,12 +207,20 @@ impl<'de> Deserialize<'de> for AiConfig {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum AiConfigRepr {
-            Multi { providers: Vec<AiProviderConfig> },
+            Multi(AiConfigMulti),
             Single(Box<AiProviderConfig>),
         }
 
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct AiConfigMulti {
+            providers: Vec<AiProviderConfig>,
+        }
+
         match AiConfigRepr::deserialize(deserializer)? {
-            AiConfigRepr::Multi { providers } => Ok(Self { providers }),
+            AiConfigRepr::Multi(multi) => Ok(Self {
+                providers: multi.providers,
+            }),
             AiConfigRepr::Single(provider) => Ok(Self::single(*provider)),
         }
     }
@@ -844,5 +854,49 @@ mod tests {
                 ))
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn ai_config_rejects_unknown_top_level_fields() {
+        let err = serde_yaml::from_str::<AiConfig>(
+            r#"
+providers:
+  - provider: codex_cli
+extra: true
+"#,
+        )
+        .expect_err("unknown ai config fields should fail fast");
+
+        assert!(err.to_string().contains("data did not match any variant"));
+    }
+
+    #[test]
+    fn ai_config_rejects_unknown_provider_fields() {
+        let err = serde_yaml::from_str::<AiConfig>(
+            r#"
+providers:
+  - provider: codex_cli
+    modle: gpt-5
+"#,
+        )
+        .expect_err("unknown ai provider fields should fail fast");
+
+        assert!(err.to_string().contains("data did not match any variant"));
+    }
+
+    #[test]
+    fn ai_config_rejects_unknown_action_fields() {
+        let err = serde_yaml::from_str::<AiConfig>(
+            r#"
+provider: codex_cli
+action:
+  id: ask_ai
+  title: Ask AI
+  promt: typo
+"#,
+        )
+        .expect_err("unknown ai action fields should fail fast");
+
+        assert!(err.to_string().contains("data did not match any variant"));
     }
 }
