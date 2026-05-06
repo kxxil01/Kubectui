@@ -2,7 +2,8 @@
 
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -55,6 +56,22 @@ fn default_workbench_height() -> u16 {
 
 fn default_config_path(base_dir: Option<PathBuf>) -> Option<PathBuf> {
     base_dir.map(|base| base.join(".kube").join("kubectui-config.json"))
+}
+
+fn unique_config_temp_path(path: &Path, attempt: u8) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("kubectui-config.json");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0u128, |duration| duration.as_nanos());
+    let temp_name = format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        nonce.saturating_add(attempt as u128)
+    );
+    path.with_file_name(temp_name)
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -173,11 +190,43 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
             return;
         }
     };
-    let tmp = path.with_extension("tmp");
-    if let Err(err) = fs::write(&tmp, &serialized) {
-        log::warn!("failed to write temp config '{}': {err}", tmp.display());
-        return;
+    let mut tmp = None;
+    let mut last_write_error = None;
+    for attempt in 0..100 {
+        let candidate = unique_config_temp_path(path, attempt);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .and_then(|mut file| {
+                file.write_all(serialized.as_bytes())?;
+                file.sync_all()
+            }) {
+            Ok(()) => {
+                tmp = Some(candidate);
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                last_write_error = Some((candidate, err));
+                break;
+            }
+        }
     }
+    let Some(tmp) = tmp else {
+        if let Some((candidate, err)) = last_write_error {
+            log::warn!(
+                "failed to write temp config '{}': {err}",
+                candidate.display()
+            );
+        } else {
+            log::warn!(
+                "failed to allocate a unique temp config path for '{}'",
+                path.display()
+            );
+        }
+        return;
+    };
     if let Err(err) = fs::rename(&tmp, path) {
         log::warn!(
             "failed to replace config '{}' from '{}': {err}",
@@ -214,7 +263,9 @@ pub fn save_config(app: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_config_path, load_ai_config_from_path, load_config_from_path};
+    use super::{
+        default_config_path, load_ai_config_from_path, load_config_from_path, save_config_to_path,
+    };
     use crate::ai_actions::AiProviderKind;
     use std::{fs, path::PathBuf};
 
@@ -408,5 +459,29 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_config_uses_unique_temp_file_without_clobbering_existing_tmp() {
+        let dir = std::env::temp_dir().join(format!("kubectui-config-save-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("create temp config dir");
+        let path = dir.join("kubectui-config.json");
+        let legacy_tmp = path.with_extension("tmp");
+        fs::write(&legacy_tmp, "keep").expect("seed legacy tmp");
+
+        let mut app = crate::app::AppState::default();
+        app.set_namespace("prod".to_string());
+        save_config_to_path(&app, &path);
+
+        let saved = fs::read_to_string(&path).expect("read saved config");
+        assert!(saved.contains(r#""namespace":"prod""#));
+        assert_eq!(
+            fs::read_to_string(&legacy_tmp).expect("legacy tmp still exists"),
+            "keep"
+        );
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(legacy_tmp);
+        let _ = fs::remove_dir(dir);
     }
 }
