@@ -32,6 +32,7 @@ const TEMPLATE_INTENT_ALIASES: &[&str] =
     &["create", "new", "template", "scaffold", "apply", "manifest"];
 const MAX_ACTIVITY_RESULTS: usize = 16;
 const MAX_RESOURCE_RESULTS: usize = 40;
+const MAX_PALETTE_QUERY_CHARS: usize = 256;
 const COMPACT_PALETTE_WIDTH: u16 = 48;
 const COMPACT_PALETTE_HEIGHT: u16 = 12;
 
@@ -1377,7 +1378,9 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Char(c) if plain_shortcut(key) => {
+            KeyCode::Char(c)
+                if plain_shortcut(key) && self.query.chars().count() < MAX_PALETTE_QUERY_CHARS =>
+            {
                 let selected_entry = self.selected_entry_anchor();
                 insert_char_at_cursor(&mut self.query, &mut self.query_cursor, c);
                 self.restore_selected_entry(selected_entry);
@@ -2104,6 +2107,20 @@ mod tests {
 
         assert_eq!(p.query, "ab");
         assert_eq!(p.query_cursor, 1);
+    }
+
+    #[test]
+    fn query_caps_at_palette_input_limit() {
+        let mut p = CommandPalette::default();
+        p.open();
+
+        for _ in 0..(MAX_PALETTE_QUERY_CHARS + 10) {
+            let action = p.handle_key(KeyEvent::from(KeyCode::Char('x')));
+            assert_eq!(action, CommandPaletteAction::None);
+        }
+
+        assert_eq!(p.query.chars().count(), MAX_PALETTE_QUERY_CHARS);
+        assert_eq!(p.query_cursor, MAX_PALETTE_QUERY_CHARS);
     }
 
     #[test]
