@@ -120,14 +120,17 @@ impl ContextPicker {
 
         match key.code {
             KeyCode::Esc if plain_shortcut(key) => ContextPickerAction::Close,
-            KeyCode::Enter if plain_shortcut(key) => self
-                .selected_context_from_indices(&filtered)
-                .map(ToOwned::to_owned)
-                .map(ContextPickerAction::Select)
-                .unwrap_or(ContextPickerAction::None),
+            KeyCode::Enter if plain_shortcut(key) => {
+                self.clamp_selected_index(filtered.len());
+                self.selected_context_from_indices(&filtered)
+                    .map(ToOwned::to_owned)
+                    .map(ContextPickerAction::Select)
+                    .unwrap_or(ContextPickerAction::None)
+            }
             KeyCode::Down if plain_shortcut(key) => {
                 let len = filtered.len();
                 if len > 0 {
+                    self.clamp_selected_index(len);
                     self.selected_index = (self.selected_index + 1) % len;
                     self.selection_anchor = self
                         .selected_context_from_indices(&filtered)
@@ -138,6 +141,7 @@ impl ContextPicker {
             KeyCode::Up if plain_shortcut(key) => {
                 let len = filtered.len();
                 if len > 0 {
+                    self.clamp_selected_index(len);
                     self.selected_index = if self.selected_index == 0 {
                         len - 1
                     } else {
@@ -231,6 +235,14 @@ impl ContextPicker {
                 self.selected_context_from_indices(&filtered)
                     .map(ToOwned::to_owned)
             });
+    }
+
+    fn clamp_selected_index(&mut self, len: usize) {
+        if len == 0 {
+            self.selected_index = 0;
+        } else {
+            self.selected_index = self.selected_index.min(len.saturating_sub(1));
+        }
     }
 
     fn selected_context_from_indices<'a>(&'a self, indices: &[usize]) -> Option<&'a str> {
@@ -521,6 +533,34 @@ mod tests {
 
         picker.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(picker.selected_index, 0);
+    }
+
+    #[test]
+    fn context_picker_navigation_clamps_stale_selection() {
+        let mut picker = ContextPicker::new(
+            vec![
+                "ctx-a".to_string(),
+                "ctx-b".to_string(),
+                "ctx-c".to_string(),
+            ],
+            Some("ctx-a".to_string()),
+        );
+        picker.open();
+        picker.selected_index = 99;
+
+        picker.handle_key(KeyEvent::from(KeyCode::Up));
+        assert_eq!(picker.selected_index, 1);
+
+        picker.selected_index = 99;
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+        assert_eq!(picker.selected_index, 0);
+
+        picker.selected_index = 99;
+        assert_eq!(
+            picker.handle_key(KeyEvent::from(KeyCode::Enter)),
+            ContextPickerAction::Select("ctx-c".to_string())
+        );
+        assert_eq!(picker.selected_index, 2);
     }
 
     #[test]
