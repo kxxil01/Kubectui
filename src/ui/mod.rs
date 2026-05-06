@@ -2772,7 +2772,8 @@ pub(crate) fn move_cursor_left(cursor: &mut usize) {
 }
 
 pub(crate) fn move_cursor_right(cursor: &mut usize, value: &str) {
-    *cursor = (*cursor + 1).min(value.chars().count());
+    let len = value.chars().count();
+    *cursor = (*cursor).saturating_add(1).min(len);
 }
 
 pub(crate) fn move_cursor_home(cursor: &mut usize) {
@@ -2830,6 +2831,15 @@ mod tests {
     use super::*;
 
     static RENDER_INVALIDATION_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn move_cursor_right_clamps_stale_cursor() {
+        let mut cursor = usize::MAX;
+
+        move_cursor_right(&mut cursor, "abc");
+
+        assert_eq!(cursor, 3);
+    }
 
     fn draw(app: &AppState, snapshot: &ClusterSnapshot) {
         let backend = TestBackend::new(120, 40);
