@@ -367,6 +367,24 @@ mod tests {
     }
 
     #[test]
+    fn load_ai_config_from_path_rejects_unknown_exec_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-exec-config-unknown-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","exec":{"shells":["/bin/sh"],"loginn":true}}"#,
+        )
+        .expect("write config");
+
+        let err = load_ai_config_from_path(&path).expect_err("unknown exec keys should fail fast");
+        assert!(err.contains("unknown field `loginn`"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn load_config_trims_namespace() {
         let path = std::env::temp_dir().join(format!(
             "kubectui-namespace-config-{}.json",
