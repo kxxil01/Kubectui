@@ -3,6 +3,13 @@
 use anyhow::{Result, anyhow};
 use serde_json::json;
 
+pub const MAX_DNS_LABEL_LEN: usize = 63;
+pub const MAX_DNS_SUBDOMAIN_LEN: usize = 253;
+pub const MAX_TEMPLATE_IMAGE_LEN: usize = 1024;
+pub const MAX_TEMPLATE_REPLICAS_LEN: usize = 3;
+pub const MAX_TEMPLATE_PORT_LEN: usize = 5;
+pub const MAX_TEMPLATE_CONFIG_VALUE_LEN: usize = 4096;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResourceTemplateKind {
     Deployment,
@@ -73,6 +80,7 @@ impl ResourceTemplateValues {
                 if self.image.trim().is_empty() {
                     return Err(anyhow!("image is required"));
                 }
+                validate_max_chars("image", &self.image, MAX_TEMPLATE_IMAGE_LEN)?;
                 Ok(ValidatedResourceTemplate {
                     kind: self.kind,
                     name: self.name.trim().to_string(),
@@ -89,6 +97,7 @@ impl ResourceTemplateValues {
                 if self.image.trim().is_empty() {
                     return Err(anyhow!("image is required"));
                 }
+                validate_max_chars("image", &self.image, MAX_TEMPLATE_IMAGE_LEN)?;
                 Ok(ValidatedResourceTemplate {
                     kind: self.kind,
                     name: self.name.trim().to_string(),
@@ -103,6 +112,11 @@ impl ResourceTemplateValues {
             }
             ResourceTemplateKind::ConfigMap => {
                 validate_config_key(&self.config_key)?;
+                validate_max_chars(
+                    "config value",
+                    &self.config_value,
+                    MAX_TEMPLATE_CONFIG_VALUE_LEN,
+                )?;
                 Ok(ValidatedResourceTemplate {
                     kind: self.kind,
                     name: self.name.trim().to_string(),
@@ -259,8 +273,10 @@ fn validate_dns_label(field: &str, value: &str) -> Result<()> {
     if trimmed.is_empty() {
         return Err(anyhow!("{field} is required"));
     }
-    if trimmed.len() > 63 {
-        return Err(anyhow!("{field} must be 63 characters or fewer"));
+    if trimmed.len() > MAX_DNS_LABEL_LEN {
+        return Err(anyhow!(
+            "{field} must be {MAX_DNS_LABEL_LEN} characters or fewer"
+        ));
     }
     let bytes = trimmed.as_bytes();
     let valid = bytes
@@ -282,8 +298,10 @@ fn validate_dns_subdomain(field: &str, value: &str) -> Result<()> {
     if trimmed.is_empty() {
         return Err(anyhow!("{field} is required"));
     }
-    if trimmed.len() > 253 {
-        return Err(anyhow!("{field} must be 253 characters or fewer"));
+    if trimmed.len() > MAX_DNS_SUBDOMAIN_LEN {
+        return Err(anyhow!(
+            "{field} must be {MAX_DNS_SUBDOMAIN_LEN} characters or fewer"
+        ));
     }
 
     for segment in trimmed.split('.') {
@@ -297,8 +315,10 @@ fn validate_config_key(value: &str) -> Result<()> {
     if trimmed.is_empty() {
         return Err(anyhow!("config key is required"));
     }
-    if trimmed.len() > 253 {
-        return Err(anyhow!("config key must be 253 characters or fewer"));
+    if trimmed.len() > MAX_DNS_SUBDOMAIN_LEN {
+        return Err(anyhow!(
+            "config key must be {MAX_DNS_SUBDOMAIN_LEN} characters or fewer"
+        ));
     }
     if !trimmed
         .chars()
@@ -307,6 +327,13 @@ fn validate_config_key(value: &str) -> Result<()> {
         return Err(anyhow!(
             "config key may only contain letters, digits, '.', '-', or '_'"
         ));
+    }
+    Ok(())
+}
+
+fn validate_max_chars(field: &str, value: &str, max_chars: usize) -> Result<()> {
+    if value.chars().count() > max_chars {
+        return Err(anyhow!("{field} must be {max_chars} characters or fewer"));
     }
     Ok(())
 }
@@ -446,5 +473,43 @@ mod tests {
         .expect_err("config key should fail");
 
         assert!(err.to_string().contains("config key"));
+    }
+
+    #[test]
+    fn image_rejects_unbounded_values() {
+        let err = ResourceTemplateValues {
+            kind: ResourceTemplateKind::Deployment,
+            name: "api".into(),
+            namespace: "default".into(),
+            image: "x".repeat(MAX_TEMPLATE_IMAGE_LEN + 1),
+            replicas: "1".into(),
+            container_port: "80".into(),
+            service_port: String::new(),
+            config_key: String::new(),
+            config_value: String::new(),
+        }
+        .validate()
+        .expect_err("image should be capped");
+
+        assert!(err.to_string().contains("image"));
+    }
+
+    #[test]
+    fn config_value_rejects_unbounded_values() {
+        let err = ResourceTemplateValues {
+            kind: ResourceTemplateKind::ConfigMap,
+            name: "api-config".into(),
+            namespace: "default".into(),
+            image: String::new(),
+            replicas: String::new(),
+            container_port: String::new(),
+            service_port: String::new(),
+            config_key: "app.properties".into(),
+            config_value: "x".repeat(MAX_TEMPLATE_CONFIG_VALUE_LEN + 1),
+        }
+        .validate()
+        .expect_err("config value should be capped");
+
+        assert!(err.to_string().contains("config value"));
     }
 }
