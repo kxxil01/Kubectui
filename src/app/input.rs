@@ -2845,6 +2845,7 @@ impl AppState {
             }
             KeyCode::Char('n')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view == AppView::Pods
                     && plain_shortcut(key) =>
             {
@@ -2853,6 +2854,7 @@ impl AppState {
             }
             KeyCode::Char('n')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view.supports_shared_sort(WorkloadSortColumn::Name)
                     && plain_shortcut(key) =>
             {
@@ -2861,6 +2863,7 @@ impl AppState {
             }
             KeyCode::Char('a')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view == AppView::Pods
                     && plain_shortcut(key) =>
             {
@@ -2869,6 +2872,7 @@ impl AppState {
             }
             KeyCode::Char('a')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view.supports_shared_sort(WorkloadSortColumn::Age)
                     && plain_shortcut(key) =>
             {
@@ -2877,6 +2881,7 @@ impl AppState {
             }
             KeyCode::Char('1')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view == AppView::Pods
                     && plain_shortcut(key) =>
             {
@@ -2885,6 +2890,7 @@ impl AppState {
             }
             KeyCode::Char('1')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view.supports_shared_sort(WorkloadSortColumn::Age)
                     && plain_shortcut(key) =>
             {
@@ -2893,6 +2899,7 @@ impl AppState {
             }
             KeyCode::Char('2')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view == AppView::Pods
                     && plain_shortcut(key) =>
             {
@@ -2901,6 +2908,7 @@ impl AppState {
             }
             KeyCode::Char('3')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view == AppView::Pods
                     && plain_shortcut(key) =>
             {
@@ -2909,6 +2917,7 @@ impl AppState {
             }
             KeyCode::Char('0')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && self.view == AppView::Pods
                     && plain_shortcut(key) =>
             {
@@ -2917,6 +2926,7 @@ impl AppState {
             }
             KeyCode::Char('0')
                 if self.detail_view.is_none()
+                    && self.focus == Focus::Content
                     && !self.view.shared_sort_capabilities().is_empty()
                     && plain_shortcut(key) =>
             {
