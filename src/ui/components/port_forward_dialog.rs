@@ -109,7 +109,10 @@ impl PortForwardDialog {
         let selected_id = self
             .registry
             .ordered_tunnels()
-            .get(self.selected_tunnel)
+            .get(selected_tunnel_index(
+                self.registry.len(),
+                self.selected_tunnel,
+            ))
             .map(|tunnel| tunnel.id.clone());
         self.registry = registry;
         if let Some(selected_id) = selected_id
@@ -122,6 +125,8 @@ impl PortForwardDialog {
             self.selected_tunnel = index;
         } else if !self.registry.is_empty() && self.selected_tunnel >= self.registry.len() {
             self.selected_tunnel = self.registry.len() - 1;
+        } else if self.registry.is_empty() {
+            self.selected_tunnel = 0;
         }
     }
 
@@ -228,12 +233,17 @@ impl PortForwardDialog {
                 PortForwardAction::None
             }
             KeyCode::Up | KeyCode::Char('k') if plain_shortcut(key) => {
-                self.selected_tunnel = self.selected_tunnel.saturating_sub(1);
+                self.selected_tunnel =
+                    selected_tunnel_index(self.registry.len(), self.selected_tunnel)
+                        .saturating_sub(1);
                 PortForwardAction::None
             }
             KeyCode::Down | KeyCode::Char('j') if plain_shortcut(key) => {
                 if !self.registry.is_empty() {
-                    self.selected_tunnel = (self.selected_tunnel + 1) % self.registry.len();
+                    let selected = selected_tunnel_index(self.registry.len(), self.selected_tunnel);
+                    self.selected_tunnel = (selected + 1) % self.registry.len();
+                } else {
+                    self.selected_tunnel = 0;
                 }
                 PortForwardAction::None
             }
@@ -331,10 +341,11 @@ impl PortForwardDialog {
     }
 
     fn get_selected_tunnel(&self) -> Option<crate::k8s::portforward::PortForwardTunnelInfo> {
+        let selected = selected_tunnel_index(self.registry.len(), self.selected_tunnel);
         self.registry
             .ordered_tunnels()
             .into_iter()
-            .nth(self.selected_tunnel)
+            .nth(selected)
             .cloned()
     }
 
@@ -1112,6 +1123,42 @@ mod tests {
             .get_selected_tunnel()
             .expect("selected tunnel should still exist");
         assert_eq!(selected.id, "c");
+    }
+
+    #[test]
+    fn list_selection_clamps_stale_selected_tunnel() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.mode = PortForwardMode::List;
+
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(make_tunnel("a", "pod-a", TunnelState::Active, 5001));
+        registry.add_tunnel(make_tunnel("b", "pod-b", TunnelState::Active, 5002));
+        dialog.update_registry(registry);
+        dialog.selected_tunnel = 99;
+
+        let selected = dialog
+            .get_selected_tunnel()
+            .expect("stale selection should clamp to a tunnel");
+        assert_eq!(selected.id, "b");
+
+        assert_eq!(
+            dialog.handle_key(KeyEvent::from(KeyCode::Up)),
+            PortForwardAction::None
+        );
+        assert_eq!(dialog.selected_tunnel, 0);
+
+        dialog.selected_tunnel = 99;
+        assert_eq!(
+            dialog.handle_key(KeyEvent::from(KeyCode::Down)),
+            PortForwardAction::None
+        );
+        assert_eq!(dialog.selected_tunnel, 0);
+
+        dialog.selected_tunnel = 99;
+        assert_eq!(
+            dialog.handle_key(KeyEvent::from(KeyCode::Delete)),
+            PortForwardAction::Stop("b".to_string())
+        );
     }
 
     #[test]
