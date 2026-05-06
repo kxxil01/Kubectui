@@ -40,7 +40,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use kubectui::ui::{
-    components::port_forward_dialog::PortForwardDialog, keybindings::plain_shortcut,
+    components::port_forward_dialog::PortForwardDialog, contains_ci, keybindings::plain_shortcut,
 };
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
@@ -2645,15 +2645,18 @@ fn ai_context_event_gap_label(context: &AiAnalysisContext) -> Option<&'static st
 }
 
 fn ai_context_line_has_availability_gap(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    lower.contains("unavailable")
-        || lower.contains("skipped")
-        || lower.contains("forbidden")
-        || lower.contains("denied")
-        || lower.contains("rbac")
-        || lower.contains("not found")
-        || lower.contains("timeout")
-        || lower.contains("timed out")
+    [
+        "unavailable",
+        "skipped",
+        "forbidden",
+        "denied",
+        "rbac",
+        "not found",
+        "timeout",
+        "timed out",
+    ]
+    .iter()
+    .any(|marker| contains_ci(line, marker))
 }
 
 fn summarize_ai_context_for_tab(context: &AiAnalysisContext) -> Vec<String> {
