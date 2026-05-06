@@ -8,7 +8,11 @@ use ratatui::{
     },
 };
 
-use crate::resource_templates::{ResourceTemplateKind, ResourceTemplateValues};
+use crate::resource_templates::{
+    MAX_DNS_LABEL_LEN, MAX_DNS_SUBDOMAIN_LEN, MAX_TEMPLATE_CONFIG_VALUE_LEN,
+    MAX_TEMPLATE_IMAGE_LEN, MAX_TEMPLATE_PORT_LEN, MAX_TEMPLATE_REPLICAS_LEN, ResourceTemplateKind,
+    ResourceTemplateValues,
+};
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
     delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
@@ -106,7 +110,12 @@ impl ResourceTemplateDialogState {
     }
 
     pub fn add_char(&mut self, c: char) {
-        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
+        let Some(max_chars) = self.focus_field.max_input_chars() else {
+            return;
+        };
+        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut()
+            && field.chars().count() < max_chars
+        {
             insert_char_at_cursor(field, cursor, c);
             self.revalidate();
         }
@@ -262,6 +271,20 @@ impl ResourceTemplateDialogState {
 
     fn revalidate(&mut self) {
         self.error_message = self.values.validate().err().map(|err| err.to_string());
+    }
+}
+
+impl ResourceTemplateField {
+    fn max_input_chars(self) -> Option<usize> {
+        match self {
+            Self::Name | Self::Namespace => Some(MAX_DNS_LABEL_LEN),
+            Self::Image => Some(MAX_TEMPLATE_IMAGE_LEN),
+            Self::Replicas => Some(MAX_TEMPLATE_REPLICAS_LEN),
+            Self::ContainerPort | Self::ServicePort => Some(MAX_TEMPLATE_PORT_LEN),
+            Self::ConfigKey => Some(MAX_DNS_SUBDOMAIN_LEN),
+            Self::ConfigValue => Some(MAX_TEMPLATE_CONFIG_VALUE_LEN),
+            Self::CreateBtn | Self::CancelBtn => None,
+        }
     }
 }
 
@@ -635,5 +658,48 @@ mod tests {
 
         assert!(state.values.namespace.is_empty());
         assert_eq!(state.cursor_for(ResourceTemplateField::Namespace), 0);
+    }
+
+    #[test]
+    fn template_dialog_caps_input_at_template_limits() {
+        let mut state =
+            ResourceTemplateDialogState::new(ResourceTemplateKind::Deployment, "default");
+        state.focus_field = ResourceTemplateField::Name;
+        state.values.name.clear();
+        state.name_cursor = 0;
+
+        for _ in 0..(MAX_DNS_LABEL_LEN + 10) {
+            state.add_char('a');
+        }
+
+        assert_eq!(state.values.name.chars().count(), MAX_DNS_LABEL_LEN);
+        assert_eq!(
+            state.cursor_for(ResourceTemplateField::Name),
+            MAX_DNS_LABEL_LEN
+        );
+        assert!(state.is_valid());
+    }
+
+    #[test]
+    fn template_dialog_caps_config_value_at_template_limit() {
+        let mut state =
+            ResourceTemplateDialogState::new(ResourceTemplateKind::ConfigMap, "default");
+        state.focus_field = ResourceTemplateField::ConfigValue;
+        state.values.config_value.clear();
+        state.config_value_cursor = 0;
+
+        for _ in 0..(MAX_TEMPLATE_CONFIG_VALUE_LEN + 10) {
+            state.add_char('x');
+        }
+
+        assert_eq!(
+            state.values.config_value.chars().count(),
+            MAX_TEMPLATE_CONFIG_VALUE_LEN
+        );
+        assert_eq!(
+            state.cursor_for(ResourceTemplateField::ConfigValue),
+            MAX_TEMPLATE_CONFIG_VALUE_LEN
+        );
+        assert!(state.is_valid());
     }
 }
