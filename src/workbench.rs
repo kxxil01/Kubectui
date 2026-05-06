@@ -1957,7 +1957,7 @@ impl ExecTabState {
 
     pub fn set_containers(&mut self, containers: Vec<String>) {
         let selected_container = if self.picking_container {
-            self.containers.get(self.container_cursor).cloned()
+            self.selected_container().cloned()
         } else if self.container_name.is_empty() {
             None
         } else {
@@ -1986,6 +1986,34 @@ impl ExecTabState {
             self.container_name = container.clone();
             self.picking_container = false;
         }
+    }
+
+    pub fn clamp_container_cursor(&mut self) {
+        if self.containers.is_empty() {
+            self.container_cursor = 0;
+        } else {
+            self.container_cursor = self
+                .container_cursor
+                .min(self.containers.len().saturating_sub(1));
+        }
+    }
+
+    pub fn select_previous_container(&mut self) {
+        self.clamp_container_cursor();
+        self.container_cursor = self.container_cursor.saturating_sub(1);
+    }
+
+    pub fn select_next_container(&mut self) {
+        if !self.containers.is_empty() {
+            self.clamp_container_cursor();
+            self.container_cursor =
+                (self.container_cursor + 1).min(self.containers.len().saturating_sub(1));
+        }
+    }
+
+    pub fn selected_container(&mut self) -> Option<&String> {
+        self.clamp_container_cursor();
+        self.containers.get(self.container_cursor)
     }
 
     pub fn set_shell_plan(&mut self, shell_plan: impl Into<String>) {
