@@ -105,8 +105,16 @@ pub fn collect_extension_resource_search_entries(
     }
 
     let mut entries = Vec::with_capacity(instances.len());
+    let crd_name_lower = crd.name.to_ascii_lowercase();
+    let crd_group_lower = crd.group.to_ascii_lowercase();
+    let crd_version_lower = crd.version.to_ascii_lowercase();
+    let crd_kind_lower = crd.kind.to_ascii_lowercase();
+    let crd_plural_lower = crd.plural.to_ascii_lowercase();
+    let crd_group_version_alias = format!("{crd_group_lower}/{crd_version_lower}");
+    let crd_kind_group_alias = format!("{crd_kind_lower} {crd_group_lower}");
 
     for item in instances {
+        let item_name_lower = item.name.to_ascii_lowercase();
         let resource = ResourceRef::CustomResource {
             name: item.name.clone(),
             namespace: item.namespace.clone(),
@@ -117,19 +125,24 @@ pub fn collect_extension_resource_search_entries(
         };
         let mut aliases = base_aliases(&resource, AppView::Extensions);
         aliases.extend([
-            crd.name.to_ascii_lowercase(),
-            crd.group.to_ascii_lowercase(),
-            crd.version.to_ascii_lowercase(),
-            crd.kind.to_ascii_lowercase(),
-            crd.plural.to_ascii_lowercase(),
-            format!("{}/{}", crd.group, crd.version).to_ascii_lowercase(),
-            format!("{} {}", crd.kind, crd.group).to_ascii_lowercase(),
-            format!("{}/{}", crd.plural, item.name).to_ascii_lowercase(),
+            crd_name_lower.clone(),
+            crd_group_lower.clone(),
+            crd_version_lower.clone(),
+            crd_kind_lower.clone(),
+            crd_plural_lower.clone(),
+            crd_group_version_alias.clone(),
+            crd_kind_group_alias.clone(),
+            format!("{crd_plural_lower}/{item_name_lower}"),
         ]);
         if let Some(namespace) = item.namespace.as_deref() {
-            aliases.push(format!("{namespace}/{}", crd.plural).to_ascii_lowercase());
-            aliases.push(format!("{namespace}/{}/{}", crd.plural, item.name).to_ascii_lowercase());
-            aliases.push(format!("{} {namespace}/{}", crd.kind, item.name).to_ascii_lowercase());
+            let namespace_lower = namespace.to_ascii_lowercase();
+            aliases.push(format!("{namespace_lower}/{crd_plural_lower}"));
+            aliases.push(format!(
+                "{namespace_lower}/{crd_plural_lower}/{item_name_lower}"
+            ));
+            aliases.push(format!(
+                "{crd_kind_lower} {namespace_lower}/{item_name_lower}"
+            ));
         }
         aliases.sort_unstable();
         aliases.dedup();
