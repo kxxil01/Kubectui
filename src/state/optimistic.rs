@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, sync::Arc};
 
-use crate::app::ResourceRef;
+use crate::{app::ResourceRef, time::now};
 
 use super::{ClusterSnapshot, FluxCounts, GlobalState};
 
@@ -41,6 +41,7 @@ impl GlobalState {
         if let Some(node) = snap.nodes.iter_mut().find(|n| n.name == node_name) {
             node.unschedulable = unschedulable;
             snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+            snap.last_updated = Some(now());
             self.snapshot_dirty = true;
             self.publish_snapshot();
         }
@@ -243,6 +244,7 @@ impl GlobalState {
         snap.namespaces_count = count_namespaces(snap);
         snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
         snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+        snap.last_updated = Some(now());
         self.snapshot_dirty = true;
         self.publish_snapshot();
     }
@@ -283,6 +285,7 @@ impl GlobalState {
         }
 
         snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+        snap.last_updated = Some(now());
         self.snapshot_dirty = true;
         self.publish_snapshot();
     }
