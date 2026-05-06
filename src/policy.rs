@@ -785,6 +785,7 @@ impl DetailViewState {
         let requires_clear_surface = matches!(
             action,
             DetailAction::ViewYaml
+                | DetailAction::ViewConfigDrift
                 | DetailAction::ViewDecodedSecret
                 | DetailAction::ViewHelmHistory
                 | DetailAction::ViewHelmValuesDiff
@@ -980,6 +981,7 @@ mod tests {
         };
 
         assert!(!detail.supports_action(DetailAction::Logs));
+        assert!(!detail.supports_action(DetailAction::ViewConfigDrift));
         assert!(!detail.supports_action(DetailAction::EditYaml));
         assert!(!detail.supports_action(DetailAction::Delete));
         assert!(!detail.supports_action(DetailAction::PortForward));
