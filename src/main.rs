@@ -29,6 +29,8 @@ use std::{
     fs::OpenOptions,
     io::{self, Write},
     path::{Path, PathBuf},
+    process::Stdio,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -815,8 +817,9 @@ fn run_extension_command(prepared: PreparedExtensionCommand) -> ExtensionCommand
     if !prepared.env.is_empty() {
         command.envs(&prepared.env);
     }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    match command.output() {
+    match run_extension_command_with_timeout(command, prepared.timeout) {
         Ok(output) => ExtensionCommandRunResult {
             lines: build_extension_output_lines(&output),
             success: output.status.success(),
@@ -833,8 +836,37 @@ fn run_extension_command(prepared: PreparedExtensionCommand) -> ExtensionCommand
             lines: Vec::new(),
             success: false,
             exit_code: None,
-            error: Some(format!("failed to launch extension command: {err}")),
+            error: Some(err),
         },
+    }
+}
+
+fn run_extension_command_with_timeout(
+    mut command: std::process::Command,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("failed to launch extension command: {err}"))?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        match child
+            .try_wait()
+            .map_err(|err| format!("failed to poll extension command: {err}"))?
+        {
+            Some(_) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|err| format!("failed to collect extension output: {err}"));
+            }
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("extension timed out after {}s", timeout.as_secs()));
+            }
+            None => thread::sleep(Duration::from_millis(50)),
+        }
     }
 }
 

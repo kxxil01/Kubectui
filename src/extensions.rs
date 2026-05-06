@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,9 @@ use crate::app::ResourceRef;
 
 const EXTENSIONS_FILE_NAME: &str = "extensions.yaml";
 const LABEL_SEPARATOR: &str = ",";
+pub const DEFAULT_EXTENSION_TIMEOUT_SECS: u64 = 120;
+const MIN_EXTENSION_TIMEOUT_SECS: u64 = 1;
+const MAX_EXTENSION_TIMEOUT_SECS: u64 = 3600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +44,8 @@ pub struct ExtensionCommandConfig {
     pub cwd: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,6 +169,7 @@ pub struct PreparedExtensionCommand {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub env: BTreeMap<String, String>,
+    pub timeout: Duration,
     pub preview: String,
 }
 
@@ -270,6 +277,7 @@ pub fn prepare_command(
         validate_env_key(title, key)?;
         validate_command_text(title, "environment value", value)?;
     }
+    let timeout_secs = validated_timeout_secs(title, command.timeout_secs)?;
 
     Ok(PreparedExtensionCommand {
         preview: shell_preview(&program, &args),
@@ -277,7 +285,18 @@ pub fn prepare_command(
         args,
         cwd,
         env,
+        timeout: Duration::from_secs(timeout_secs),
     })
+}
+
+fn validated_timeout_secs(title: &str, value: Option<u64>) -> Result<u64, String> {
+    let timeout_secs = value.unwrap_or(DEFAULT_EXTENSION_TIMEOUT_SECS);
+    if !(MIN_EXTENSION_TIMEOUT_SECS..=MAX_EXTENSION_TIMEOUT_SECS).contains(&timeout_secs) {
+        return Err(format!(
+            "extension '{title}' timeout_secs must be between {MIN_EXTENSION_TIMEOUT_SECS} and {MAX_EXTENSION_TIMEOUT_SECS}"
+        ));
+    }
+    Ok(timeout_secs)
 }
 
 fn validate_command_text(title: &str, field: &str, value: &str) -> Result<(), String> {
@@ -360,6 +379,7 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
                 args: action.command.args,
                 cwd: normalized_optional_text(action.command.cwd),
                 env: action.command.env,
+                timeout_secs: action.command.timeout_secs,
             },
         });
     }
@@ -438,6 +458,7 @@ mod tests {
                             args: vec!["get".into()],
                             cwd: None,
                             env: BTreeMap::new(),
+                            timeout_secs: None,
                         },
                     },
                     ExtensionActionConfig {
@@ -453,6 +474,7 @@ mod tests {
                             args: vec!["https://grafana".into()],
                             cwd: None,
                             env: BTreeMap::new(),
+                            timeout_secs: None,
                         },
                     },
                 ],
@@ -480,6 +502,7 @@ mod tests {
                 args: Vec::new(),
                 cwd: None,
                 env: BTreeMap::new(),
+                timeout_secs: None,
             },
         };
 
@@ -509,6 +532,7 @@ mod tests {
                 ],
                 cwd: Some("/tmp/$CONTEXT".into()),
                 env: BTreeMap::from([("CTX".into(), "$CONTEXT".into())]),
+                timeout_secs: Some(30),
             },
         };
         let prepared = prepare_command(
@@ -528,6 +552,7 @@ mod tests {
         assert_eq!(prepared.args[4], "--labels=app=api,tier=web");
         assert_eq!(prepared.cwd, Some(PathBuf::from("/tmp/staging")));
         assert_eq!(prepared.env.get("CTX").map(String::as_str), Some("staging"));
+        assert_eq!(prepared.timeout, Duration::from_secs(30));
         assert!(prepared.preview.contains("kubectl"));
     }
 
@@ -540,6 +565,7 @@ mod tests {
                 args: vec!["get".into(), "$KIND/$NAME".into()],
                 cwd: None,
                 env: BTreeMap::from([("BAD=KEY".into(), "$NAME".into())]),
+                timeout_secs: None,
             },
             &ExtensionSubstitutionContext::from_resource(
                 &ResourceRef::Pod("api-0".into(), "prod".into()),
@@ -561,6 +587,7 @@ mod tests {
                 args: vec!["get\0pods".into()],
                 cwd: None,
                 env: BTreeMap::new(),
+                timeout_secs: None,
             },
             &ExtensionSubstitutionContext::from_resource(
                 &ResourceRef::Pod("api-0".into(), "prod".into()),
@@ -590,6 +617,7 @@ mod tests {
                         args: vec!["describe".into(), "pod".into(), "$NAME".into()],
                         cwd: None,
                         env: BTreeMap::new(),
+                        timeout_secs: None,
                     },
                 }],
             },
@@ -619,6 +647,7 @@ mod tests {
                         args: vec!["describe".into()],
                         cwd: Some("  /tmp/kubectui  ".into()),
                         env: BTreeMap::new(),
+                        timeout_secs: None,
                     },
                 }],
             },
@@ -635,6 +664,53 @@ mod tests {
         assert_eq!(action.shortcut.as_deref(), Some("Shift+D"));
         assert_eq!(action.command.program, "kubectl");
         assert_eq!(action.command.cwd.as_deref(), Some("/tmp/kubectui"));
+    }
+
+    #[test]
+    fn prepare_command_defaults_timeout() {
+        let prepared = prepare_command(
+            "Describe",
+            &ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec!["get".into(), "pods".into()],
+                cwd: None,
+                env: BTreeMap::new(),
+                timeout_secs: None,
+            },
+            &ExtensionSubstitutionContext::from_resource(
+                &ResourceRef::Pod("api-0".into(), "prod".into()),
+                Some("staging"),
+                Vec::new(),
+            ),
+        )
+        .expect("prepared command");
+
+        assert_eq!(
+            prepared.timeout,
+            Duration::from_secs(DEFAULT_EXTENSION_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn prepare_command_rejects_out_of_range_timeout() {
+        let err = prepare_command(
+            "Slow",
+            &ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec!["get".into(), "pods".into()],
+                cwd: None,
+                env: BTreeMap::new(),
+                timeout_secs: Some(0),
+            },
+            &ExtensionSubstitutionContext::from_resource(
+                &ResourceRef::Pod("api-0".into(), "prod".into()),
+                Some("staging"),
+                Vec::new(),
+            ),
+        )
+        .expect_err("zero timeout should fail before command launch");
+
+        assert!(err.contains("timeout_secs"));
     }
 
     #[test]
