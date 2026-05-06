@@ -39,43 +39,71 @@ fn init_logging() {
 }
 
 fn handle_cli_args(args: &[String]) -> Result<bool> {
-    if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("kubectui {}", env!("CARGO_PKG_VERSION"));
-        return Ok(true);
-    }
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("KubecTUI — keyboard-driven terminal UI for Kubernetes\n");
-        println!("USAGE: kubectui [OPTIONS]\n");
-        println!("OPTIONS:");
-        println!("  --theme <name>  Set color theme (dark, nord, dracula, catppuccin, light)");
-        println!("  --profile-render  Enable render profiling (frame timings + folded stacks)");
-        println!("  --profile-output <dir>  Profile output directory (default: target/profiles)");
-        println!("  --version, -V   Show version");
-        println!("  --help, -h      Show this help message");
-        return Ok(true);
-    }
-    if let Some(pos) = args.iter().position(|a| a == "--theme")
-        && let Some(name) = args.get(pos + 1)
-    {
-        let idx = match name.to_lowercase().as_str() {
-            "nord" => 1,
-            "dracula" => 2,
-            "catppuccin" | "mocha" => 3,
-            "light" => 4,
-            _ => 0,
-        };
-        kubectui::ui::theme::set_active_theme(idx);
-    }
-    if args.iter().any(|a| a == "--profile-render") {
-        kubectui::ui::profiling::set_enabled(true);
-    }
-    if let Some(pos) = args.iter().position(|a| a == "--profile-output")
-        && let Some(dir) = args.get(pos + 1)
-    {
-        kubectui::ui::profiling::set_output_dir(PathBuf::from(dir));
+    let mut args = args.iter().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("kubectui {}", env!("CARGO_PKG_VERSION"));
+                return Ok(true);
+            }
+            "--help" | "-h" => {
+                println!("KubecTUI — keyboard-driven terminal UI for Kubernetes\n");
+                println!("USAGE: kubectui [OPTIONS]\n");
+                println!("OPTIONS:");
+                println!(
+                    "  --theme <name>  Set color theme (dark, nord, dracula, catppuccin, light)"
+                );
+                println!(
+                    "  --profile-render  Enable render profiling (frame timings + folded stacks)"
+                );
+                println!(
+                    "  --profile-output <dir>  Profile output directory (default: target/profiles)"
+                );
+                println!("  --version, -V   Show version");
+                println!("  --help, -h      Show this help message");
+                return Ok(true);
+            }
+            "--theme" => {
+                let name = next_option_value(&mut args, "--theme")?;
+                let idx = match name.to_lowercase().as_str() {
+                    "nord" => 1,
+                    "dracula" => 2,
+                    "catppuccin" | "mocha" => 3,
+                    "light" => 4,
+                    _ => 0,
+                };
+                kubectui::ui::theme::set_active_theme(idx);
+            }
+            "--profile-render" => {
+                kubectui::ui::profiling::set_enabled(true);
+            }
+            "--profile-output" => {
+                let dir = next_option_value(&mut args, "--profile-output")?;
+                kubectui::ui::profiling::set_output_dir(PathBuf::from(dir));
+            }
+            unknown if unknown.starts_with('-') => {
+                anyhow::bail!("unknown option '{unknown}'");
+            }
+            unexpected => {
+                anyhow::bail!("unexpected positional argument '{unexpected}'");
+            }
+        }
     }
 
     Ok(false)
+}
+
+fn next_option_value<'a>(
+    args: &mut impl Iterator<Item = &'a String>,
+    option: &str,
+) -> Result<&'a str> {
+    let Some(value) = args.next() else {
+        anyhow::bail!("{option} requires a value");
+    };
+    if value.starts_with('-') {
+        anyhow::bail!("{option} requires a value");
+    }
+    Ok(value)
 }
 
 fn install_panic_hook() {
@@ -89,4 +117,43 @@ fn install_panic_hook() {
         );
         original_hook(info);
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_cli_args;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn cli_version_exits_before_terminal_startup() {
+        assert!(handle_cli_args(&args(&["kubectui", "--version"])).expect("version exits"));
+        assert!(handle_cli_args(&args(&["kubectui", "-V"])).expect("version exits"));
+    }
+
+    #[test]
+    fn cli_rejects_unknown_options_before_terminal_startup() {
+        let err = handle_cli_args(&args(&["kubectui", "--versoin"])).expect_err("unknown option");
+        assert!(err.to_string().contains("unknown option"));
+    }
+
+    #[test]
+    fn cli_rejects_missing_option_values_before_terminal_startup() {
+        let err =
+            handle_cli_args(&args(&["kubectui", "--profile-output"])).expect_err("missing value");
+        assert!(err.to_string().contains("requires a value"));
+
+        let err = handle_cli_args(&args(&["kubectui", "--theme", "--profile-render"]))
+            .expect_err("flag is not a value");
+        assert!(err.to_string().contains("requires a value"));
+    }
+
+    #[test]
+    fn cli_rejects_positional_arguments_before_terminal_startup() {
+        let err = handle_cli_args(&args(&["kubectui", "manifest.yaml"]))
+            .expect_err("unexpected positional");
+        assert!(err.to_string().contains("unexpected positional"));
+    }
 }
