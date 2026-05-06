@@ -251,12 +251,18 @@ impl HelmHistoryTabState {
 
     pub fn select_next(&mut self) {
         if !self.revisions.is_empty() {
-            self.selected = (self.selected + 1).min(self.revisions.len().saturating_sub(1));
+            let current = self.selected.min(self.revisions.len().saturating_sub(1));
+            self.selected = (current + 1).min(self.revisions.len().saturating_sub(1));
         }
     }
 
     pub fn select_previous(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        if self.revisions.is_empty() {
+            self.selected = 0;
+        } else {
+            let current = self.selected.min(self.revisions.len().saturating_sub(1));
+            self.selected = current.saturating_sub(1);
+        }
     }
 
     pub fn select_top(&mut self) {
@@ -741,12 +747,18 @@ impl RolloutTabState {
 
     pub fn select_next(&mut self) {
         if !self.revisions.is_empty() {
-            self.selected = (self.selected + 1).min(self.revisions.len().saturating_sub(1));
+            let current = self.selected.min(self.revisions.len().saturating_sub(1));
+            self.selected = (current + 1).min(self.revisions.len().saturating_sub(1));
         }
     }
 
     pub fn select_previous(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        if self.revisions.is_empty() {
+            self.selected = 0;
+        } else {
+            let current = self.selected.min(self.revisions.len().saturating_sub(1));
+            self.selected = current.saturating_sub(1);
+        }
     }
 
     pub fn select_top(&mut self) {
@@ -1763,13 +1775,19 @@ impl RunbookTabState {
 
     pub fn select_next(&mut self) {
         if !self.steps.is_empty() {
-            self.selected = (self.selected + 1).min(self.steps.len().saturating_sub(1));
+            let current = self.selected.min(self.steps.len().saturating_sub(1));
+            self.selected = (current + 1).min(self.steps.len().saturating_sub(1));
             self.detail_scroll = 0;
         }
     }
 
     pub fn select_previous(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        if self.steps.is_empty() {
+            self.selected = 0;
+        } else {
+            let current = self.selected.min(self.steps.len().saturating_sub(1));
+            self.selected = current.saturating_sub(1);
+        }
         self.detail_scroll = 0;
     }
 
@@ -2546,15 +2564,26 @@ impl ConnectivityTabState {
             self.selected_target_resource = None;
             return;
         }
+        let current = self
+            .selected_target
+            .min(self.filtered_target_indices.len().saturating_sub(1));
         self.selected_target =
-            (self.selected_target + 1).min(self.filtered_target_indices.len().saturating_sub(1));
+            (current + 1).min(self.filtered_target_indices.len().saturating_sub(1));
         self.selected_target_resource = self
             .selected_target_option()
             .map(|target| target.resource.clone());
     }
 
     pub fn select_previous_target(&mut self) {
-        self.selected_target = self.selected_target.saturating_sub(1);
+        if self.filtered_target_indices.is_empty() {
+            self.selected_target = 0;
+            self.selected_target_resource = None;
+            return;
+        }
+        let current = self
+            .selected_target
+            .min(self.filtered_target_indices.len().saturating_sub(1));
+        self.selected_target = current.saturating_sub(1);
         self.selected_target_resource = self
             .selected_target_option()
             .map(|target| target.resource.clone());
@@ -3325,6 +3354,43 @@ mod tests {
     }
 
     #[test]
+    fn runbook_navigation_clamps_stale_selected_index() {
+        let runbook = LoadedRunbook {
+            id: "stale".into(),
+            title: "Stale".into(),
+            description: None,
+            aliases: Vec::new(),
+            resource_kinds: Vec::new(),
+            shortcut: None,
+            steps: vec![
+                LoadedRunbookStep {
+                    title: "First".into(),
+                    description: None,
+                    kind: crate::runbooks::LoadedRunbookStepKind::Checklist {
+                        items: vec!["One".into()],
+                    },
+                },
+                LoadedRunbookStep {
+                    title: "Second".into(),
+                    description: None,
+                    kind: crate::runbooks::LoadedRunbookStepKind::Checklist {
+                        items: vec!["Two".into()],
+                    },
+                },
+            ],
+        };
+        let mut tab = RunbookTabState::new(runbook, Some(pod("pod-0")));
+        tab.selected = 99;
+
+        tab.select_previous();
+        assert_eq!(tab.selected, 0);
+
+        tab.selected = 99;
+        tab.select_next();
+        assert_eq!(tab.selected, 1);
+    }
+
+    #[test]
     fn extension_output_tab_keeps_last_lines_bounded() {
         let mut tab = ExtensionOutputTabState::new(
             7,
@@ -3456,6 +3522,32 @@ mod tests {
     }
 
     #[test]
+    fn helm_history_navigation_clamps_stale_selected_index() {
+        let mut tab = HelmHistoryTabState::new(ResourceRef::HelmRelease(
+            "release".to_string(),
+            "default".to_string(),
+        ));
+        tab.revisions = vec![
+            HelmReleaseRevisionInfo {
+                revision: 2,
+                ..HelmReleaseRevisionInfo::default()
+            },
+            HelmReleaseRevisionInfo {
+                revision: 1,
+                ..HelmReleaseRevisionInfo::default()
+            },
+        ];
+        tab.selected = 99;
+
+        tab.select_previous();
+        assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(2));
+
+        tab.selected = 99;
+        tab.select_next();
+        assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(1));
+    }
+
+    #[test]
     fn rollout_detail_scroll_resets_when_mode_changes() {
         let mut tab = RolloutTabState::new(ResourceRef::Deployment(
             "api".to_string(),
@@ -3506,6 +3598,42 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(state.tabs.len(), 1);
         assert!(state.open);
+    }
+
+    #[test]
+    fn rollout_navigation_clamps_stale_selected_index() {
+        let mut tab = RolloutTabState::new(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        ));
+        tab.revisions = vec![
+            RolloutRevisionInfo {
+                revision: 2,
+                name: "api-2".to_string(),
+                created: None,
+                summary: "ready".to_string(),
+                change_cause: None,
+                is_current: true,
+                is_update_target: true,
+            },
+            RolloutRevisionInfo {
+                revision: 1,
+                name: "api-1".to_string(),
+                created: None,
+                summary: "ready".to_string(),
+                change_cause: None,
+                is_current: false,
+                is_update_target: false,
+            },
+        ];
+        tab.selected = 99;
+
+        tab.select_previous();
+        assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(2));
+
+        tab.selected = 99;
+        tab.select_next();
+        assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(1));
     }
 
     #[test]
@@ -5198,6 +5326,43 @@ mod tests {
             tab.selected_target_option()
                 .map(|target| target.resource.clone()),
             Some(selected)
+        );
+    }
+
+    #[test]
+    fn connectivity_target_navigation_clamps_stale_selected_index() {
+        let mut tab = ConnectivityTabState::new(
+            ResourceRef::Pod("source".into(), "default".into()),
+            vec![
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                    display: "api-0".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.2".into()),
+                },
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("api-1".into(), "default".into()),
+                    display: "api-1".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.3".into()),
+                },
+            ],
+        );
+        tab.selected_target = 99;
+
+        tab.select_previous_target();
+        assert_eq!(
+            tab.selected_target_option()
+                .map(|target| target.resource.clone()),
+            Some(ResourceRef::Pod("api-0".into(), "default".into()))
+        );
+
+        tab.selected_target = 99;
+        tab.select_next_target();
+        assert_eq!(
+            tab.selected_target_option()
+                .map(|target| target.resource.clone()),
+            Some(ResourceRef::Pod("api-1".into(), "default".into()))
         );
     }
 
