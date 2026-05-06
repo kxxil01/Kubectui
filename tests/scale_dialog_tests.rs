@@ -36,6 +36,17 @@ fn test_digit_input() {
 }
 
 #[test]
+fn test_digit_input_caps_at_max_replica_width() {
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "web", "dev", 1);
+
+    for digit in ['1', '2', '3', '4', '5'] {
+        state.handle_action(ScaleAction::AddChar(digit));
+    }
+
+    assert_eq!(state.input_buffer, "123");
+}
+
+#[test]
 fn test_validation_range() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "api", "test", 5);
 
