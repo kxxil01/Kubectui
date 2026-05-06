@@ -661,8 +661,9 @@ fn issue_resource_kind(resource_ref: &ResourceRef) -> &'static str {
 fn detect_pod_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
     for pod in &snapshot.pods {
         let resource_ref = ResourceRef::Pod(pod.name.clone(), pod.namespace.clone());
+        let ignored_rules = ignored_rule_names(&pod.annotations);
 
-        if !rule_ignored(&pod.annotations, "missing-resources")
+        if !ignored_rules.contains("missing-resources")
             && (pod.cpu_request.is_none()
                 || pod.memory_request.is_none()
                 || pod.cpu_limit.is_none()
@@ -693,7 +694,7 @@ fn detect_pod_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<Cl
             });
         }
 
-        if !rule_ignored(&pod.annotations, "missing-probes")
+        if !ignored_rules.contains("missing-probes")
             && (pod.missing_liveness_probes > 0 || pod.missing_readiness_probes > 0)
         {
             let mut gaps = Vec::new();
@@ -721,7 +722,7 @@ fn detect_pod_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<Cl
             });
         }
 
-        if !rule_ignored(&pod.annotations, "security-context")
+        if !ignored_rules.contains("security-context")
             && (!pod.run_as_non_root_configured || pod.host_network || pod.host_pid || pod.host_ipc)
         {
             let mut gaps = Vec::new();
@@ -754,7 +755,7 @@ fn detect_pod_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<Cl
             });
         }
 
-        if !rule_ignored(&pod.annotations, "latest-tag") {
+        if !ignored_rules.contains("latest-tag") {
             let drifting_images = pod
                 .container_images
                 .iter()
@@ -778,7 +779,7 @@ fn detect_pod_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<Cl
             }
         }
 
-        if !rule_ignored(&pod.annotations, "naked-pod") && pod.owner_references.is_empty() {
+        if !ignored_rules.contains("naked-pod") && pod.owner_references.is_empty() {
             issues.push(ClusterIssue {
                 source: ClusterIssueSource::Sanitizer,
                 severity: AlertSeverity::Warning,
