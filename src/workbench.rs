@@ -2142,7 +2142,11 @@ impl ExecTabState {
         }
         let next_cursor = self
             .command_history_cursor
-            .map(|cursor| cursor.saturating_sub(1))
+            .map(|cursor| {
+                cursor
+                    .min(self.command_history.len().saturating_sub(1))
+                    .saturating_sub(1)
+            })
             .unwrap_or_else(|| self.command_history.len().saturating_sub(1));
         self.command_history_cursor = Some(next_cursor);
         self.input = self.command_history[next_cursor].clone();
@@ -2153,7 +2157,7 @@ impl ExecTabState {
         let Some(cursor) = self.command_history_cursor else {
             return;
         };
-        if cursor + 1 >= self.command_history.len() {
+        if cursor >= self.command_history.len().saturating_sub(1) {
             self.command_history_cursor = None;
             self.input = self.command_history_draft.take().unwrap_or_default();
             self.input_cursor = self.input.chars().count();
@@ -4514,6 +4518,25 @@ mod tests {
         assert_eq!(tab.input, "echo ready");
         tab.next_command();
 
+        assert_eq!(tab.input, "kubectl ");
+        assert_eq!(tab.input_cursor, 8);
+    }
+
+    #[test]
+    fn exec_command_history_clamps_stale_cursor_before_navigation() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.record_command_history("kubectl get pods");
+        tab.record_command_history("echo ready");
+        tab.command_history_cursor = Some(99);
+
+        tab.previous_command();
+        assert_eq!(tab.command_history_cursor, Some(0));
+        assert_eq!(tab.input, "kubectl get pods");
+
+        tab.command_history_cursor = Some(usize::MAX);
+        tab.command_history_draft = Some("kubectl ".into());
+        tab.next_command();
+        assert_eq!(tab.command_history_cursor, None);
         assert_eq!(tab.input, "kubectl ");
         assert_eq!(tab.input_cursor, 8);
     }
