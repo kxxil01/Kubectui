@@ -12,12 +12,15 @@ pub fn copy_resource_name(app: &mut AppState, cached_snapshot: &ClusterSnapshot)
         .and_then(|d| d.resource.as_ref())
         .map(|r| r.name().to_string())
         .or_else(|| selected_resource(app, cached_snapshot).map(|r| r.name().to_string()));
-    if let Some(name) = name {
-        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&name) {
-            app.set_error(format!("Clipboard error: {e}"));
-        } else {
-            app.status_message = Some(format!("Copied: {name}"));
-        }
+    let Some(name) = name else {
+        app.set_error("No resource selected to copy.".to_string());
+        return;
+    };
+
+    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&name) {
+        app.set_error(format!("Clipboard error: {e}"));
+    } else {
+        app.status_message = Some(format!("Copied: {name}"));
     }
 }
 
@@ -37,12 +40,15 @@ pub fn copy_resource_full_name(app: &mut AppState, cached_snapshot: &ClusterSnap
                 None => r.name().to_string(),
             })
         });
-    if let Some(full) = full {
-        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&full) {
-            app.set_error(format!("Clipboard error: {e}"));
-        } else {
-            app.status_message = Some(format!("Copied: {full}"));
-        }
+    let Some(full) = full else {
+        app.set_error("No resource selected to copy.".to_string());
+        return;
+    };
+
+    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&full) {
+        app.set_error(format!("Clipboard error: {e}"));
+    } else {
+        app.status_message = Some(format!("Copied: {full}"));
     }
 }
 
@@ -260,6 +266,26 @@ mod tests {
         .expect("copy content");
 
         assert_eq!(content, "pod-0:main INFO req=abc boot");
+    }
+
+    #[test]
+    fn copy_resource_name_reports_empty_selection() {
+        let mut app = AppState::default();
+        let snapshot = ClusterSnapshot::default();
+
+        copy_resource_name(&mut app, &snapshot);
+
+        assert_eq!(app.error_message(), Some("No resource selected to copy."));
+    }
+
+    #[test]
+    fn copy_resource_full_name_reports_empty_selection() {
+        let mut app = AppState::default();
+        let snapshot = ClusterSnapshot::default();
+
+        copy_resource_full_name(&mut app, &snapshot);
+
+        assert_eq!(app.error_message(), Some("No resource selected to copy."));
     }
 
     #[test]
