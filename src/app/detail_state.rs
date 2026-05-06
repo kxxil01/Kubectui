@@ -797,12 +797,20 @@ impl DetailViewState {
     pub fn select_next_cronjob_history(&mut self) {
         if !self.cronjob_history.is_empty() {
             let max = self.cronjob_history.len().saturating_sub(1);
-            self.cronjob_history_selected = (self.cronjob_history_selected + 1).min(max);
+            let current = self.cronjob_history_selected.min(max);
+            self.cronjob_history_selected = (current + 1).min(max);
         }
     }
 
     pub fn select_prev_cronjob_history(&mut self) {
-        self.cronjob_history_selected = self.cronjob_history_selected.saturating_sub(1);
+        if self.cronjob_history.is_empty() {
+            self.cronjob_history_selected = 0;
+        } else {
+            let current = self
+                .cronjob_history_selected
+                .min(self.cronjob_history.len().saturating_sub(1));
+            self.cronjob_history_selected = current.saturating_sub(1);
+        }
     }
 
     pub fn scroll_top_panels_down(&mut self, step: usize) {
@@ -1200,5 +1208,49 @@ mod tests {
         assert_eq!(window.total, 3);
         assert_eq!(window.cursor, 2);
         assert_eq!(window.indices, vec![3, 4]);
+    }
+
+    #[test]
+    fn cronjob_history_navigation_clamps_stale_selected_index() {
+        fn history_entry(name: &str) -> CronJobHistoryEntry {
+            CronJobHistoryEntry {
+                job_name: name.to_string(),
+                namespace: "ops".to_string(),
+                status: "Succeeded".to_string(),
+                completions: "1/1".to_string(),
+                duration: None,
+                pod_count: 1,
+                live_pod_count: 0,
+                completion_pct: Some(100),
+                active_pods: 0,
+                failed_pods: 0,
+                age: None,
+                created_at: None,
+                logs_authorized: None,
+            }
+        }
+
+        let mut detail = DetailViewState {
+            cronjob_history: vec![history_entry("job-1"), history_entry("job-2")],
+            cronjob_history_selected: 99,
+            ..DetailViewState::default()
+        };
+
+        detail.select_prev_cronjob_history();
+        assert_eq!(
+            detail
+                .selected_cronjob_history()
+                .map(|entry| entry.job_name.as_str()),
+            Some("job-1")
+        );
+
+        detail.cronjob_history_selected = 99;
+        detail.select_next_cronjob_history();
+        assert_eq!(
+            detail
+                .selected_cronjob_history()
+                .map(|entry| entry.job_name.as_str()),
+            Some("job-2")
+        );
     }
 }
