@@ -41,6 +41,7 @@ pub const MAX_WORKBENCH_HEIGHT: u16 = 40;
 pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINE_BYTES: usize = 16_384;
+pub const MAX_EXEC_INPUT_CHARS: usize = 4096;
 pub const MAX_EXTENSION_OUTPUT_LINES: usize = 5_000;
 const EXEC_CLEAR_SCREEN: char = '\u{E000}';
 const EXEC_CLEAR_LINE: char = '\u{E001}';

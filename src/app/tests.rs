@@ -2436,6 +2436,42 @@ fn exec_input_supports_cursor_editing() {
 }
 
 #[test]
+fn exec_input_caps_at_input_limit() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    for _ in 0..(crate::workbench::MAX_EXEC_INPUT_CHARS + 10) {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('e'))),
+            AppAction::None
+        );
+    }
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(
+        exec_tab.input.chars().count(),
+        crate::workbench::MAX_EXEC_INPUT_CHARS
+    );
+    assert_eq!(
+        exec_tab.input_cursor,
+        crate::workbench::MAX_EXEC_INPUT_CHARS
+    );
+}
+
+#[test]
 fn exec_input_routes_history_and_clear_output_shortcuts() {
     let mut app = AppState::default();
     app.workbench.open_tab(WorkbenchTabState::Exec(
