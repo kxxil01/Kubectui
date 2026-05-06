@@ -1,6 +1,12 @@
 //! Helm client-side helpers (repositories, local config, and CLI-backed history/rollback flows).
 
-use std::{path::PathBuf, process::Command, sync::OnceLock};
+use std::{
+    path::PathBuf,
+    process::{Command, Output, Stdio},
+    sync::OnceLock,
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
@@ -30,6 +36,7 @@ pub struct HelmValuesDiffResult {
 }
 
 static HELM_CLI_INFO: OnceLock<HelmCliInfo> = OnceLock::new();
+const HELM_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Reads configured Helm repositories from the local filesystem.
 ///
@@ -174,16 +181,15 @@ fn helm_repo_paths() -> Vec<PathBuf> {
 }
 
 fn detect_helm_cli() -> Result<HelmCliInfo, String> {
-    let output = Command::new("helm")
-        .args(["version", "--template", "{{ .Version }}"])
-        .output()
-        .map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                "Helm CLI is not available on PATH.".to_string()
-            } else {
-                format!("Failed to execute 'helm version': {err}")
-            }
-        })?;
+    let mut command = Command::new("helm");
+    command.args(["version", "--template", "{{ .Version }}"]);
+    let output = run_helm_process(command, "helm version").map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            "Helm CLI is not available on PATH.".to_string()
+        } else {
+            format!("Failed to execute 'helm version': {err}")
+        }
+    })?;
     if !output.status.success() {
         return Err(format!(
             "Helm CLI is unavailable: {}",
@@ -292,14 +298,44 @@ fn fetch_release_manifest_blocking(
 }
 
 fn run_helm_command(args: &[String]) -> Result<String> {
-    let output = Command::new("helm")
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to execute helm {}", args.join(" ")))?;
+    let mut command = Command::new("helm");
+    command.args(args);
+    let label = format!("helm {}", args.join(" "));
+    let output =
+        run_helm_process(command, &label).with_context(|| format!("failed to execute {label}"))?;
     if !output.status.success() {
         return Err(anyhow!(stderr_or_stdout(&output.stdout, &output.stderr)));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn run_helm_process(mut command: Command, label: &str) -> std::io::Result<Output> {
+    run_process_with_timeout(&mut command, label, HELM_COMMAND_TIMEOUT)
+}
+
+fn run_process_with_timeout(
+    command: &mut Command,
+    label: &str,
+    timeout: Duration,
+) -> std::io::Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("{label} timed out after {}s", timeout.as_secs()),
+            ));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn base_command_args(kube_context: Option<&str>, namespace: &str) -> Vec<String> {
@@ -468,5 +504,30 @@ repositories:
                 "demo".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn run_helm_process_times_out_hung_command() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 5"]);
+
+        let err = run_process_with_timeout(&mut command, "test helm", Duration::from_secs(1))
+            .expect_err("hung helm command should time out");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(err.to_string().contains("timed out after 1s"));
+    }
+
+    #[test]
+    fn run_helm_process_preserves_output() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf ready; printf warn >&2"]);
+
+        let output = run_process_with_timeout(&mut command, "test helm", Duration::from_secs(5))
+            .expect("command should complete");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ready");
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "warn");
     }
 }
