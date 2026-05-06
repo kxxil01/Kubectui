@@ -42,6 +42,7 @@ const DEFAULT_EXEC_SHELLS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExecConfig {
     #[serde(default = "default_exec_shells")]
     pub shells: Vec<String>,
