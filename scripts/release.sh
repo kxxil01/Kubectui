@@ -81,9 +81,45 @@ version_is_greater() {
   local candidate="$1"
   local current="$2"
   [[ "$candidate" != "$current" ]] || return 1
-  local highest
-  highest="$(printf '%s\n%s\n' "$candidate" "$current" | sort -V | tail -n1)"
-  [[ "$highest" == "$candidate" ]]
+
+  local candidate_base="${candidate%%[-+]*}"
+  local current_base="${current%%[-+]*}"
+  local candidate_major candidate_minor candidate_patch
+  local current_major current_minor current_patch
+  IFS='.' read -r candidate_major candidate_minor candidate_patch <<<"$candidate_base"
+  IFS='.' read -r current_major current_minor current_patch <<<"$current_base"
+
+  for part in major minor patch; do
+    local candidate_value current_value
+    case "$part" in
+      major)
+        candidate_value="$candidate_major"
+        current_value="$current_major"
+        ;;
+      minor)
+        candidate_value="$candidate_minor"
+        current_value="$current_minor"
+        ;;
+      patch)
+        candidate_value="$candidate_patch"
+        current_value="$current_patch"
+        ;;
+    esac
+    if ((candidate_value > current_value)); then
+      return 0
+    fi
+    if ((candidate_value < current_value)); then
+      return 1
+    fi
+  done
+
+  local candidate_is_prerelease=0
+  local current_is_prerelease=0
+  [[ "$candidate" == *-* ]] && candidate_is_prerelease=1
+  [[ "$current" == *-* ]] && current_is_prerelease=1
+
+  # Same base version: stable release outranks its prereleases.
+  [[ "$candidate_is_prerelease" -eq 0 && "$current_is_prerelease" -eq 1 ]]
 }
 
 tag_exists() {
