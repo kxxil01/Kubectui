@@ -109,7 +109,7 @@ impl InputFieldWidget {
 
     /// Validate non-empty string.
     pub fn validate_required(&self) -> Result<(), String> {
-        if self.value.is_empty() {
+        if self.value.trim().is_empty() {
             return Err("This field is required".to_string());
         }
         Ok(())
@@ -216,5 +216,11 @@ mod tests {
         let mut field = InputFieldWidget::new(5);
         field.value = "8080".to_string();
         assert!(field.validate_port().is_ok());
+    }
+
+    #[test]
+    fn validate_required_rejects_whitespace_only() {
+        let field = InputFieldWidget::with_value("   ", 10);
+        assert!(field.validate_required().is_err());
     }
 }
