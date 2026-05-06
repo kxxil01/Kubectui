@@ -161,7 +161,7 @@ fn hash_view_load_states(states: &[ViewLoadState]) -> u64 {
 
 /// Case-insensitive substring match without allocating a new lowercase string.
 #[inline]
-pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
+pub fn contains_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
