@@ -1360,12 +1360,14 @@ impl GlobalState {
 
     pub fn apply_events_update(&mut self, events: Vec<K8sEventInfo>) {
         let mut changed = false;
+        let mut data_changed = false;
         {
             let snap = Arc::make_mut(&mut self.snapshot);
             if snap.events != events {
                 snap.events = events;
                 snap.snapshot_version = snap.snapshot_version.saturating_add(1);
                 changed = true;
+                data_changed = true;
             }
             if snap.events_last_error.take().is_some() {
                 changed = true;
@@ -1374,6 +1376,9 @@ impl GlobalState {
             if *slot != ViewLoadState::Ready {
                 *slot = ViewLoadState::Ready;
                 changed = true;
+            }
+            if data_changed {
+                snap.last_updated = Some(now());
             }
         }
 
@@ -3449,6 +3454,41 @@ mod tests {
         let snapshot = state.snapshot();
         assert_eq!(snapshot.snapshot_version, 10);
         assert_eq!(snapshot.last_updated, Some(initial_timestamp));
+    }
+
+    #[test]
+    fn events_update_refreshes_timestamp_only_when_event_data_changes() {
+        let mut state = GlobalState::default();
+        let snap = Arc::make_mut(&mut state.snapshot);
+        let initial_timestamp = AppTimestamp::from_second(1_000).expect("valid timestamp");
+        snap.last_updated = Some(initial_timestamp);
+        snap.events_last_error = Some("previous failure".to_string());
+        snap.view_load_states[AppView::Events.index()] = ViewLoadState::Loading;
+        state.snapshot_dirty = true;
+        state.publish_snapshot();
+
+        state.apply_events_update(Vec::new());
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.last_updated, Some(initial_timestamp));
+        assert_eq!(snapshot.events_last_error, None);
+        assert_eq!(
+            snapshot.view_load_states[AppView::Events.index()],
+            ViewLoadState::Ready
+        );
+
+        state.apply_events_update(vec![K8sEventInfo {
+            name: "event-a".to_string(),
+            namespace: "default".to_string(),
+            ..K8sEventInfo::default()
+        }]);
+
+        let snapshot = state.snapshot();
+        assert!(
+            snapshot
+                .last_updated
+                .is_some_and(|ts| ts > initial_timestamp)
+        );
     }
 
     #[tokio::test]
