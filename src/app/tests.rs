@@ -3722,6 +3722,28 @@ fn selected_index_grows_with_down_events() {
     assert_eq!(app.sidebar_cursor, 5);
 }
 
+#[test]
+fn sidebar_navigation_clamps_stale_cursor() {
+    let mut app = AppState {
+        focus: Focus::Sidebar,
+        sidebar_cursor: usize::MAX,
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    assert_eq!(app.sidebar_cursor, 0);
+
+    app.sidebar_cursor = usize::MAX;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    assert!(app.sidebar_cursor < sidebar_rows(&app.collapsed_groups).len());
+}
+
 /// Verifies selection resets to zero when switching tabs.
 #[test]
 fn view_switch_resets_selection_index() {

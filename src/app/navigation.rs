@@ -164,7 +164,8 @@ impl AppState {
         if rows.is_empty() {
             return;
         }
-        self.sidebar_cursor = (self.sidebar_cursor + 1) % rows.len();
+        let current = self.sidebar_cursor.min(rows.len().saturating_sub(1));
+        self.sidebar_cursor = (current + 1) % rows.len();
         self.sync_sidebar_expansion_to_cursor();
     }
 
@@ -173,10 +174,11 @@ impl AppState {
         if rows.is_empty() {
             return;
         }
-        self.sidebar_cursor = if self.sidebar_cursor == 0 {
+        let current = self.sidebar_cursor.min(rows.len().saturating_sub(1));
+        self.sidebar_cursor = if current == 0 {
             rows.len() - 1
         } else {
-            self.sidebar_cursor - 1
+            current - 1
         };
         self.sync_sidebar_expansion_to_cursor();
     }
