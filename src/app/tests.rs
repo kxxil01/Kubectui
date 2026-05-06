@@ -6196,6 +6196,36 @@ fn pod_logs_modified_edit_keys_do_not_mutate_search_or_time_jump() {
 }
 
 #[test]
+fn pod_logs_time_jump_caps_at_input_limit() {
+    use crate::workbench::{PodLogsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = PodLogsTabState::new(ResourceRef::Pod("api".into(), "prod".into()));
+    tab.viewer.jumping_to_time = true;
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+
+    for _ in 0..(crate::app::input::MAX_LOG_TIME_JUMP_INPUT_CHARS + 10) {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('2'))),
+            AppAction::None
+        );
+    }
+
+    let WorkbenchTabState::PodLogs(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(
+        tab.viewer.time_jump_input.chars().count(),
+        crate::app::input::MAX_LOG_TIME_JUMP_INPUT_CHARS
+    );
+    assert_eq!(
+        tab.viewer.time_jump_cursor,
+        crate::app::input::MAX_LOG_TIME_JUMP_INPUT_CHARS
+    );
+}
+
+#[test]
 fn workload_logs_modified_escape_does_not_cancel_filter_or_time_jump() {
     use crate::workbench::{WorkbenchTabState, WorkloadLogsTabState};
 
@@ -6292,6 +6322,37 @@ fn workload_logs_modified_edit_keys_do_not_mutate_filter_or_time_jump() {
         assert_eq!(tab.time_jump_input, "10:30", "{key:?}");
         assert_eq!(tab.time_jump_cursor, 2, "{key:?}");
     }
+}
+
+#[test]
+fn workload_logs_time_jump_caps_at_input_limit() {
+    use crate::workbench::{WorkbenchTabState, WorkloadLogsTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab =
+        WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "prod".into()), 7);
+    tab.jumping_to_time = true;
+    app.workbench.open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+    for _ in 0..(crate::app::input::MAX_LOG_TIME_JUMP_INPUT_CHARS + 10) {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('2'))),
+            AppAction::None
+        );
+    }
+
+    let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench.active_tab().unwrap().state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(
+        tab.time_jump_input.chars().count(),
+        crate::app::input::MAX_LOG_TIME_JUMP_INPUT_CHARS
+    );
+    assert_eq!(
+        tab.time_jump_cursor,
+        crate::app::input::MAX_LOG_TIME_JUMP_INPUT_CHARS
+    );
 }
 
 #[test]
