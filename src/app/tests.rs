@@ -1011,6 +1011,19 @@ fn pods_sort_keybindings_are_scoped_to_pods_view() {
 }
 
 #[test]
+fn pods_sort_keybindings_require_content_focus() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Sidebar;
+
+    for key in ['n', 'a', '1', '2', '3', '0'] {
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(key)));
+    }
+
+    assert_eq!(app.pod_sort(), None);
+}
+
+#[test]
 fn workload_sort_keybindings_toggle_and_clear() {
     let mut app = AppState::default();
     app.view = AppView::Deployments;
@@ -1047,6 +1060,19 @@ fn workload_sort_keybindings_are_scoped_to_workload_views() {
     app.focus = Focus::Content;
 
     app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
+    assert_eq!(app.workload_sort(), None);
+}
+
+#[test]
+fn workload_sort_keybindings_require_content_focus() {
+    let mut app = AppState::default();
+    app.view = AppView::Deployments;
+    app.focus = Focus::Sidebar;
+
+    for key in ['n', 'a', '1', '0'] {
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(key)));
+    }
+
     assert_eq!(app.workload_sort(), None);
 }
 
