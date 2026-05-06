@@ -180,7 +180,7 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::FluxReconcile => AppAction::FluxReconcile,
         DetailAction::RollbackHelm => AppAction::ConfirmHelmRollback,
         DetailAction::EditYaml => AppAction::EditYaml,
-        DetailAction::Delete => AppAction::DeleteResource,
+        DetailAction::Delete => AppAction::ConfirmDeleteResource,
         DetailAction::Trigger => AppAction::TriggerCronJob,
         DetailAction::SuspendCronJob => AppAction::ConfirmCronJobSuspend(true),
         DetailAction::ResumeCronJob => AppAction::ConfirmCronJobSuspend(false),
@@ -203,6 +203,7 @@ pub fn palette_action_requires_loaded_detail(action: &AppAction) -> bool {
             | AppAction::ProbePanelOpen
             | AppAction::DebugContainerDialogOpen
             | AppAction::NodeDebugDialogOpen
+            | AppAction::ConfirmDeleteResource
             | AppAction::DeleteResource
             | AppAction::EditYaml
             | AppAction::TriggerCronJob
@@ -553,7 +554,8 @@ mod tests {
     fn pending_palette_action_waits_for_expected_detail_resource() {
         let target = ResourceRef::Pod("api-0".to_string(), "default".to_string());
         let other = ResourceRef::Pod("api-1".to_string(), "default".to_string());
-        let pending = PendingPaletteAction::new(AppAction::DeleteResource, Some(target.clone()));
+        let pending =
+            PendingPaletteAction::new(AppAction::ConfirmDeleteResource, Some(target.clone()));
 
         let loading_target = AppState {
             detail_view: Some(DetailViewState {

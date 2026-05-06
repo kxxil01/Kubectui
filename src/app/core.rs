@@ -112,6 +112,12 @@ impl AppState {
         crate::ui::clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
     }
 
+    pub fn open_delete_confirmation(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.confirm_delete = true;
+        }
+    }
+
     pub fn pod_sort(&self) -> Option<PodSortState> {
         self.pod_sort
     }

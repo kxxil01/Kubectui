@@ -721,6 +721,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenRelationships => true,
+        AppAction::ConfirmDeleteResource => {
+            app_state.open_delete_confirmation();
+            true
+        }
         AppAction::ConfirmDrainNode => {
             if let Some(detail) = &mut app_state.detail_view {
                 detail.confirm_drain = true;

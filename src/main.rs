@@ -7543,6 +7543,9 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
                 }
+                AppAction::ConfirmDeleteResource => {
+                    app.open_delete_confirmation();
+                }
                 AppAction::ForceDeleteResource => {
                     if action::delete::handle_force_delete_resource(
                         &mut app,

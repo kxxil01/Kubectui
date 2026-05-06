@@ -4509,6 +4509,17 @@ fn palette_debug_container_maps_to_dialog_open() {
 }
 
 #[test]
+fn palette_delete_maps_to_confirmation_action() {
+    assert_eq!(
+        map_palette_detail_action(DetailAction::Delete),
+        AppAction::ConfirmDeleteResource
+    );
+    assert!(palette_action_requires_loaded_detail(
+        &AppAction::ConfirmDeleteResource
+    ));
+}
+
+#[test]
 fn palette_helm_history_maps_to_open_history() {
     assert_eq!(
         map_palette_detail_action(DetailAction::ViewHelmHistory),
