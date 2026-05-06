@@ -57,16 +57,16 @@ pub fn config_path() -> Option<PathBuf> {
 }
 
 fn nav_group_from_config(name: &str) -> Option<NavGroup> {
-    match name {
-        "Overview" => Some(NavGroup::Overview),
-        "Workloads" => Some(NavGroup::Workloads),
-        "Network" => Some(NavGroup::Network),
-        "Config" => Some(NavGroup::Config),
-        "Storage" => Some(NavGroup::Storage),
-        "Helm" => Some(NavGroup::Helm),
-        "FluxCD" => Some(NavGroup::FluxCD),
-        "Access Control" => Some(NavGroup::AccessControl),
-        "Custom Resources" => Some(NavGroup::CustomResources),
+    match name.trim().to_ascii_lowercase().as_str() {
+        "overview" => Some(NavGroup::Overview),
+        "workloads" => Some(NavGroup::Workloads),
+        "network" => Some(NavGroup::Network),
+        "config" => Some(NavGroup::Config),
+        "storage" => Some(NavGroup::Storage),
+        "helm" => Some(NavGroup::Helm),
+        "fluxcd" => Some(NavGroup::FluxCD),
+        "access control" => Some(NavGroup::AccessControl),
+        "custom resources" => Some(NavGroup::CustomResources),
         _ => None,
     }
 }
@@ -354,6 +354,35 @@ mod tests {
         assert_eq!(
             crate::icons::active_icon_mode(),
             crate::icons::IconMode::Plain
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_config_normalizes_collapsed_nav_groups() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-nav-groups-config-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","collapsed_nav_groups":[" workloads ","fluxcd"," Access Control "]}"#,
+        )
+        .expect("write config");
+
+        let app = load_config_from_path(&path);
+        assert!(
+            app.collapsed_groups
+                .contains(&crate::app::views::NavGroup::Workloads)
+        );
+        assert!(
+            app.collapsed_groups
+                .contains(&crate::app::views::NavGroup::FluxCD)
+        );
+        assert!(
+            app.collapsed_groups
+                .contains(&crate::app::views::NavGroup::AccessControl)
         );
 
         let _ = fs::remove_file(path);
