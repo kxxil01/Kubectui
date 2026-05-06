@@ -36,6 +36,7 @@ impl ExtensionExecutionMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExtensionCommandConfig {
     pub program: String,
     #[serde(default)]
@@ -49,6 +50,7 @@ pub struct ExtensionCommandConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExtensionActionConfig {
     pub id: String,
     pub title: String,
@@ -724,6 +726,42 @@ ai:
         .expect_err("legacy ai config should not parse as an extension config");
 
         assert!(err.to_string().contains("unknown field `ai`"));
+    }
+
+    #[test]
+    fn extensions_config_rejects_unknown_action_fields() {
+        let err = serde_yaml::from_str::<ExtensionsConfig>(
+            r#"
+actions:
+  - id: describe
+    title: Describe
+    mode: background
+    typo: true
+    command:
+      program: kubectl
+"#,
+        )
+        .expect_err("unknown action fields should fail fast");
+
+        assert!(err.to_string().contains("unknown field `typo`"));
+    }
+
+    #[test]
+    fn extensions_config_rejects_unknown_command_fields() {
+        let err = serde_yaml::from_str::<ExtensionsConfig>(
+            r#"
+actions:
+  - id: describe
+    title: Describe
+    mode: background
+    command:
+      program: kubectl
+      argz: []
+"#,
+        )
+        .expect_err("unknown command fields should fail fast");
+
+        assert!(err.to_string().contains("unknown field `argz`"));
     }
 
     #[test]
