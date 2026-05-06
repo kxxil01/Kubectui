@@ -119,7 +119,62 @@ version_is_greater() {
   [[ "$current" == *-* ]] && current_is_prerelease=1
 
   # Same base version: stable release outranks its prereleases.
-  [[ "$candidate_is_prerelease" -eq 0 && "$current_is_prerelease" -eq 1 ]]
+  if [[ "$candidate_is_prerelease" -eq 0 && "$current_is_prerelease" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ "$candidate_is_prerelease" -eq 1 && "$current_is_prerelease" -eq 0 ]]; then
+    return 1
+  fi
+  if [[ "$candidate_is_prerelease" -eq 1 && "$current_is_prerelease" -eq 1 ]]; then
+    prerelease_is_greater "$candidate" "$current"
+    return
+  fi
+  return 1
+}
+
+prerelease_is_greater() {
+  local candidate="${1#*-}"
+  local current="${2#*-}"
+  candidate="${candidate%%+*}"
+  current="${current%%+*}"
+
+  local candidate_parts current_parts
+  IFS='.' read -r -a candidate_parts <<<"$candidate"
+  IFS='.' read -r -a current_parts <<<"$current"
+
+  local max_parts="${#candidate_parts[@]}"
+  if ((${#current_parts[@]} > max_parts)); then
+    max_parts="${#current_parts[@]}"
+  fi
+
+  for ((i = 0; i < max_parts; i++)); do
+    local candidate_part="${candidate_parts[$i]-}"
+    local current_part="${current_parts[$i]-}"
+    if [[ -z "$candidate_part" ]]; then
+      return 1
+    fi
+    if [[ -z "$current_part" ]]; then
+      return 0
+    fi
+    if [[ "$candidate_part" == "$current_part" ]]; then
+      continue
+    fi
+
+    if [[ "$candidate_part" =~ ^[0-9]+$ && "$current_part" =~ ^[0-9]+$ ]]; then
+      ((10#$candidate_part > 10#$current_part))
+      return
+    fi
+    if [[ "$candidate_part" =~ ^[0-9]+$ ]]; then
+      return 1
+    fi
+    if [[ "$current_part" =~ ^[0-9]+$ ]]; then
+      return 0
+    fi
+    [[ "$candidate_part" > "$current_part" ]]
+    return
+  done
+
+  return 1
 }
 
 tag_exists() {
