@@ -1081,7 +1081,20 @@ impl CommandPalette {
 
     fn selected_entry_snapshot(&self) -> Option<PaletteEntry> {
         let filtered = self.filtered_entries();
-        filtered.get(self.selected_index).cloned()
+        self.clamped_selected_index(filtered.len())
+            .and_then(|index| filtered.get(index).cloned())
+    }
+
+    fn clamp_selected_index(&mut self, len: usize) {
+        if len == 0 {
+            self.selected_index = 0;
+        } else {
+            self.selected_index = self.selected_index.min(len.saturating_sub(1));
+        }
+    }
+
+    fn clamped_selected_index(&self, len: usize) -> Option<usize> {
+        (len > 0).then(|| self.selected_index.min(len.saturating_sub(1)))
     }
 
     fn selected_entry_anchor(&self) -> Option<PaletteEntry> {
@@ -1251,6 +1264,7 @@ impl CommandPalette {
             KeyCode::Esc if plain_shortcut(key) => CommandPaletteAction::Close,
             KeyCode::Enter if plain_shortcut(key) => {
                 let entries = self.filtered_entries();
+                self.clamp_selected_index(entries.len());
                 if let Some(entry) = entries.get(self.selected_index) {
                     match entry {
                         PaletteEntry::Activity(entry) => match &entry.target {
@@ -1320,6 +1334,7 @@ impl CommandPalette {
             KeyCode::Down if plain_shortcut(key) => {
                 let len = self.filtered_entries().len();
                 if len > 0 {
+                    self.clamp_selected_index(len);
                     self.selected_index = (self.selected_index + 1) % len;
                     self.selection_anchor = self.selected_entry_snapshot();
                 }
@@ -1328,6 +1343,7 @@ impl CommandPalette {
             KeyCode::Up if plain_shortcut(key) => {
                 let len = self.filtered_entries().len();
                 if len > 0 {
+                    self.clamp_selected_index(len);
                     self.selected_index = if self.selected_index == 0 {
                         len - 1
                     } else {
@@ -1976,6 +1992,33 @@ mod tests {
         assert_eq!(p.selected_index, 1);
         p.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(p.selected_index, 0);
+    }
+
+    #[test]
+    fn navigation_clamps_stale_selection() {
+        let mut p = CommandPalette::default();
+        p.open();
+        let last = p.filtered().len() - 1;
+        p.selected_index = 999;
+
+        p.handle_key(KeyEvent::from(KeyCode::Up));
+        assert_eq!(p.selected_index, last.saturating_sub(1));
+
+        p.selected_index = 999;
+        p.handle_key(KeyEvent::from(KeyCode::Down));
+        assert_eq!(p.selected_index, 0);
+
+        p.selected_index = 999;
+        assert!(matches!(
+            p.handle_key(KeyEvent::from(KeyCode::Enter)),
+            CommandPaletteAction::Navigate(_)
+                | CommandPaletteAction::SaveWorkspace
+                | CommandPaletteAction::OpenTemplateDialog(_)
+                | CommandPaletteAction::ApplyWorkspace(_)
+                | CommandPaletteAction::ActivateWorkspaceBank(_)
+                | CommandPaletteAction::ToggleColumn(_)
+        ));
+        assert_eq!(p.selected_index, last);
     }
 
     #[test]
