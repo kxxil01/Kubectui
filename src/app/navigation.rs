@@ -77,14 +77,19 @@ impl AppState {
         self.extension_instance_cursor = 0;
     }
 
+    fn selected_extension_instance_identity(&self) -> Option<(String, Option<String>)> {
+        self.extension_instances
+            .get(
+                self.extension_instance_cursor
+                    .min(self.extension_instances.len().saturating_sub(1)),
+            )
+            .map(|resource| (resource.name.clone(), resource.namespace.clone()))
+    }
+
     pub fn begin_extension_instances_load(&mut self, crd_name: String) {
         self.extension_pending_selection = (self.extension_selected_crd.as_deref()
             == Some(crd_name.as_str()))
-        .then(|| {
-            self.extension_instances
-                .get(self.extension_instance_cursor)
-                .map(|resource| (resource.name.clone(), resource.namespace.clone()))
-        })
+        .then(|| self.selected_extension_instance_identity())
         .flatten();
         self.extension_selected_crd = Some(crd_name);
         self.extension_instances_loading = true;
@@ -105,11 +110,7 @@ impl AppState {
             .filter(|_| self.extension_selected_crd.as_deref() == Some(crd_name.as_str()))
             .or_else(|| {
                 (self.extension_selected_crd.as_deref() == Some(crd_name.as_str()))
-                    .then(|| {
-                        self.extension_instances
-                            .get(self.extension_instance_cursor)
-                            .map(|resource| (resource.name.clone(), resource.namespace.clone()))
-                    })
+                    .then(|| self.selected_extension_instance_identity())
                     .flatten()
             });
         self.extension_selected_crd = Some(crd_name);
@@ -300,6 +301,35 @@ mod tests {
             namespace: namespace.map(str::to_string),
             ..CustomResourceInfo::default()
         }
+    }
+
+    #[test]
+    fn set_extension_instances_clamps_stale_cursor_before_preserving_selection() {
+        let mut app = AppState::default();
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("alpha", Some("team-a")),
+                custom_resource("beta", Some("team-b")),
+            ],
+            None,
+        );
+        app.extension_instance_cursor = 99;
+
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("alpha", Some("team-a")),
+                custom_resource("beta", Some("team-b")),
+            ],
+            None,
+        );
+
+        assert_eq!(app.extension_instance_cursor, 1);
+        assert_eq!(
+            app.extension_instances[app.extension_instance_cursor].name,
+            "beta"
+        );
     }
 
     #[test]
