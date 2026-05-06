@@ -1,6 +1,9 @@
 //! Pure dashboard statistics and alert aggregation logic.
 
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeSet, HashMap},
+};
 
 use crate::{
     k8s::dtos::{AlertItem, AlertSeverity},
@@ -609,17 +612,16 @@ pub fn compute_top_pod_consumers(
         })
         .collect();
 
-    // Sort by CPU, take top N, then re-sort remainder by memory
-    consumers.sort_unstable_by(|a, b| {
+    let cpu_top_len = sort_top_consumers_by(&mut consumers, |a, b| {
         b.cpu_usage_m
             .cmp(&a.cpu_usage_m)
             .then_with(|| b.mem_usage_mib.cmp(&a.mem_usage_mib))
             .then_with(|| a.namespace.cmp(&b.namespace))
             .then_with(|| a.name.cmp(&b.name))
     });
-    let by_cpu: Vec<PodConsumerSummary> = consumers.iter().take(TOP_N).cloned().collect();
+    let by_cpu = consumers[..cpu_top_len].to_vec();
 
-    consumers.sort_unstable_by(|a, b| {
+    sort_top_consumers_by(&mut consumers, |a, b| {
         b.mem_usage_mib
             .cmp(&a.mem_usage_mib)
             .then_with(|| b.cpu_usage_m.cmp(&a.cpu_usage_m))
@@ -629,6 +631,18 @@ pub fn compute_top_pod_consumers(
     consumers.truncate(TOP_N);
 
     (by_cpu, consumers)
+}
+
+fn sort_top_consumers_by(
+    consumers: &mut [PodConsumerSummary],
+    compare: impl Fn(&PodConsumerSummary, &PodConsumerSummary) -> Ordering + Copy,
+) -> usize {
+    let top_len = consumers.len().min(TOP_N);
+    if consumers.len() > TOP_N {
+        consumers.select_nth_unstable_by(TOP_N, compare);
+    }
+    consumers[..top_len].sort_unstable_by(compare);
+    top_len
 }
 
 /// Per-namespace resource utilization aggregation for the dashboard.
