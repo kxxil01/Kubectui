@@ -2987,17 +2987,19 @@ impl WorkbenchState {
         if self.tabs.is_empty() {
             return;
         }
-        self.active_tab = (self.active_tab + 1) % self.tabs.len();
+        let current = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        self.active_tab = (current + 1) % self.tabs.len();
     }
 
     pub fn previous_tab(&mut self) {
         if self.tabs.is_empty() {
             return;
         }
-        self.active_tab = if self.active_tab == 0 {
+        let current = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        self.active_tab = if current == 0 {
             self.tabs.len() - 1
         } else {
-            self.active_tab - 1
+            current - 1
         };
     }
 
@@ -3935,6 +3937,31 @@ mod tests {
         assert_eq!(
             state.active_tab().map(|tab| tab.state.kind()),
             Some(WorkbenchTabKind::ResourceEvents)
+        );
+    }
+
+    #[test]
+    fn tab_navigation_clamps_stale_active_index_before_cycling() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+        state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
+            pod("pod-0"),
+        )));
+        state.active_tab = 99;
+
+        state.next_tab();
+        assert_eq!(
+            state.active_tab().map(|tab| tab.state.kind()),
+            Some(WorkbenchTabKind::ActionHistory)
+        );
+
+        state.active_tab = 99;
+        state.previous_tab();
+        assert_eq!(
+            state.active_tab().map(|tab| tab.state.kind()),
+            Some(WorkbenchTabKind::ActionHistory)
         );
     }
 
