@@ -7,18 +7,18 @@ use super::flux_reconcile::{
 use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
     apply_extension_fetch_result, auto_refresh_interval_secs, clear_port_forward_registries,
-    close_resource_tabs_and_refresh_palette_activity, detail_debug_launch_owned,
-    detail_node_debug_launch_owned, fail_context_switch, map_palette_detail_action,
-    mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
-    parse_editor_command, prepare_bookmark_target, prepare_resource_target,
-    preserve_detail_selection_identity, preserve_selection_identity_after_snapshot_change,
-    queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
-    refresh_scope_pending, request_refresh, selected_extension_crd,
-    selected_flux_reconcile_resource, selected_resource, should_animate_loading_spinner,
-    should_include_flux_in_auto_refresh, should_preserve_current_flux_after_refresh,
-    should_request_navigation_refresh, should_request_periodic_redraw,
-    strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
-    workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
+    close_resource_tabs_and_refresh_palette_activity, create_editor_temp_file,
+    detail_debug_launch_owned, detail_node_debug_launch_owned, fail_context_switch,
+    map_palette_detail_action, mutation_refresh_options, normalize_recent_events,
+    palette_action_requires_loaded_detail, parse_editor_command, prepare_bookmark_target,
+    prepare_resource_target, preserve_detail_selection_identity,
+    preserve_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
+    refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
+    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
+    should_animate_loading_spinner, should_include_flux_in_auto_refresh,
+    should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
+    should_request_periodic_redraw, strip_active_watch_scope_from_refresh, ui_staleness_visible,
+    watch_scope_for_view, workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
 use crate::ai::{AiAnalysisContext, AiAnalysisResult};
 use crate::async_types::{
@@ -2192,6 +2192,28 @@ fn parse_editor_command_supports_args_and_quotes() {
 fn parse_editor_command_rejects_unmatched_quotes() {
     let err = parse_editor_command("code \"unterminated").expect_err("must reject");
     assert!(err.to_string().contains("unmatched quote"));
+}
+
+#[test]
+fn editor_temp_file_uses_create_new_and_retries_collisions() {
+    let nonce = 0x1234_5678_90ab_cdef;
+    let first = std::env::temp_dir().join(format!("kubectui-edit-test-{nonce:016x}.yaml"));
+    std::fs::write(&first, "keep").expect("seed colliding temp file");
+
+    let path = create_editor_temp_file("edit-test", nonce, "payload").expect("create temp file");
+
+    assert_ne!(path, first);
+    assert_eq!(
+        std::fs::read_to_string(&first).expect("seed preserved"),
+        "keep"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("created temp content"),
+        "payload"
+    );
+
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(first);
 }
 
 #[test]

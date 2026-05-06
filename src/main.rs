@@ -26,8 +26,9 @@ use runtime_helpers::{next_request_id, run_app, start_watch_manager, watch_scope
 use selection_helpers::*;
 use std::{
     collections::{BTreeMap, HashMap},
-    io,
-    path::Path,
+    fs::OpenOptions,
+    io::{self, Write},
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -620,9 +621,8 @@ fn edit_yaml_in_external_editor(
             }
         })
         .collect::<String>();
-    let tmp_path = std::env::temp_dir().join(format!("kubectui-{safe_stem}-{nonce:016x}.yaml"));
-    std::fs::write(&tmp_path, yaml_content)
-        .with_context(|| format!("failed to write temp file '{}'", tmp_path.display()))?;
+    let tmp_path = create_editor_temp_file(&safe_stem, nonce, yaml_content)
+        .context("failed to create editor temp file")?;
     let _tmp_path_guard = TempPathGuard(tmp_path.clone());
 
     let _ = restore_terminal(terminal);
@@ -653,6 +653,37 @@ fn edit_yaml_in_external_editor(
     }
 
     Ok(Some(edited_yaml))
+}
+
+fn create_editor_temp_file(file_stem: &str, nonce: u64, content: &str) -> Result<PathBuf> {
+    let mut last_error = None;
+    for attempt in 0..100u64 {
+        let tmp_path = std::env::temp_dir().join(format!(
+            "kubectui-{file_stem}-{:016x}.yaml",
+            nonce.wrapping_add(attempt)
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+            .and_then(|mut file| {
+                file.write_all(content.as_bytes())?;
+                file.sync_all()
+            }) {
+            Ok(()) => return Ok(tmp_path),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                last_error = Some((tmp_path, err));
+                break;
+            }
+        }
+    }
+
+    if let Some((path, err)) = last_error {
+        Err(err).with_context(|| format!("failed to write temp file '{}'", path.display()))
+    } else {
+        anyhow::bail!("could not allocate unique editor temp file")
+    }
 }
 
 fn parse_editor_command(command: &str) -> Result<Vec<String>> {
