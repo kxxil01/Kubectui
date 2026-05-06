@@ -776,6 +776,11 @@ fn sanitize_provider_error_line(line: &str) -> String {
             redacted.push(redacted_token);
             continue;
         }
+        if provider_error_inline_sensitive_value_continues(token) {
+            redacted.push(sanitize_provider_error_token(token));
+            state = ProviderErrorRedactionState::ConsumeValue;
+            continue;
+        }
 
         redacted.push(sanitize_provider_error_token(token));
     }
@@ -806,6 +811,15 @@ fn provider_error_token_is_split_sensitive_key(token: &str) -> bool {
         .strip_suffix(':')
         .or_else(|| normalized.strip_suffix('='))
         .is_some_and(is_sensitive_error_key)
+}
+
+fn provider_error_inline_sensitive_value_continues(token: &str) -> bool {
+    ['=', ':'].iter().any(|separator| {
+        token.split_once(*separator).is_some_and(|(key, value)| {
+            is_sensitive_error_key(&normalize_provider_error_key_token(key))
+                && (value.eq_ignore_ascii_case("bearer") || value.eq_ignore_ascii_case("basic"))
+        })
+    })
 }
 
 fn sanitize_provider_error_token(token: &str) -> String {
@@ -1222,6 +1236,18 @@ trailing note {also ignored}"#,
         assert!(!message.contains("live-token"), "{message}");
         assert!(!message.contains("user:pass"), "{message}");
         assert!(!message.contains("secret-value"), "{message}");
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_inline_auth_scheme_values() {
+        let message = sanitize_provider_error_message(
+            "request failed Authorization:Bearer live-token api_key=Basic second-token",
+        );
+
+        assert!(message.contains("Authorization:<redacted>"), "{message}");
+        assert!(message.contains("api_key=<redacted>"), "{message}");
+        assert!(!message.contains("live-token"), "{message}");
+        assert!(!message.contains("second-token"), "{message}");
     }
 
     #[test]
