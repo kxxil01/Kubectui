@@ -259,6 +259,17 @@ pub fn prepare_command(
     if program.trim().is_empty() {
         return Err(format!("extension '{title}' resolved to an empty program"));
     }
+    validate_command_text(title, "program", &program)?;
+    for arg in &args {
+        validate_command_text(title, "argument", arg)?;
+    }
+    if let Some(cwd) = cwd.as_ref().and_then(|cwd| cwd.to_str()) {
+        validate_command_text(title, "cwd", cwd)?;
+    }
+    for (key, value) in &env {
+        validate_env_key(title, key)?;
+        validate_command_text(title, "environment value", value)?;
+    }
 
     Ok(PreparedExtensionCommand {
         preview: shell_preview(&program, &args),
@@ -267,6 +278,25 @@ pub fn prepare_command(
         cwd,
         env,
     })
+}
+
+fn validate_command_text(title: &str, field: &str, value: &str) -> Result<(), String> {
+    if value.contains('\0') {
+        return Err(format!("extension '{title}' {field} contains a NUL byte"));
+    }
+    Ok(())
+}
+
+fn validate_env_key(title: &str, key: &str) -> Result<(), String> {
+    if key.is_empty() {
+        return Err(format!("extension '{title}' has an empty environment key"));
+    }
+    if key.contains('\0') || key.contains('=') {
+        return Err(format!(
+            "extension '{title}' environment key '{key}' must not contain '=' or NUL"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoadResult {
@@ -499,6 +529,48 @@ mod tests {
         assert_eq!(prepared.cwd, Some(PathBuf::from("/tmp/staging")));
         assert_eq!(prepared.env.get("CTX").map(String::as_str), Some("staging"));
         assert!(prepared.preview.contains("kubectl"));
+    }
+
+    #[test]
+    fn prepare_command_rejects_invalid_env_before_launch() {
+        let err = prepare_command(
+            "Bad Env",
+            &ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec!["get".into(), "$KIND/$NAME".into()],
+                cwd: None,
+                env: BTreeMap::from([("BAD=KEY".into(), "$NAME".into())]),
+            },
+            &ExtensionSubstitutionContext::from_resource(
+                &ResourceRef::Pod("api-0".into(), "prod".into()),
+                Some("staging"),
+                Vec::new(),
+            ),
+        )
+        .expect_err("invalid env key should fail before command launch");
+
+        assert!(err.contains("environment key"));
+    }
+
+    #[test]
+    fn prepare_command_rejects_nul_text_before_launch() {
+        let err = prepare_command(
+            "Bad Arg",
+            &ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec!["get\0pods".into()],
+                cwd: None,
+                env: BTreeMap::new(),
+            },
+            &ExtensionSubstitutionContext::from_resource(
+                &ResourceRef::Pod("api-0".into(), "prod".into()),
+                Some("staging"),
+                Vec::new(),
+            ),
+        )
+        .expect_err("nul argument should fail before command launch");
+
+        assert!(err.contains("NUL"));
     }
 
     #[test]
