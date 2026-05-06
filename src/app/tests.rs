@@ -6582,6 +6582,58 @@ fn exec_picker_modified_escape_does_not_cancel_container_picker() {
 }
 
 #[test]
+fn exec_picker_navigation_clamps_stale_container_cursor() {
+    use crate::workbench::{ExecTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ExecTabState::new(resource.clone(), 7, "api".into(), "prod".into());
+    tab.containers = vec!["main".into(), "sidecar".into()];
+    tab.picking_container = true;
+    tab.container_cursor = 99;
+    app.workbench.open_tab(WorkbenchTabState::Exec(tab));
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("missing exec tab");
+    };
+    let WorkbenchTabState::Exec(tab) = &mut tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(tab.container_cursor, 0);
+
+    tab.container_cursor = 99;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        AppAction::None
+    );
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("missing exec tab");
+    };
+    let WorkbenchTabState::Exec(tab) = &mut tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(tab.container_cursor, 1);
+
+    tab.container_cursor = 99;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::ExecSelectContainer("sidecar".into())
+    );
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing exec tab");
+    };
+    let WorkbenchTabState::Exec(tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(tab.container_cursor, 1);
+}
+
+#[test]
 fn exec_input_modified_edit_keys_do_not_mutate_input_cursor_or_scroll() {
     use crate::workbench::{ExecTabState, WorkbenchTabState};
 

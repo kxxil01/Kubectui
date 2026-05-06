@@ -1429,17 +1429,15 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
-                            tab.container_cursor = tab.container_cursor.saturating_sub(1);
+                            tab.select_previous_container();
                             AppAction::None
                         }
                         KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
-                            let max = tab.containers.len().saturating_sub(1);
-                            tab.container_cursor = (tab.container_cursor + 1).min(max);
+                            tab.select_next_container();
                             AppAction::None
                         }
                         KeyCode::Enter if plain_shortcut(key) => tab
-                            .containers
-                            .get(tab.container_cursor)
+                            .selected_container()
                             .cloned()
                             .map(AppAction::ExecSelectContainer)
                             .unwrap_or(AppAction::None),
