@@ -113,8 +113,8 @@ impl ExecConfig {
             .into_iter()
             .next()
             .unwrap_or_else(|| "/bin/sh".to_string());
+        let context = context.map(str::trim).filter(|ctx| !ctx.is_empty());
         let context_arg = context
-            .filter(|ctx| !ctx.trim().is_empty())
             .map(|ctx| format!("--context {}", shell_quote(ctx)))
             .unwrap_or_default();
         let quoted_context = context.map(shell_quote).unwrap_or_default();
@@ -1072,6 +1072,21 @@ mod tests {
             command,
             "cmd --context 'prod-{namespace}' 'prod-{namespace}' default pod {unknown}"
         );
+    }
+
+    #[test]
+    fn external_terminal_command_trims_context_placeholders() {
+        let config = ExecConfig {
+            shells: vec!["/bin/sh".to_string()],
+            login: false,
+            external_terminal_template: Some("cmd {context_arg} {context}".to_string()),
+        };
+
+        let command = config
+            .external_terminal_command(Some(" prod cluster "), "default", "pod", "main")
+            .expect("external command");
+
+        assert_eq!(command, "cmd --context 'prod cluster' 'prod cluster'");
     }
 
     #[test]
