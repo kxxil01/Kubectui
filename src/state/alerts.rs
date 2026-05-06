@@ -243,22 +243,20 @@ pub fn compute_dashboard_insights(snapshot: &ClusterSnapshot) -> DashboardInsigh
         .count();
 
     let mut hot_cpu_nodes = utilization.clone();
-    hot_cpu_nodes.sort_unstable_by(|a, b| {
+    sort_top_nodes_by(&mut hot_cpu_nodes, HOT_NODE_LIMIT, |a, b| {
         b.cpu_pct
             .cmp(&a.cpu_pct)
             .then_with(|| b.cpu_used_m.cmp(&a.cpu_used_m))
             .then_with(|| a.name.cmp(&b.name))
     });
-    hot_cpu_nodes.truncate(HOT_NODE_LIMIT);
 
     let mut hot_mem_nodes = utilization;
-    hot_mem_nodes.sort_unstable_by(|a, b| {
+    sort_top_nodes_by(&mut hot_mem_nodes, HOT_NODE_LIMIT, |a, b| {
         b.mem_pct
             .cmp(&a.mem_pct)
             .then_with(|| b.mem_used_mib.cmp(&a.mem_used_mib))
             .then_with(|| a.name.cmp(&b.name))
     });
-    hot_mem_nodes.truncate(HOT_NODE_LIMIT);
 
     let health_state = if not_ready_nodes > 0 || pressure_nodes > 0 || failed_pods > 0 {
         DashboardHealthState::Critical
@@ -288,6 +286,18 @@ pub fn compute_dashboard_insights(snapshot: &ClusterSnapshot) -> DashboardInsigh
         hot_cpu_nodes,
         hot_mem_nodes,
     }
+}
+
+fn sort_top_nodes_by(
+    nodes: &mut Vec<NodeUtilizationSummary>,
+    limit: usize,
+    compare: impl Fn(&NodeUtilizationSummary, &NodeUtilizationSummary) -> Ordering + Copy,
+) {
+    if nodes.len() > limit {
+        nodes.select_nth_unstable_by(limit, compare);
+        nodes.truncate(limit);
+    }
+    nodes.sort_unstable_by(compare);
 }
 
 /// Computes top dashboard alerts from nodes and pods.
