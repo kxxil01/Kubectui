@@ -61,10 +61,10 @@ pub struct ResourceTemplateValues {
 impl ResourceTemplateValues {
     pub fn validate(&self) -> Result<ValidatedResourceTemplate> {
         match self.kind {
-            ResourceTemplateKind::Deployment | ResourceTemplateKind::ConfigMap => {
-                validate_dns_subdomain("name", &self.name)?
+            ResourceTemplateKind::Deployment | ResourceTemplateKind::DeploymentService => {
+                validate_dns_label("name", &self.name)?
             }
-            ResourceTemplateKind::DeploymentService => validate_dns_label("name", &self.name)?,
+            ResourceTemplateKind::ConfigMap => validate_dns_subdomain("name", &self.name)?,
         }
         validate_dns_label("namespace", &self.namespace)?;
 
@@ -373,8 +373,8 @@ mod tests {
     }
 
     #[test]
-    fn deployment_name_accepts_dns_subdomain() {
-        let validated = ResourceTemplateValues {
+    fn deployment_name_rejects_dots_for_container_compatibility() {
+        let err = ResourceTemplateValues {
             kind: ResourceTemplateKind::Deployment,
             name: "api.v2".into(),
             namespace: "default".into(),
@@ -386,9 +386,9 @@ mod tests {
             config_value: String::new(),
         }
         .validate()
-        .expect("deployment names support dns subdomains");
+        .expect_err("deployment template reuses name as container name");
 
-        assert_eq!(validated.name, "api.v2");
+        assert!(err.to_string().contains("name"));
     }
 
     #[test]
