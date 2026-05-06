@@ -767,11 +767,6 @@ fn sanitize_provider_error_line(line: &str) -> String {
             state = ProviderErrorRedactionState::ConsumeValue;
             continue;
         }
-        if is_sensitive_error_key(&lower) {
-            redacted.push(token.to_string());
-            state = ProviderErrorRedactionState::SeparatorOrValue;
-            continue;
-        }
         if let Some(redacted_token) = redact_secret_path_token(token) {
             redacted.push(redacted_token);
             continue;
@@ -779,6 +774,11 @@ fn sanitize_provider_error_line(line: &str) -> String {
         if provider_error_inline_sensitive_value_continues(token) {
             redacted.push(sanitize_provider_error_token(token));
             state = ProviderErrorRedactionState::ConsumeValue;
+            continue;
+        }
+        if !token.contains(['=', ':']) && is_sensitive_error_key(&lower) {
+            redacted.push(token.to_string());
+            state = ProviderErrorRedactionState::SeparatorOrValue;
             continue;
         }
 
@@ -882,6 +882,9 @@ fn is_sensitive_error_key(key: &str) -> bool {
         || key.ends_with("_password")
         || key.ends_with("_secret")
         || key.ends_with("_token")
+        || key.ends_with("-password")
+        || key.ends_with("-secret")
+        || key.ends_with("-token")
         || key.ends_with("-api-key")
 }
 
@@ -1265,6 +1268,20 @@ trailing note {also ignored}"#,
         assert!(!message.contains("sk-live"), "{message}");
         assert!(!message.contains("sk-other"), "{message}");
         assert!(!message.contains("third-token"), "{message}");
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_hyphenated_sensitive_suffixes() {
+        let message = sanitize_provider_error_message(
+            "bad request access-token=tok123 db-password: pw123 client-secret sec123",
+        );
+
+        assert!(message.contains("access-token=<redacted>"), "{message}");
+        assert!(message.contains("db-password: [redacted]"), "{message}");
+        assert!(message.contains("client-secret [redacted]"), "{message}");
+        assert!(!message.contains("tok123"), "{message}");
+        assert!(!message.contains("pw123"), "{message}");
+        assert!(!message.contains("sec123"), "{message}");
     }
 
     #[test]
