@@ -63,6 +63,7 @@ use kubectui::{
 };
 use std::{
     collections::BTreeMap,
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -217,6 +218,43 @@ fn truncate_ai_block_respects_character_limit() {
 
     let multibyte = super::truncate_ai_block("éclair", 2);
     assert_eq!(multibyte, "éc…");
+}
+
+#[test]
+fn extension_command_timeout_kills_hung_background_command() {
+    let result = super::run_extension_command(kubectui::extensions::PreparedExtensionCommand {
+        program: "sh".into(),
+        args: vec!["-c".into(), "sleep 5".into()],
+        cwd: None,
+        env: BTreeMap::new(),
+        timeout: Duration::from_secs(1),
+        preview: "sh -c 'sleep 5'".into(),
+    });
+
+    assert!(!result.success);
+    assert_eq!(result.exit_code, None);
+    assert_eq!(result.lines, Vec::<String>::new());
+    assert_eq!(
+        result.error.as_deref(),
+        Some("extension timed out after 1s")
+    );
+}
+
+#[test]
+fn extension_command_timeout_preserves_completed_output() {
+    let result = super::run_extension_command(kubectui::extensions::PreparedExtensionCommand {
+        program: "sh".into(),
+        args: vec!["-c".into(), "printf ready; printf warn >&2".into()],
+        cwd: Some(PathBuf::from(".")),
+        env: BTreeMap::new(),
+        timeout: Duration::from_secs(5),
+        preview: "sh -c output".into(),
+    });
+
+    assert!(result.success);
+    assert_eq!(result.exit_code, Some(0));
+    assert_eq!(result.lines, vec!["ready", "stderr: warn"]);
+    assert_eq!(result.error, None);
 }
 
 #[test]

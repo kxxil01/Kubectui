@@ -1843,6 +1843,7 @@ mod tests {
                 args: vec!["get".into(), "pod".into()],
                 cwd: None,
                 env: Default::default(),
+                timeout_secs: None,
             },
         }
     }
@@ -2820,6 +2821,7 @@ mod tests {
                 args: vec!["describe".into(), "pod".into()],
                 cwd: None,
                 env: Default::default(),
+                timeout_secs: None,
             },
         }]);
         for c in "diag".chars() {

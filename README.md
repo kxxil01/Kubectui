@@ -49,8 +49,12 @@ actions:
     command:
       program: kubectl
       args: ["describe", "pod", "$NAME", "-n", "$NAMESPACE"]
-
+      timeout_secs: 120
 ```
+
+`timeout_secs` applies to `background` and `silent` extension commands. Default
+is 120 seconds; accepted range is 1 to 3600 seconds. `foreground` commands run
+in your terminal until they exit.
 
 Native AI actions load from `~/.kube/kubectui-config.json`:
 
