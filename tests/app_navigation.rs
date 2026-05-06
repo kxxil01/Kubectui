@@ -8,19 +8,14 @@ use kubectui::app::{AppAction, AppState, AppView, DetailViewState};
 #[ignore = "Optional integration run"]
 fn all_tab_transitions_work() {
     let mut app = AppState::default();
-    let expected = [
-        AppView::Nodes,
-        AppView::Namespaces,
-        AppView::Events,
-        AppView::Pods,
-        AppView::Deployments,
-        AppView::StatefulSets,
-    ];
 
-    for view in expected {
+    for view in AppView::tabs().iter().copied().skip(1) {
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.view(), view);
     }
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+    assert_eq!(app.view(), AppView::Dashboard);
 }
 
 /// Verifies selection index boundaries are saturating at zero.
