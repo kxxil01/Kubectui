@@ -395,15 +395,13 @@ fn build_custom_ai_action(
     Ok(LoadedAiAction {
         id: action_id(id, &normalized_ai, provider_idx, namespaced),
         title: action_title(title, &normalized_ai, namespaced),
-        description: action.description.filter(|value| !value.trim().is_empty()),
+        description: trim_optional(action.description),
         aliases,
         resource_kinds,
-        shortcut: action.shortcut.filter(|value| !value.trim().is_empty()),
+        shortcut: trim_optional(action.shortcut),
         provider: normalized_ai,
         workflow: AiWorkflowKind::ResourceAnalysis,
-        system_prompt: action
-            .system_prompt
-            .filter(|value| !value.trim().is_empty()),
+        system_prompt: trim_optional(action.system_prompt),
     })
 }
 
@@ -789,6 +787,31 @@ mod tests {
             .expect("custom action keeps requested id");
         assert_eq!(action.title, "Custom Failure Explainer");
         assert_eq!(action.workflow, AiWorkflowKind::ResourceAnalysis);
+    }
+
+    #[test]
+    fn custom_ai_action_trims_optional_text() {
+        let mut provider = cli_provider(AiProviderKind::CodexCli);
+        provider.action = Some(AiActionConfig {
+            id: " describe ".into(),
+            title: " Describe ".into(),
+            description: Some("  Describe selected resource  ".into()),
+            aliases: vec![" Inspect ".into()],
+            resource_kinds: vec![" Pod ".into()],
+            shortcut: Some("  Shift+D  ".into()),
+            system_prompt: Some("  Focus on failures  ".into()),
+        });
+
+        let result = validate_ai_actions(Some(AiConfig::single(provider)));
+        let action = result.registry.get("describe").expect("custom action");
+
+        assert_eq!(action.title, "Describe");
+        assert_eq!(
+            action.description.as_deref(),
+            Some("Describe selected resource")
+        );
+        assert_eq!(action.shortcut.as_deref(), Some("Shift+D"));
+        assert_eq!(action.system_prompt.as_deref(), Some("Focus on failures"));
     }
 
     #[test]
