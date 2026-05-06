@@ -28,7 +28,8 @@ fn format_detail_time(ts: Option<AppTimestamp>) -> String {
 
 fn cronjob_timezone_label(timezone: Option<&str>) -> String {
     timezone
-        .filter(|value| !value.trim().is_empty())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| {
             format!("controller default ({CRONJOB_NEXT_RUN_TIMEZONE_FALLBACK} estimate)")
@@ -1100,4 +1101,25 @@ fn map_to_kv(map: &BTreeMap<String, String>) -> String {
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cronjob_timezone_label_trims_configured_timezone() {
+        assert_eq!(
+            cronjob_timezone_label(Some(" Asia/Jakarta ")),
+            "Asia/Jakarta"
+        );
+    }
+
+    #[test]
+    fn cronjob_timezone_label_falls_back_for_blank_timezone() {
+        assert_eq!(
+            cronjob_timezone_label(Some("  ")),
+            "controller default (UTC estimate)"
+        );
+    }
 }
