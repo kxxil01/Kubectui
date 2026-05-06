@@ -44,7 +44,8 @@ pub fn compute_next_schedule_time(
     }
 
     let timezone = timezone
-        .filter(|value| !value.trim().is_empty())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .unwrap_or(CRONJOB_NEXT_RUN_TIMEZONE_FALLBACK);
     let crontab = cronexpr::parse_crontab(&format!("{schedule} {timezone}")).ok()?;
     let now_rfc3339 = format_rfc3339(now);
@@ -168,6 +169,16 @@ mod tests {
         let now = parse_timestamp("2026-03-12T10:30:00+00:00").expect("timestamp");
 
         let next = compute_next_schedule_time("0 9 * * *", Some("Asia/Jakarta"), now)
+            .expect("next schedule");
+
+        assert_eq!(format_rfc3339(next), "2026-03-13T02:00:00Z");
+    }
+
+    #[test]
+    fn computes_next_schedule_time_with_trimmed_timezone() {
+        let now = parse_timestamp("2026-03-12T10:30:00+00:00").expect("timestamp");
+
+        let next = compute_next_schedule_time("0 9 * * *", Some(" Asia/Jakarta "), now)
             .expect("next schedule");
 
         assert_eq!(format_rfc3339(next), "2026-03-13T02:00:00Z");
