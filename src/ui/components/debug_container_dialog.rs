@@ -79,7 +79,7 @@ impl DebugContainerDialogState {
     }
 
     pub fn set_target_containers(&mut self, target_containers: Vec<String>) {
-        let selected_target = self.target_containers.get(self.target_index).cloned();
+        let selected_target = self.selected_target_container().cloned();
         self.target_containers = target_containers;
         self.target_index = selected_target
             .and_then(|target| {
@@ -276,7 +276,8 @@ impl DebugContainerDialogState {
     }
 
     fn selected_target_container(&self) -> Option<&String> {
-        self.target_containers.get(self.target_index)
+        self.clamped_target_index()
+            .and_then(|index| self.target_containers.get(index))
     }
 
     fn is_editing_custom_image(&self) -> bool {
@@ -351,15 +352,24 @@ impl DebugContainerDialogState {
 
     fn adjust_target_container(&mut self, forward: bool) {
         if self.target_containers.is_empty() {
+            self.target_index = 0;
             return;
         }
 
         let len = self.target_containers.len();
+        let current = self.clamped_target_index().unwrap_or(0);
         self.target_index = if forward {
-            (self.target_index + 1) % len
+            (current + 1) % len
         } else {
-            self.target_index.checked_sub(1).unwrap_or(len - 1)
+            current.checked_sub(1).unwrap_or(len - 1)
         };
+    }
+
+    fn clamped_target_index(&self) -> Option<usize> {
+        (!self.target_containers.is_empty()).then(|| {
+            self.target_index
+                .min(self.target_containers.len().saturating_sub(1))
+        })
     }
 
     fn toggle_target_container(&mut self) {
@@ -1211,6 +1221,27 @@ mod tests {
             state.selected_target_container().map(String::as_str),
             Some("sidecar")
         );
+    }
+
+    #[test]
+    fn target_container_selection_clamps_stale_index() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.loading_targets = false;
+        state.target_containers = vec!["main".to_string(), "sidecar".to_string()];
+        state.use_target_container = true;
+        state.target_index = 99;
+
+        assert_eq!(
+            state.selected_target_container().map(String::as_str),
+            Some("sidecar")
+        );
+
+        state.adjust_target_container(false);
+        assert_eq!(state.target_index, 0);
+
+        state.target_index = 99;
+        state.adjust_target_container(true);
+        assert_eq!(state.target_index, 0);
     }
 
     #[test]
