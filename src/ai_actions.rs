@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::app::ResourceRef;
 
 const DEFAULT_AI_TIMEOUT_SECS: u64 = 30;
+const MAX_AI_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_AI_MAX_OUTPUT_TOKENS: u32 = 800;
+const MAX_AI_OUTPUT_TOKENS: u32 = 32_000;
 const DEFAULT_AI_ACTION_ID: &str = "ask_ai";
 const DEFAULT_AI_ACTION_TITLE: &str = "Ask AI";
 const DEFAULT_AI_RESOURCE_KINDS: &[&str] = &[
@@ -555,8 +557,8 @@ fn normalize_ai_provider(mut ai: AiProviderConfig) -> AiProviderConfig {
         .map(|arg| arg.trim().to_string())
         .filter(|arg| !arg.is_empty())
         .collect();
-    ai.timeout_secs = ai.timeout_secs.max(1);
-    ai.max_output_tokens = ai.max_output_tokens.max(64);
+    ai.timeout_secs = ai.timeout_secs.clamp(1, MAX_AI_TIMEOUT_SECS);
+    ai.max_output_tokens = ai.max_output_tokens.clamp(64, MAX_AI_OUTPUT_TOKENS);
     ai.action = None;
     ai
 }
@@ -733,6 +735,32 @@ mod tests {
             ai_analysis_provider_label(&codex_alt),
             "Codex CLI (codex-dev)"
         );
+    }
+
+    #[test]
+    fn ai_provider_runtime_bounds_are_clamped() {
+        let mut provider = cli_provider(AiProviderKind::CodexCli);
+        provider.timeout_secs = u64::MAX;
+        provider.max_output_tokens = u32::MAX;
+
+        let result = validate_ai_actions(Some(AiConfig::single(provider)));
+        let action = result.registry.get("ask_ai").expect("default action");
+
+        assert_eq!(action.provider.timeout_secs, MAX_AI_TIMEOUT_SECS);
+        assert_eq!(action.provider.max_output_tokens, MAX_AI_OUTPUT_TOKENS);
+    }
+
+    #[test]
+    fn ai_provider_runtime_minimums_are_clamped() {
+        let mut provider = cli_provider(AiProviderKind::CodexCli);
+        provider.timeout_secs = 0;
+        provider.max_output_tokens = 0;
+
+        let result = validate_ai_actions(Some(AiConfig::single(provider)));
+        let action = result.registry.get("ask_ai").expect("default action");
+
+        assert_eq!(action.provider.timeout_secs, 1);
+        assert_eq!(action.provider.max_output_tokens, 64);
     }
 
     #[test]
