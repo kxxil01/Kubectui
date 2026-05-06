@@ -3353,8 +3353,10 @@ mod tests {
             namespace: "default".to_string(),
             ..DeploymentInfo::default()
         }];
+        let initial_timestamp = AppTimestamp::from_second(1_000).expect("valid timestamp");
         snap.namespaces_count = 1;
         snap.snapshot_version = 41;
+        snap.last_updated = Some(initial_timestamp);
         state.snapshot_dirty = true;
         state.publish_snapshot();
 
@@ -3368,6 +3370,11 @@ mod tests {
         assert_eq!(snapshot.pods[0].name, "pod-b");
         assert_eq!(snapshot.snapshot_version, 42);
         assert_eq!(snapshot.namespaces_count, 1);
+        assert!(
+            snapshot
+                .last_updated
+                .is_some_and(|ts| ts > initial_timestamp)
+        );
     }
 
     #[test]
@@ -3389,7 +3396,9 @@ mod tests {
             ready_replicas: 3,
             ..StatefulSetInfo::default()
         }];
+        let initial_timestamp = AppTimestamp::from_second(1_000).expect("valid timestamp");
         snap.snapshot_version = 10;
+        snap.last_updated = Some(initial_timestamp);
         state.snapshot_dirty = true;
         state.publish_snapshot();
 
@@ -3407,6 +3416,39 @@ mod tests {
         assert_eq!(snapshot.deployments[0].ready, "1/5");
         assert_eq!(snapshot.statefulsets[0].desired_replicas, 1);
         assert_eq!(snapshot.snapshot_version, 12);
+        assert!(
+            snapshot
+                .last_updated
+                .is_some_and(|ts| ts > initial_timestamp)
+        );
+    }
+
+    #[test]
+    fn optimistic_noop_preserves_snapshot_freshness_timestamp() {
+        let mut state = GlobalState::default();
+        let snap = Arc::make_mut(&mut state.snapshot);
+        snap.deployments = vec![DeploymentInfo {
+            name: "deploy-a".to_string(),
+            namespace: "default".to_string(),
+            desired_replicas: 2,
+            ready_replicas: 2,
+            ready: "2/2".to_string(),
+            ..DeploymentInfo::default()
+        }];
+        let initial_timestamp = AppTimestamp::from_second(1_000).expect("valid timestamp");
+        snap.snapshot_version = 10;
+        snap.last_updated = Some(initial_timestamp);
+        state.snapshot_dirty = true;
+        state.publish_snapshot();
+
+        state.apply_optimistic_scale(
+            &ResourceRef::Deployment("deploy-a".to_string(), "default".to_string()),
+            2,
+        );
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.snapshot_version, 10);
+        assert_eq!(snapshot.last_updated, Some(initial_timestamp));
     }
 
     #[tokio::test]
