@@ -12,6 +12,8 @@ use crate::ui::{
     cursor_visible_input_line, loading_spinner_char, truncate_message, wrapped_line_count,
 };
 
+const MAX_REPLICA_INPUT_DIGITS: usize = 3;
+
 /// Field focus for keyboard navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScaleField {
@@ -89,7 +91,9 @@ impl ScaleDialogState {
     /// Handles a scale action and updates state accordingly.
     pub fn handle_action(&mut self, action: ScaleAction) {
         match action {
-            ScaleAction::AddChar(c) if c.is_ascii_digit() => {
+            ScaleAction::AddChar(c)
+                if c.is_ascii_digit() && self.input_buffer.len() < MAX_REPLICA_INPUT_DIGITS =>
+            {
                 self.input_buffer.push(c);
                 self.validate_and_update();
             }
@@ -525,6 +529,15 @@ mod tests {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.handle_action(ScaleAction::AddChar('5'));
         assert_eq!(state.input_buffer, "5");
+    }
+
+    #[test]
+    fn digit_input_caps_to_max_replica_width() {
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+        for digit in ['9', '9', '9', '9'] {
+            state.handle_action(ScaleAction::AddChar(digit));
+        }
+        assert_eq!(state.input_buffer, "999");
     }
 
     #[test]
