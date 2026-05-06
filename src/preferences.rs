@@ -14,6 +14,7 @@ fn default_true() -> bool {
 
 /// Per-view sort + column preferences.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ViewPreferences {
     /// Column ID to sort by (e.g. "age", "status", "restarts").
     #[serde(default)]
@@ -48,6 +49,7 @@ impl Default for ViewPreferences {
 
 /// Saved log investigation presets.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LogPresetPreferences {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pod_logs: Vec<PodLogPreset>,
@@ -57,6 +59,7 @@ pub struct LogPresetPreferences {
 
 /// Global user preferences.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UserPreferences {
     #[serde(default)]
     pub views: HashMap<String, ViewPreferences>,
@@ -68,6 +71,7 @@ pub struct UserPreferences {
 
 /// Per-cluster preference overrides.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClusterPreferences {
     #[serde(default)]
     pub views: HashMap<String, ViewPreferences>,

@@ -63,6 +63,7 @@ pub enum LogQueryMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PodLogPreset {
     pub name: String,
     #[serde(default)]
@@ -76,6 +77,7 @@ pub struct PodLogPreset {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkloadLogPreset {
     pub name: String,
     #[serde(default)]

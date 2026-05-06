@@ -385,6 +385,44 @@ mod tests {
     }
 
     #[test]
+    fn load_ai_config_from_path_rejects_unknown_preference_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-config-unknown-preferences-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","preferences":{"views":{"pods":{"sort_column":"age","sort_direction":"desc"}}}}"#,
+        )
+        .expect("write config");
+
+        let err =
+            load_ai_config_from_path(&path).expect_err("unknown preference keys should fail fast");
+        assert!(err.contains("unknown field `sort_direction`"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_ai_config_from_path_rejects_unknown_workspace_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-config-unknown-workspace-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","preferences":{"workspaces":{"banks":[{"name":"prod","namespace":"prod","view":"pods","hotkey":"Alt+1","typo":true}]}}}"#,
+        )
+        .expect("write config");
+
+        let err =
+            load_ai_config_from_path(&path).expect_err("unknown workspace keys should fail fast");
+        assert!(err.contains("unknown field `typo`"), "{err}");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn load_config_trims_namespace() {
         let path = std::env::temp_dir().join(format!(
             "kubectui-namespace-config-{}.json",
