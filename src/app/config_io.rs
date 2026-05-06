@@ -18,6 +18,7 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct AppConfig {
+    #[serde(default = "default_namespace")]
     namespace: String,
     #[serde(default)]
     theme: Option<String>,
@@ -42,6 +43,10 @@ pub(super) struct AppConfig {
 
 fn default_refresh_interval() -> u64 {
     30
+}
+
+fn default_namespace() -> String {
+    "all".to_string()
 }
 
 fn default_workbench_height() -> u16 {
@@ -320,6 +325,23 @@ mod tests {
 
         let app = load_config_from_path(&path);
         assert_eq!(app.get_namespace(), "prod");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_config_defaults_missing_namespace() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-missing-namespace-config-{}.json",
+            std::process::id()
+        ));
+        fs::write(&path, r#"{"ai":{"providers":[{"provider":"codex_cli"}]}}"#)
+            .expect("write config");
+
+        let app = load_config_from_path(&path);
+
+        assert_eq!(app.get_namespace(), "all");
+        assert_eq!(app.ai_config.expect("ai config").providers.len(), 1);
 
         let _ = fs::remove_file(path);
     }
