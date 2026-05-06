@@ -1168,20 +1168,12 @@ impl CommandPalette {
         let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.runbooks = runbooks
             .into_iter()
-            .map(|runbook| {
-                let mut aliases = runbook.aliases;
-                aliases.push(runbook.title.to_ascii_lowercase());
-                aliases.push("runbook".into());
-                aliases.push("incident".into());
-                aliases.sort();
-                aliases.dedup();
-                PaletteRunbookAction {
-                    id: runbook.id,
-                    title: runbook.title,
-                    aliases,
-                    shortcut: runbook.shortcut,
-                    resource: resource.clone(),
-                }
+            .map(|runbook| PaletteRunbookAction {
+                id: runbook.id,
+                title: runbook.title,
+                aliases: runbook.aliases,
+                shortcut: runbook.shortcut,
+                resource: resource.clone(),
             })
             .collect();
         self.update_loaded_entries(selected_entry);
