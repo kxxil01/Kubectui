@@ -23,6 +23,8 @@ use crate::{
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
+pub(crate) const MAX_SEARCH_QUERY_CHARS: usize = 256;
+
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
 }
@@ -3103,7 +3105,10 @@ impl AppState {
             _ if ctrl_char(key, 'u') => {
                 self.clear_search_query();
             }
-            KeyCode::Char(c) if plain_shortcut(key) => {
+            KeyCode::Char(c)
+                if plain_shortcut(key)
+                    && self.search_query.chars().count() < MAX_SEARCH_QUERY_CHARS =>
+            {
                 insert_char_at_cursor(&mut self.search_query, &mut self.search_cursor, c);
             }
             _ => {}
