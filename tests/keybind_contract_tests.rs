@@ -536,6 +536,23 @@ fn readme_lists_exact_quit_sequence() {
 }
 
 #[test]
+fn readme_lists_mouse_controls() {
+    let readme = include_str!("../README.md");
+    assert!(
+        readme.contains("| Mouse wheel | Scroll pane under pointer |"),
+        "README must document pointer-targeted wheel scrolling"
+    );
+    assert!(
+        readme.contains("| Left click | Focus panes, choose sidebar/workbench tabs, select rows |"),
+        "README must document left click focus and selection"
+    );
+    assert!(
+        readme.contains("| Left click selected row | Open detail |"),
+        "README must document row activation click"
+    );
+}
+
+#[test]
 fn readme_documents_exec_workbench_control_handoff() {
     let readme = include_str!("../README.md");
     assert!(
