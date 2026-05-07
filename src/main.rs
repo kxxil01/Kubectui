@@ -121,13 +121,6 @@ fn watch_update_needs_flux_refresh(update: &WatchUpdate) -> bool {
     update.resource == WatchedResource::Flux && matches!(&update.data, WatchPayload::Flux { .. })
 }
 
-fn should_mark_snapshot_dirty_after_watch(
-    _flux_changed: bool,
-    _flux_refresh_requested: bool,
-) -> bool {
-    true
-}
-
 fn should_include_flux_in_auto_refresh(auto_refresh_count: u64) -> bool {
     auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY)
 }
@@ -3860,10 +3853,7 @@ pub(crate) async fn run_app_inner(
                     {
                         needs_redraw = true;
                     }
-                    let flux_refresh_requested = false;
-                    if should_mark_snapshot_dirty_after_watch(flux_changed, flux_refresh_requested) {
-                        snapshot_dirty = true;
-                    }
+                    snapshot_dirty = true;
                     if watched_resource == WatchedResource::Namespaces {
                         needs_redraw = true;
                         app.set_available_namespaces(global_state.namespaces().to_vec());
