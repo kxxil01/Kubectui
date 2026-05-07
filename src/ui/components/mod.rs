@@ -42,7 +42,7 @@ pub use scale_dialog::{
 pub use workbench::render_workbench;
 
 use ratatui::{
-    layout::{Alignment, Rect},
+    layout::{HorizontalAlignment, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -479,7 +479,7 @@ pub fn render_header(
                     .border_style(theme.border_active_style())
                     .style(Style::default().bg(theme.header_bg)),
             )
-            .alignment(Alignment::Left),
+            .alignment(HorizontalAlignment::Left),
         area,
     );
 

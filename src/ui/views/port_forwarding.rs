@@ -73,7 +73,7 @@ pub fn render_port_forwarding(
                 Span::styled(icon, Style::default().fg(icon_color)),
                 Span::styled(msg, theme.inactive_style()),
             ]))
-            .alignment(ratatui::layout::Alignment::Center)
+            .alignment(ratatui::layout::HorizontalAlignment::Center)
             .block(crate::ui::components::content_block(
                 &format!(
                     "{}Port Forwarding",

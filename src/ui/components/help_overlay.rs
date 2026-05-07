@@ -12,7 +12,10 @@ use ratatui::{
     },
 };
 
-use crate::ui::{components::default_theme, keybindings::LOG_PRESET_KEYS_HINT, wrapped_line_count};
+use crate::ui::{
+    centered_rect_by_size, components::default_theme, keybindings::LOG_PRESET_KEYS_HINT,
+    wrapped_line_count,
+};
 use crate::{app::DetailViewState, policy::DetailAction};
 
 #[derive(Debug, Clone, Default)]
@@ -370,7 +373,7 @@ impl HelpOverlay {
 
         let popup_width = 60u16.min(area.width.saturating_sub(4));
         let popup_height = 30u16.min(area.height.saturating_sub(4));
-        let popup = centered_rect(popup_width, popup_height, area);
+        let popup = centered_rect_by_size(popup_width, popup_height, area);
         frame.render_widget(Clear, popup);
 
         let block = Block::default()
@@ -583,12 +586,6 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
     }
 
     bindings
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-    Rect::new(x, y, width.min(area.width), height.min(area.height))
 }
 
 #[cfg(test)]

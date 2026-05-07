@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, HorizontalAlignment, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
@@ -16,7 +16,7 @@ use crate::ui::keybindings::{
     CtrlScrollAction, ctrl_char, ctrl_scroll_action, edit_key, plain_shortcut,
 };
 use crate::ui::{
-    clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
+    centered_rect, clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
     delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
     move_cursor_home, move_cursor_left, move_cursor_right, truncate_line_content, truncate_message,
     wrap_span_groups, wrapped_line_count,
@@ -452,7 +452,7 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
         .split(popup);
 
     frame.render_widget(
-        Paragraph::new(header_lines).alignment(Alignment::Center),
+        Paragraph::new(header_lines).alignment(HorizontalAlignment::Center),
         chunks[0],
     );
 
@@ -577,7 +577,7 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
     render_vertical_scrollbar(frame, notes_inner, notes_total, notes_position);
 
     frame.render_widget(
-        Paragraph::new(footer_lines).alignment(Alignment::Center),
+        Paragraph::new(footer_lines).alignment(HorizontalAlignment::Center),
         chunks[7],
     );
 }
@@ -763,7 +763,7 @@ fn render_button(frame: &mut Frame, area: Rect, label: &str, focused: bool, enab
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![Span::styled(format!(" {label} "), style)]))
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -776,25 +776,6 @@ fn render_button(frame: &mut Frame, area: Rect, label: &str, focused: bool, enab
             ),
         area,
     );
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
 
 fn sanitize_namespaces(mut namespaces: Vec<String>) -> Vec<String> {

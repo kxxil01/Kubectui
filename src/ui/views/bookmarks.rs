@@ -68,7 +68,7 @@ pub fn render_bookmarks(
                 Span::styled("○ ", Style::default().fg(theme.fg_dim)),
                 Span::styled(message, theme.inactive_style()),
             ]))
-            .alignment(ratatui::layout::Alignment::Center)
+            .alignment(ratatui::layout::HorizontalAlignment::Center)
             .block(content_block("Bookmarks", focused)),
             area,
         );

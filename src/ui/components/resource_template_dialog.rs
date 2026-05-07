@@ -1,7 +1,7 @@
 //! Resource template dialog for bounded create/apply flows.
 
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, HorizontalAlignment, Layout, Rect},
     prelude::{Frame, Line, Span, Style},
     widgets::{
         Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
@@ -338,7 +338,7 @@ pub fn render_resource_template_dialog(
         Paragraph::new(title_lines)
             .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: false })
-            .alignment(Alignment::Center),
+            .alignment(HorizontalAlignment::Center),
         chunks[0],
     );
 
@@ -466,7 +466,7 @@ pub fn render_resource_template_dialog(
     frame.render_widget(
         Paragraph::new(button_line)
             .block(Block::default().borders(Borders::LEFT | Borders::RIGHT))
-            .alignment(Alignment::Center),
+            .alignment(HorizontalAlignment::Center),
         chunks[3],
     );
 

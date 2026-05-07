@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, HorizontalAlignment, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
@@ -295,7 +295,7 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     let title_widget = Paragraph::new(title_lines)
         .block(Block::default().borders(Borders::ALL))
         .wrap(ratatui::widgets::Wrap { trim: false })
-        .alignment(Alignment::Center);
+        .alignment(HorizontalAlignment::Center);
     frame.render_widget(title_widget, chunks[0]);
 
     // Metadata section
@@ -356,14 +356,14 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
 
     let buttons_widget = Paragraph::new(button_line)
         .block(Block::default().borders(Borders::ALL))
-        .alignment(Alignment::Center);
+        .alignment(HorizontalAlignment::Center);
     frame.render_widget(buttons_widget, chunks[4]);
 
     // Footer with key hints
     let footer_widget = Paragraph::new(footer_lines)
         .wrap(ratatui::widgets::Wrap { trim: false })
         .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center);
+        .alignment(HorizontalAlignment::Center);
     frame.render_widget(footer_widget, chunks[5]);
 }
 

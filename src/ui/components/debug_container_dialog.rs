@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, HorizontalAlignment, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
@@ -15,7 +15,7 @@ use crate::ui::keybindings::{
     CtrlScrollAction, ctrl_char, ctrl_scroll_action, edit_key, plain_shortcut,
 };
 use crate::ui::{
-    clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
+    centered_rect, clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
     delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
     move_cursor_home, move_cursor_left, move_cursor_right, truncate_line_content, truncate_message,
     wrap_span_groups, wrapped_line_count,
@@ -479,7 +479,7 @@ pub fn render_debug_container_dialog(
         .split(popup);
 
     frame.render_widget(
-        Paragraph::new(header_lines).alignment(Alignment::Center),
+        Paragraph::new(header_lines).alignment(HorizontalAlignment::Center),
         chunks[0],
     );
 
@@ -663,7 +663,7 @@ pub fn render_debug_container_dialog(
     render_vertical_scrollbar(frame, chunks[6], body_total, body_position);
 
     frame.render_widget(
-        Paragraph::new(footer_lines).alignment(Alignment::Center),
+        Paragraph::new(footer_lines).alignment(HorizontalAlignment::Center),
         chunks[7],
     );
 }
@@ -807,25 +807,6 @@ fn button_style(focused: bool) -> Style {
 
 fn focus_marker(focused: bool) -> &'static str {
     if focused { ">" } else { " " }
-}
-
-fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - height_percent) / 2),
-            Constraint::Percentage(height_percent),
-            Constraint::Percentage((100 - height_percent) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - width_percent) / 2),
-            Constraint::Percentage(width_percent),
-            Constraint::Percentage((100 - width_percent) / 2),
-        ])
-        .split(vertical[1])[1]
 }
 
 #[cfg(test)]
