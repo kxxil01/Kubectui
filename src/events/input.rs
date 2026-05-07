@@ -3,7 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::{
-    app::{AppAction, AppState, Focus, sidebar_rows},
+    app::{AppAction, AppState, ContentPaneFocus, Focus, sidebar_rows},
     ui::{MouseRegions, rect_contains},
     workbench::WorkbenchTabState,
 };
@@ -51,8 +51,13 @@ pub fn route_mouse_input(
                             return app_state.sidebar_activate();
                         }
                     }
+                } else if let Some(area) = regions.secondary
+                    && rect_contains(area, mouse.column, mouse.row)
+                {
+                    focus_content_secondary_pane(app_state);
                 } else if rect_contains(regions.content, mouse.column, mouse.row) {
                     app_state.focus = Focus::Content;
+                    app_state.content_pane_focus = ContentPaneFocus::List;
                     if app_state.detail_view.is_none()
                         && let Some(total) = content_total
                         && let Some(selected) = mouse_content_row_at(
@@ -93,8 +98,21 @@ fn focus_mouse_region(
         }
     } else if rect_contains(regions.sidebar, column, row) {
         app_state.focus = Focus::Sidebar;
+    } else if regions
+        .secondary
+        .is_some_and(|area| rect_contains(area, column, row))
+    {
+        focus_content_secondary_pane(app_state);
     } else if rect_contains(regions.content, column, row) {
         app_state.focus = Focus::Content;
+        app_state.content_pane_focus = ContentPaneFocus::List;
+    }
+}
+
+fn focus_content_secondary_pane(app_state: &mut AppState) {
+    if app_state.view().supports_secondary_pane_scroll() && app_state.detail_view.is_none() {
+        app_state.focus = Focus::Content;
+        app_state.content_pane_focus = ContentPaneFocus::Secondary;
     }
 }
 
@@ -954,6 +972,7 @@ mod tests {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
             content: Rect::new(28, 3, 92, 20),
+            secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
         };
         let mut app = AppState::default();
@@ -981,6 +1000,7 @@ mod tests {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
             content: Rect::new(28, 3, 92, 20),
+            secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
         };
         let mut app = AppState::default();
@@ -1007,6 +1027,38 @@ mod tests {
     }
 
     #[test]
+    fn mouse_scroll_targets_secondary_content_pane() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 30),
+            content: Rect::new(28, 3, 92, 16),
+            secondary: Some(Rect::new(28, 19, 92, 14)),
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.view = crate::app::AppView::Projects;
+        app.focus = Focus::Sidebar;
+        app.selected_idx = 4;
+        app.content_detail_scroll = 0;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 30,
+                row: 22,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Content);
+        assert_eq!(app.content_pane_focus(), ContentPaneFocus::Secondary);
+        assert_eq!(app.selected_idx, 4);
+        assert_eq!(app.content_detail_scroll, 1);
+    }
+
+    #[test]
     fn mouse_non_scroll_events_are_noops() {
         let mut app = AppState::default();
 
@@ -1026,6 +1078,7 @@ mod tests {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
             content: Rect::new(28, 3, 92, 20),
+            secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
         };
         let mut app = AppState::default();
@@ -1076,6 +1129,7 @@ mod tests {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
             content: Rect::new(28, 3, 92, 12),
+            secondary: None,
             workbench: None,
         };
         let mut app = AppState::default();
@@ -1102,10 +1156,41 @@ mod tests {
     }
 
     #[test]
+    fn mouse_left_click_focuses_secondary_content_pane_without_selecting_row() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 30),
+            content: Rect::new(28, 3, 92, 16),
+            secondary: Some(Rect::new(28, 19, 92, 14)),
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.view = crate::app::AppView::Projects;
+        app.focus = Focus::Sidebar;
+        app.selected_idx = 7;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 22,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(100),
+        );
+
+        assert_eq!(app.focus, Focus::Content);
+        assert_eq!(app.content_pane_focus(), ContentPaneFocus::Secondary);
+        assert_eq!(app.selected_idx, 7);
+    }
+
+    #[test]
     fn mouse_left_click_ignores_content_header_and_empty_tables() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
             content: Rect::new(28, 3, 92, 12),
+            secondary: None,
             workbench: None,
         };
         let mut app = AppState::default();
@@ -1143,6 +1228,7 @@ mod tests {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
             content: Rect::new(28, 3, 92, 20),
+            secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
         };
         let mut app = AppState::default();
@@ -1182,6 +1268,7 @@ mod tests {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
             content: Rect::new(28, 3, 92, 20),
+            secondary: None,
             workbench: None,
         };
         let mut app = AppState::default();
@@ -1209,6 +1296,7 @@ mod tests {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 40),
             content: Rect::new(28, 3, 92, 40),
+            secondary: None,
             workbench: None,
         };
         let mut app = AppState::default();

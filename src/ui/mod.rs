@@ -399,6 +399,7 @@ pub(crate) struct ResourceTableConfig<'a> {
 pub struct MouseRegions {
     pub sidebar: Rect,
     pub content: Rect,
+    pub secondary: Option<Rect>,
     pub workbench: Option<Rect>,
 }
 
@@ -444,7 +445,7 @@ pub fn mouse_regions(
         ])
         .split(body_root[0]);
 
-    let content = if app.is_search_mode() || !app.search_query().is_empty() {
+    let mut content = if app.is_search_mode() || !app.search_query().is_empty() {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
@@ -452,12 +453,35 @@ pub fn mouse_regions(
     } else {
         body[1]
     };
+    let secondary = secondary_mouse_region(app.view(), content);
+    if let Some((primary, detail)) = secondary {
+        content = primary;
+        return Some(MouseRegions {
+            sidebar: body[0],
+            content,
+            secondary: Some(detail),
+            workbench: (app.workbench().open && body_root[1].height > 0).then_some(body_root[1]),
+        });
+    }
 
     Some(MouseRegions {
         sidebar: body[0],
         content,
+        secondary: None,
         workbench: (app.workbench().open && body_root[1].height > 0).then_some(body_root[1]),
     })
+}
+
+fn secondary_mouse_region(view: AppView, content: Rect) -> Option<(Rect, Rect)> {
+    match view {
+        AppView::Projects => Some(vertical_primary_detail_chunks(content, 60, 8, 24)),
+        AppView::Governance => Some(vertical_primary_detail_chunks(content, 58, 8, 24)),
+        AppView::Roles
+        | AppView::ClusterRoles
+        | AppView::RoleBindings
+        | AppView::ClusterRoleBindings => Some(vertical_primary_detail_chunks(content, 58, 8, 24)),
+        _ => None,
+    }
 }
 
 pub fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
@@ -3366,6 +3390,28 @@ mod tests {
 
         assert_eq!(filtered.content.y, unfiltered.content.y + 1);
         assert_eq!(filtered.content.height, unfiltered.content.height - 1);
+    }
+
+    #[test]
+    fn mouse_regions_split_secondary_pane_for_supported_views() {
+        let mut app = AppState::default();
+        app.view = AppView::Projects;
+        let regions = mouse_regions(
+            &app,
+            &ClusterSnapshot::default(),
+            ratatui::layout::Size {
+                width: 120,
+                height: 40,
+            },
+        )
+        .expect("mouse regions should exist");
+        let secondary = regions.secondary.expect("secondary region");
+
+        assert_eq!(regions.content.x, secondary.x);
+        assert_eq!(regions.content.width, secondary.width);
+        assert_eq!(secondary.y, regions.content.y + regions.content.height);
+        assert!(regions.content.height > 0);
+        assert!(secondary.height > 0);
     }
 
     #[test]
