@@ -18,9 +18,9 @@ Examples:
 Single command flow:
   1) run quality gate
   2) bump version locally
-  3) commit release on main
-  4) push main
-  5) create + push tag
+  3) commit release on release branch
+  4) open + squash-merge release PR to main
+  5) create + push tag from merged main
 USAGE
 }
 
@@ -243,6 +243,7 @@ run_quality_gate() {
 
 ensure_release_tooling() {
   require_cmd cargo
+  require_cmd gh
   require_cmd git
   require_cmd sed
 }
@@ -260,11 +261,49 @@ apply_version_and_commit() {
   git commit -m "chore: release ${tag}"
 }
 
-push_main_and_verify() {
+open_and_merge_release_pr() {
+  local tag="$1"
+  local branch="$2"
+
+  git push -u origin "$branch"
+
+  local pr_body
+  pr_body="$(mktemp)"
+  cat >"$pr_body" <<EOF
+**Why**
+- Release ${tag}.
+
+**How**
+- Bump Cargo package version for ${tag}.
+
+**Tests**
+- \`cargo fmt --all -- --check\`
+- \`cargo clippy --all-targets --all-features -- -D warnings\`
+- \`cargo test --all-targets --all-features\`
+EOF
+
+  local pr_url pr_number
+  pr_url="$(gh pr create \
+    --base main \
+    --head "$branch" \
+    --title "chore: release ${tag}" \
+    --body-file "$pr_body")"
+  rm -f "$pr_body"
+  pr_number="${pr_url##*/}"
+
+  gh pr merge "$pr_number" \
+    --squash \
+    --delete-branch \
+    --admin \
+    --subject "chore: release ${tag}"
+}
+
+sync_merged_main_and_verify() {
   local expected_version="$1"
 
-  git push origin main
   git fetch origin main --tags >/dev/null
+  git switch main >/dev/null
+  git merge --ff-only origin/main >/dev/null
 
   local remote_version
   remote_version="$(git show origin/main:"$CARGO_TOML" | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/')"
@@ -300,8 +339,11 @@ release_and_publish() {
   run_quality_gate
   echo
 
+  local release_branch="chore/release-${tag}"
+  git switch -c "$release_branch"
   apply_version_and_commit "$new_version" "$tag"
-  push_main_and_verify "$new_version"
+  open_and_merge_release_pr "$tag" "$release_branch"
+  sync_merged_main_and_verify "$new_version"
   publish_tag "$tag"
 }
 
