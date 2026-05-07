@@ -83,6 +83,19 @@ pub fn route_mouse_input(
             }
             AppAction::None
         }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(regions) = regions
+                && let Some(area) = regions.workbench
+                && app_state.workbench().open
+                && workbench_resize_hit(area, mouse.column, mouse.row)
+            {
+                let bottom = area.y.saturating_add(area.height);
+                let height = bottom.saturating_sub(mouse.row).max(1);
+                app_state.workbench.set_open_and_height(true, height);
+                app_state.focus = Focus::Workbench;
+            }
+            AppAction::None
+        }
         _ => AppAction::None,
     }
 }
@@ -198,6 +211,13 @@ fn workbench_tab_at(
     }
 
     None
+}
+
+fn workbench_resize_hit(workbench: ratatui::layout::Rect, column: u16, row: u16) -> bool {
+    column >= workbench.x
+        && column < workbench.x.saturating_add(workbench.width)
+        && row <= workbench.y.saturating_add(1)
+        && row < workbench.y.saturating_add(workbench.height)
 }
 
 fn sidebar_row_at(sidebar: ratatui::layout::Rect, column: u16, row: u16) -> Option<usize> {
@@ -1341,6 +1361,61 @@ mod tests {
 
         assert_eq!(app.focus, Focus::Workbench);
         assert_eq!(app.workbench.active_tab, 1);
+    }
+
+    #[test]
+    fn mouse_drag_resizes_workbench_from_top_border() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.workbench.open = true;
+        app.workbench.height = 10;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 40,
+                row: 21,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Workbench);
+        assert_eq!(app.workbench.height, 12);
+    }
+
+    #[test]
+    fn mouse_drag_inside_workbench_does_not_resize() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.workbench.open = true;
+        app.workbench.height = 10;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 40,
+                row: 26,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.workbench.height, 10);
     }
 
     #[test]

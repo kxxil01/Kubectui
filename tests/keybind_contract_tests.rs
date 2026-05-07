@@ -550,6 +550,10 @@ fn readme_lists_mouse_controls() {
         readme.contains("| Left click selected row | Open detail |"),
         "README must document row activation click"
     );
+    assert!(
+        readme.contains("| Drag workbench top border | Resize workbench |"),
+        "README must document workbench mouse resize"
+    );
 }
 
 #[test]

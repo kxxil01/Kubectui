@@ -134,6 +134,7 @@ Press `?` in-app for the full list. Summary:
 | Mouse wheel | Scroll pane under pointer |
 | Left click | Focus panes, choose sidebar/workbench tabs, select rows |
 | Left click selected row | Open detail |
+| Drag workbench top border | Resize workbench |
 
 ### Global
 
