@@ -59,6 +59,7 @@ pub fn selected_crd<'a>(
         .and_then(|&idx| crds.get(idx))
 }
 
+#[derive(Clone, Copy)]
 pub struct CrdPickerPane<'a> {
     pub crds: &'a [CustomResourceDefinitionInfo],
     pub is_loading: bool,
