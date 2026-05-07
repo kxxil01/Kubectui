@@ -617,10 +617,12 @@ impl AppView {
     }
 
     pub(crate) fn index(self) -> usize {
-        Self::ORDER
-            .iter()
-            .position(|view| *view == self)
-            .expect("AppView::ORDER must contain all enum variants")
+        let index = Self::ORDER.iter().position(|view| *view == self);
+        debug_assert!(
+            index.is_some(),
+            "AppView::ORDER must contain all enum variants"
+        );
+        index.unwrap_or(0)
     }
 
     fn from_index(index: usize) -> Self {
