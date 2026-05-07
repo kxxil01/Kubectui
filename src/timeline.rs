@@ -103,9 +103,7 @@ pub fn build_timeline(
         .collect();
 
     for &(action_idx, action_ts) in &action_indices {
-        let window_end = action_ts
-            .checked_add(window)
-            .expect("correlation window should stay in range");
+        let window_end = action_ts.checked_add(window).unwrap_or(action_ts);
         for entry in timeline.iter_mut().skip(action_idx + 1) {
             if entry.sort_timestamp() > window_end {
                 break;

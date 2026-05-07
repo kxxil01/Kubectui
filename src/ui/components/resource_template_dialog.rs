@@ -98,12 +98,15 @@ impl ResourceTemplateDialogState {
 
     pub fn prev_field(&mut self) {
         let fields = self.visible_fields();
+        let Some(last) = fields.last().copied() else {
+            return;
+        };
         let current = fields
             .iter()
             .position(|field| *field == self.focus_field)
             .unwrap_or(0);
         self.focus_field = if current == 0 {
-            *fields.last().expect("visible fields")
+            last
         } else {
             fields[current - 1]
         };

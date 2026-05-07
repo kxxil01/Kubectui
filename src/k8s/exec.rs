@@ -686,9 +686,7 @@ fn drain_exec_utf8_output(buffer: &mut Vec<u8>, final_flush: bool) -> Option<Str
             Err(err) => {
                 let valid_up_to = err.valid_up_to();
                 if valid_up_to > 0 {
-                    output.push_str(
-                        std::str::from_utf8(&buffer[..valid_up_to]).expect("valid UTF-8 prefix"),
-                    );
+                    output.push_str(&String::from_utf8_lossy(&buffer[..valid_up_to]));
                     buffer.drain(..valid_up_to);
                     continue;
                 }

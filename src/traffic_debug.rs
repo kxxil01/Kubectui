@@ -1112,8 +1112,7 @@ fn gateway_route_ref_for<'a>(
         return None;
     }
     let (parent_ref, cross_namespace_parent_blocked) =
-        select_gateway_parent_attachment(gateway, route.namespace, &matching_parent_refs)
-            .expect("matching parent refs are not empty");
+        select_gateway_parent_attachment(gateway, route.namespace, &matching_parent_refs)?;
     let resolutions = route
         .backend_refs
         .iter()
