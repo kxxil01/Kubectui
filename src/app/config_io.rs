@@ -151,7 +151,7 @@ pub fn load_ai_config_from_path(path: &Path) -> Result<Option<AiConfig>, String>
 }
 
 /// Saves app namespace config to a given path.
-pub fn save_config_to_path(app: &AppState, path: &Path) {
+pub fn save_config_to_path(app: &AppState, path: &Path) -> bool {
     let theme_name = crate::ui::theme::active_theme().name;
     let collapsed_nav_groups = crate::app::sidebar::all_groups()
         .filter(|group| app.collapsed_groups.contains(group))
@@ -177,7 +177,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
             "failed to create config directory '{}': {err}",
             parent.display()
         );
-        return;
+        return false;
     }
 
     let serialized = match serde_json::to_string(&cfg) {
@@ -187,7 +187,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
                 "failed to serialize app config for '{}': {err}",
                 path.display()
             );
-            return;
+            return false;
         }
     };
     let mut tmp = None;
@@ -225,7 +225,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
                 path.display()
             );
         }
-        return;
+        return false;
     };
     if let Err(err) = fs::rename(&tmp, path) {
         log::warn!(
@@ -234,7 +234,9 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
             tmp.display()
         );
         let _ = fs::remove_file(&tmp);
+        return false;
     }
+    true
 }
 
 /// Loads app config from ~/.kube/kubectui-config.json.
@@ -254,10 +256,13 @@ pub fn load_config() -> AppState {
 }
 
 /// Saves app config to ~/.kube/kubectui-config.json.
-pub fn save_config(app: &AppState) {
+pub fn save_config(app: &AppState) -> bool {
     match config_path() {
         Some(path) => save_config_to_path(app, &path),
-        None => log::warn!("home directory is unavailable; skipping app config save"),
+        None => {
+            log::warn!("home directory is unavailable; skipping app config save");
+            false
+        }
     }
 }
 
@@ -527,7 +532,7 @@ mod tests {
 
         let mut app = crate::app::AppState::default();
         app.set_namespace("prod".to_string());
-        save_config_to_path(&app, &path);
+        assert!(save_config_to_path(&app, &path));
 
         let saved = fs::read_to_string(&path).expect("read saved config");
         assert!(saved.contains(r#""namespace":"prod""#));
@@ -539,5 +544,28 @@ mod tests {
         let _ = fs::remove_file(path);
         let _ = fs::remove_file(legacy_tmp);
         let _ = fs::remove_dir(dir);
+    }
+
+    #[test]
+    fn save_config_reports_failure_when_parent_is_not_directory() {
+        let marker = std::env::temp_dir().join(format!(
+            "kubectui-config-parent-file-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&marker);
+        fs::write(&marker, "sentinel").expect("marker file");
+        let path = marker.join("kubectui-config.json");
+
+        let mut app = crate::app::AppState::default();
+        app.set_namespace("demo".to_string());
+
+        assert!(!save_config_to_path(&app, &path));
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_to_string(&marker).expect("marker contents"),
+            "sentinel"
+        );
+
+        let _ = fs::remove_file(marker);
     }
 }

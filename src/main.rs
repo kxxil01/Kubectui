@@ -8232,8 +8232,7 @@ pub(crate) async fn run_app_inner(
                 let should_save =
                     last_config_save.is_none_or(|t| t.elapsed() >= Duration::from_secs(1));
                 if should_save {
-                    app.needs_config_save = false;
-                    save_config(&app);
+                    app.needs_config_save = !save_config(&app);
                     last_config_save = Some(Instant::now());
                 }
             }
@@ -8242,7 +8241,7 @@ pub(crate) async fn run_app_inner(
 
     // Final flush: persist any pending config changes before exit
     if app.needs_config_save {
-        save_config(&app);
+        let _ = save_config(&app);
     }
 
     for (_, handle) in exec_sessions.drain() {
