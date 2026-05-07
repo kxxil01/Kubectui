@@ -679,7 +679,7 @@ pub fn node_role(node: &Node) -> String {
 }
 
 /// Converts a raw Kubernetes `Node` into a [`NodeInfo`] DTO.
-pub fn node_to_info(node: Node) -> NodeInfo {
+pub fn node_to_info(node: &Node) -> NodeInfo {
     let alloc = node
         .status
         .as_ref()
@@ -693,7 +693,7 @@ pub fn node_to_info(node: Node) -> NodeInfo {
 
     NodeInfo {
         name,
-        ready: node_condition_true(&node, "Ready"),
+        ready: node_condition_true(node, "Ready"),
         kubelet_version: node
             .status
             .as_ref()
@@ -706,7 +706,7 @@ pub fn node_to_info(node: Node) -> NodeInfo {
             .and_then(|status| status.node_info.as_ref())
             .map(|info| info.os_image.clone())
             .unwrap_or_else(|| "unknown".to_string()),
-        role: node_role(&node),
+        role: node_role(node),
         cpu_allocatable: alloc.and_then(|a| a.get("cpu").map(|q| q.0.clone())),
         memory_allocatable: alloc.and_then(|a| a.get("memory").map(|q| q.0.clone())),
         created_at: node
@@ -714,10 +714,10 @@ pub fn node_to_info(node: Node) -> NodeInfo {
             .creation_timestamp
             .as_ref()
             .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0)),
-        memory_pressure: node_condition_true(&node, "MemoryPressure"),
-        disk_pressure: node_condition_true(&node, "DiskPressure"),
-        pid_pressure: node_condition_true(&node, "PIDPressure"),
-        network_unavailable: node_condition_true(&node, "NetworkUnavailable"),
+        memory_pressure: node_condition_true(node, "MemoryPressure"),
+        disk_pressure: node_condition_true(node, "DiskPressure"),
+        pid_pressure: node_condition_true(node, "PIDPressure"),
+        network_unavailable: node_condition_true(node, "NetworkUnavailable"),
         unschedulable: node
             .spec
             .as_ref()
@@ -907,7 +907,7 @@ pub(crate) fn format_job_duration(
 }
 
 /// Converts a raw `ServiceAccount` into a [`ServiceAccountInfo`] DTO.
-pub fn service_account_to_info(sa: ServiceAccount) -> ServiceAccountInfo {
+pub fn service_account_to_info(sa: &ServiceAccount) -> ServiceAccountInfo {
     let m = extract_common_metadata(&sa.metadata);
     ServiceAccountInfo {
         name: m.name,
@@ -935,7 +935,7 @@ pub fn service_account_to_info(sa: ServiceAccount) -> ServiceAccountInfo {
 }
 
 /// Converts a raw `Role` into a [`RoleInfo`] DTO.
-pub fn role_to_info(role: Role) -> RoleInfo {
+pub fn role_to_info(role: &Role) -> RoleInfo {
     let m = extract_common_metadata(&role.metadata);
     RoleInfo {
         name: m.name,
@@ -970,7 +970,7 @@ pub fn role_binding_to_info(rb: RoleBinding) -> RoleBindingInfo {
 }
 
 /// Converts a raw `ClusterRole` into a [`ClusterRoleInfo`] DTO.
-pub fn cluster_role_to_info(cr: ClusterRole) -> ClusterRoleInfo {
+pub fn cluster_role_to_info(cr: &ClusterRole) -> ClusterRoleInfo {
     let m = extract_common_metadata(&cr.metadata);
     ClusterRoleInfo {
         name: m.name,
@@ -1004,7 +1004,7 @@ pub fn cluster_role_binding_to_info(crb: ClusterRoleBinding) -> ClusterRoleBindi
 
 /// Converts a raw `ResourceQuota` into a [`ResourceQuotaInfo`] DTO.
 pub fn resource_quota_to_info(
-    quota: k8s_openapi::api::core::v1::ResourceQuota,
+    quota: &k8s_openapi::api::core::v1::ResourceQuota,
 ) -> ResourceQuotaInfo {
     let m = extract_common_metadata(&quota.metadata);
     let hard = quota
@@ -1041,7 +1041,7 @@ pub fn resource_quota_to_info(
 }
 
 /// Converts a raw `LimitRange` into a [`LimitRangeInfo`] DTO.
-pub fn limit_range_to_info(range: k8s_openapi::api::core::v1::LimitRange) -> LimitRangeInfo {
+pub fn limit_range_to_info(range: &k8s_openapi::api::core::v1::LimitRange) -> LimitRangeInfo {
     let m = extract_common_metadata(&range.metadata);
     let limits = range
         .spec
@@ -1073,7 +1073,7 @@ pub fn limit_range_to_info(range: k8s_openapi::api::core::v1::LimitRange) -> Lim
 }
 
 /// Converts a raw `PodDisruptionBudget` into a [`PodDisruptionBudgetInfo`] DTO.
-pub fn pdb_to_info(pdb: PodDisruptionBudget) -> PodDisruptionBudgetInfo {
+pub fn pdb_to_info(pdb: &PodDisruptionBudget) -> PodDisruptionBudgetInfo {
     let m = extract_common_metadata(&pdb.metadata);
     let spec = pdb.spec.as_ref();
     let status = pdb.status.as_ref();
@@ -1131,7 +1131,7 @@ pub fn endpoint_to_info(ep: Endpoints) -> EndpointInfo {
 }
 
 /// Converts a raw `Ingress` into an [`IngressInfo`] DTO.
-pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
+pub fn ingress_to_info(ing: &Ingress) -> IngressInfo {
     let m = extract_common_metadata(&ing.metadata);
     let class = ing.spec.as_ref().and_then(|s| s.ingress_class_name.clone());
     let hosts: Vec<String> = ing
@@ -1219,7 +1219,7 @@ pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
 }
 
 /// Converts a raw `IngressClass` into an [`IngressClassInfo`] DTO.
-pub fn ingress_class_to_info(ic: IngressClass) -> IngressClassInfo {
+pub fn ingress_class_to_info(ic: &IngressClass) -> IngressClassInfo {
     let is_default = ic
         .metadata
         .annotations
@@ -1242,7 +1242,7 @@ pub fn ingress_class_to_info(ic: IngressClass) -> IngressClassInfo {
 }
 
 /// Converts a raw `NetworkPolicy` into a [`NetworkPolicyInfo`] DTO.
-pub fn network_policy_to_info(np: NetworkPolicy) -> NetworkPolicyInfo {
+pub fn network_policy_to_info(np: &NetworkPolicy) -> NetworkPolicyInfo {
     let m = extract_common_metadata(&np.metadata);
     let spec = np.spec.as_ref();
     let pod_selector_spec = spec
@@ -1438,7 +1438,7 @@ pub fn secret_to_info(s: k8s_openapi::api::core::v1::Secret) -> SecretInfo {
 }
 
 /// Converts a raw `HorizontalPodAutoscaler` into an [`HpaInfo`] DTO.
-pub fn hpa_to_info(hpa: HorizontalPodAutoscaler) -> HpaInfo {
+pub fn hpa_to_info(hpa: &HorizontalPodAutoscaler) -> HpaInfo {
     let m = extract_common_metadata(&hpa.metadata);
     let spec = hpa.spec.as_ref();
     let status = hpa.status.as_ref();
@@ -1459,7 +1459,7 @@ pub fn hpa_to_info(hpa: HorizontalPodAutoscaler) -> HpaInfo {
 }
 
 /// Converts a raw `PersistentVolumeClaim` into a [`PvcInfo`] DTO.
-pub fn pvc_to_info(pvc: PersistentVolumeClaim) -> PvcInfo {
+pub fn pvc_to_info(pvc: &PersistentVolumeClaim) -> PvcInfo {
     let m = extract_common_metadata(&pvc.metadata);
     let spec = pvc.spec.as_ref();
     let status = pvc.status.as_ref();
@@ -1487,7 +1487,7 @@ pub fn pvc_to_info(pvc: PersistentVolumeClaim) -> PvcInfo {
 }
 
 /// Converts a raw `PersistentVolume` into a [`PvInfo`] DTO.
-pub fn pv_to_info(pv: PersistentVolume) -> PvInfo {
+pub fn pv_to_info(pv: &PersistentVolume) -> PvInfo {
     let m = extract_common_metadata(&pv.metadata);
     let spec = pv.spec.as_ref();
     let access_modes = spec
@@ -1547,7 +1547,7 @@ pub fn storage_class_to_info(sc: StorageClass) -> StorageClassInfo {
 }
 
 /// Converts a raw `Namespace` into a [`NamespaceInfo`] DTO.
-pub fn namespace_to_info(ns: Namespace) -> NamespaceInfo {
+pub fn namespace_to_info(ns: &Namespace) -> NamespaceInfo {
     let m = extract_common_metadata(&ns.metadata);
     NamespaceInfo {
         name: m.name,
@@ -1559,7 +1559,7 @@ pub fn namespace_to_info(ns: Namespace) -> NamespaceInfo {
 }
 
 /// Converts namespace metadata into the canonical lightweight [`NamespaceInfo`] DTO.
-pub fn namespace_metadata_to_info(ns: PartialObjectMeta<Namespace>) -> NamespaceInfo {
+pub fn namespace_metadata_to_info(ns: &PartialObjectMeta<Namespace>) -> NamespaceInfo {
     let m = extract_common_metadata(&ns.metadata);
     NamespaceInfo {
         name: m.name,
@@ -1728,13 +1728,14 @@ mod tests {
 
     #[test]
     fn namespace_to_info_uses_metadata_status_rules() {
-        let info = namespace_to_info(Namespace {
+        let namespace = Namespace {
             metadata: ObjectMeta {
                 name: Some("default".to_string()),
                 ..Default::default()
             },
             ..Default::default()
-        });
+        };
+        let info = namespace_to_info(&namespace);
 
         assert_eq!(info.name, "default");
         assert_eq!(info.status, "Active");
@@ -1742,7 +1743,7 @@ mod tests {
 
     #[test]
     fn namespace_metadata_to_info_marks_terminating_namespaces() {
-        let info = namespace_metadata_to_info(PartialObjectMeta::<Namespace> {
+        let namespace = PartialObjectMeta::<Namespace> {
             metadata: ObjectMeta {
                 name: Some("staging".to_string()),
                 deletion_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
@@ -1751,7 +1752,8 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
-        });
+        };
+        let info = namespace_metadata_to_info(&namespace);
 
         assert_eq!(info.name, "staging");
         assert_eq!(info.status, "Terminating");

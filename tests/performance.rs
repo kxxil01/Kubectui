@@ -260,13 +260,13 @@ fn benchmark_palette_extension_resource_merge_cache_hit_under_10ms() {
 
     let base = collect_global_resource_search_entries(&snapshot);
     let extension = collect_extension_resource_search_entries(&crd, &instances);
-    let warmed = merge_resource_search_entries(base.clone(), extension.clone());
+    let warmed = merge_resource_search_entries(base.clone(), &extension);
     assert_eq!(warmed.len(), 6_000);
     let mut palette = CommandPalette::default();
 
     let start = Instant::now();
     for _ in 0..1_000 {
-        let entries = merge_resource_search_entries(base.clone(), extension.clone());
+        let entries = merge_resource_search_entries(base.clone(), &extension);
         palette.set_resource_entries(entries);
     }
     let elapsed = start.elapsed();

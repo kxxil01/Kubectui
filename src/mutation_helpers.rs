@@ -446,7 +446,7 @@ pub fn queue_deferred_refreshes(
     tx: &tokio::sync::mpsc::Sender<DeferredRefreshTrigger>,
     context_generation: u64,
     view: AppView,
-    namespace: Option<String>,
+    namespace: Option<&String>,
     dispatch: RefreshDispatch,
     delays_secs: &[u64],
 ) {
@@ -456,7 +456,7 @@ pub fn queue_deferred_refreshes(
             context_generation,
             view,
             dispatch,
-            namespace: namespace.clone(),
+            namespace: namespace.cloned(),
         };
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(delay_secs)).await;

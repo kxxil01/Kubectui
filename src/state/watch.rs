@@ -271,7 +271,7 @@ macro_rules! define_watcher {
         name: $name:ident,
         k8s_type: $K8sType:ty,
         dto_type: $DtoType:ty,
-        converter: $converter:path,
+        converter: $converter:expr,
         resource_variant: $variant:ident,
         scope: namespaced $(,)?
     ) => {
@@ -281,7 +281,7 @@ macro_rules! define_watcher {
         name: $name:ident,
         k8s_type: $K8sType:ty,
         dto_type: $DtoType:ty,
-        converter: $converter:path,
+        converter: $converter:expr,
         resource_variant: $variant:ident,
         scope: cluster $(,)?
     ) => {
@@ -291,7 +291,7 @@ macro_rules! define_watcher {
         name: $name:ident,
         k8s_type: $K8sType:ty,
         dto_type: $DtoType:ty,
-        converter: $converter:path,
+        converter: $converter:expr,
         resource_variant: $variant:ident,
         scope: cluster,
         mode: metadata $(,)?
@@ -308,7 +308,7 @@ macro_rules! define_watcher {
             watcher::metadata_watcher
         );
     };
-    (@impl $name:ident, $ApiType:ty, $EventType:ty, $DtoType:ty, $converter:path, $variant:ident, $scope:ident, $watch_fn:path) => {
+    (@impl $name:ident, $ApiType:ty, $EventType:ty, $DtoType:ty, $converter:expr, $variant:ident, $scope:ident, $watch_fn:path) => {
         paste::paste! {
             pub(crate) fn [<sort_ $name s>](items: &mut [$DtoType]) {
                 define_watcher!(@sort items, $scope);
@@ -772,7 +772,7 @@ define_watcher! {
     name: node,
     k8s_type: Node,
     dto_type: NodeInfo,
-    converter: node_to_info,
+    converter: |item| node_to_info(&item),
     resource_variant: Nodes,
     scope: cluster,
 }
@@ -808,7 +808,7 @@ define_watcher! {
     name: namespace,
     k8s_type: Namespace,
     dto_type: NamespaceInfo,
-    converter: namespace_metadata_to_info,
+    converter: |item| namespace_metadata_to_info(&item),
     resource_variant: Namespaces,
     scope: cluster,
     mode: metadata,
@@ -856,7 +856,7 @@ impl WatchManager {
     pub fn start_watches(
         &mut self,
         client: &K8sClient,
-        watch_tx: mpsc::Sender<WatchUpdate>,
+        watch_tx: &mpsc::Sender<WatchUpdate>,
         watcher_config: watcher::Config,
         initial_scope: RefreshScope,
     ) {
@@ -870,7 +870,7 @@ impl WatchManager {
     pub fn ensure_watches(
         &mut self,
         client: &K8sClient,
-        watch_tx: mpsc::Sender<WatchUpdate>,
+        watch_tx: &mpsc::Sender<WatchUpdate>,
         scope: RefreshScope,
     ) {
         let scope = normalize_watch_scope(scope);

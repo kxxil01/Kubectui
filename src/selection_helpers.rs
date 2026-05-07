@@ -576,7 +576,7 @@ fn is_flux_custom_resource_ref(resource: &ResourceRef) -> bool {
 /// Returns the resource context (with node/cronjob metadata) for the selection.
 pub fn resource_action_context(
     snapshot: &ClusterSnapshot,
-    resource: ResourceRef,
+    resource: &ResourceRef,
 ) -> ResourceActionContext {
     let (effective_logs_resource, cronjob_history_logs_available) = match &resource {
         ResourceRef::CronJob(name, ns) => snapshot
@@ -613,7 +613,7 @@ pub fn resource_action_context(
         _ => None,
     };
     ResourceActionContext {
-        resource,
+        resource: resource.clone(),
         node_unschedulable,
         cronjob_suspended,
         cronjob_history_logs_available,
@@ -628,7 +628,7 @@ pub fn selected_resource_context(
     snapshot: &ClusterSnapshot,
 ) -> Option<ResourceActionContext> {
     let resource = selected_resource(app, snapshot)?;
-    Some(resource_action_context(snapshot, resource))
+    Some(resource_action_context(snapshot, &resource))
 }
 
 /// Looks up cached RBAC authorization for a detail action on the given resource.
@@ -885,7 +885,7 @@ pub fn open_detail_for_resource(
     snapshot: &ClusterSnapshot,
     client: &K8sClient,
     detail_tx: &tokio::sync::mpsc::Sender<DetailAsyncResult>,
-    resource: ResourceRef,
+    resource: &ResourceRef,
     detail_request_seq: &mut u64,
     context_generation: u64,
 ) {

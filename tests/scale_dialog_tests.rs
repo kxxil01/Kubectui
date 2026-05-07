@@ -16,12 +16,12 @@ fn test_increment_decrement_logic() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "app", "prod", 5);
 
     // Test increment
-    state.handle_action(ScaleAction::Increment);
+    state.handle_action(&ScaleAction::Increment);
     assert_eq!(state.input_buffer, "6");
 
     // Test decrement
-    state.handle_action(ScaleAction::Decrement);
-    state.handle_action(ScaleAction::Decrement);
+    state.handle_action(&ScaleAction::Decrement);
+    state.handle_action(&ScaleAction::Decrement);
     assert_eq!(state.input_buffer, "4");
 }
 
@@ -29,8 +29,8 @@ fn test_increment_decrement_logic() {
 fn test_digit_input() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "web", "dev", 1);
 
-    state.handle_action(ScaleAction::AddChar('2'));
-    state.handle_action(ScaleAction::AddChar('5'));
+    state.handle_action(&ScaleAction::AddChar('2'));
+    state.handle_action(&ScaleAction::AddChar('5'));
     assert_eq!(state.input_buffer, "25");
     assert!(state.error_message.is_none());
 }
@@ -40,7 +40,7 @@ fn test_digit_input_caps_at_max_replica_width() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "web", "dev", 1);
 
     for digit in ['1', '2', '3', '4', '5'] {
-        state.handle_action(ScaleAction::AddChar(digit));
+        state.handle_action(&ScaleAction::AddChar(digit));
     }
 
     assert_eq!(state.input_buffer, "123");
@@ -51,15 +51,15 @@ fn test_validation_range() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "api", "test", 5);
 
     // Add valid digits
-    state.handle_action(ScaleAction::AddChar('5'));
-    state.handle_action(ScaleAction::AddChar('0'));
+    state.handle_action(&ScaleAction::AddChar('5'));
+    state.handle_action(&ScaleAction::AddChar('0'));
     assert!(state.error_message.is_none());
 
     // Clear and try invalid range
     state.input_buffer.clear();
-    state.handle_action(ScaleAction::AddChar('1'));
-    state.handle_action(ScaleAction::AddChar('0'));
-    state.handle_action(ScaleAction::AddChar('1'));
+    state.handle_action(&ScaleAction::AddChar('1'));
+    state.handle_action(&ScaleAction::AddChar('0'));
+    state.handle_action(&ScaleAction::AddChar('1'));
     assert!(state.error_message.is_some());
 }
 
@@ -67,8 +67,8 @@ fn test_validation_range() {
 fn test_warning_for_large_jump() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "db", "prod", 5);
 
-    state.handle_action(ScaleAction::AddChar('8'));
-    state.handle_action(ScaleAction::AddChar('0'));
+    state.handle_action(&ScaleAction::AddChar('8'));
+    state.handle_action(&ScaleAction::AddChar('0'));
 
     assert!(state.warning_message.is_some());
     assert!(state.warning_message.as_ref().unwrap().contains("75"));
@@ -114,9 +114,9 @@ fn test_is_valid_check() {
 fn test_submit_updates_desired_replicas() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "service", "dev", 3);
 
-    state.handle_action(ScaleAction::AddChar('1'));
-    state.handle_action(ScaleAction::AddChar('0'));
-    state.handle_action(ScaleAction::Submit);
+    state.handle_action(&ScaleAction::AddChar('1'));
+    state.handle_action(&ScaleAction::AddChar('0'));
+    state.handle_action(&ScaleAction::Submit);
 
     assert_eq!(state.desired_replicas, "10");
 }
@@ -136,11 +136,11 @@ fn test_pending_flag() {
 fn test_decrement_at_zero_boundary() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "minimal", "edge", 0);
 
-    state.handle_action(ScaleAction::Decrement);
+    state.handle_action(&ScaleAction::Decrement);
     assert_eq!(state.input_buffer, "0");
 
     // Try decrementing again
-    state.handle_action(ScaleAction::Decrement);
+    state.handle_action(&ScaleAction::Decrement);
     assert_eq!(state.input_buffer, "0");
 }
 
@@ -148,10 +148,10 @@ fn test_decrement_at_zero_boundary() {
 fn test_increment_at_max_boundary() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "maxed", "prod", 100);
 
-    state.handle_action(ScaleAction::Increment);
+    state.handle_action(&ScaleAction::Increment);
     assert_eq!(state.input_buffer, "100");
 
     // Try incrementing again
-    state.handle_action(ScaleAction::Increment);
+    state.handle_action(&ScaleAction::Increment);
     assert_eq!(state.input_buffer, "100");
 }

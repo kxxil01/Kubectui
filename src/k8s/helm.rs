@@ -72,7 +72,7 @@ pub async fn fetch_release_history(
     let release_name = release_name.to_string();
     let namespace = namespace.to_string();
     tokio::task::spawn_blocking(move || {
-        fetch_release_history_blocking(&release_name, &namespace, kube_context)
+        fetch_release_history_blocking(&release_name, &namespace, kube_context.as_ref())
     })
     .await
     .map_err(|err| anyhow!("Helm history task failed: {err}"))?
@@ -91,13 +91,13 @@ pub async fn fetch_release_values_diff(
         let current_values = fetch_release_values_blocking(
             &release_name,
             &namespace,
-            kube_context.clone(),
+            kube_context.as_ref(),
             current_revision,
         )?;
         let target_values = fetch_release_values_blocking(
             &release_name,
             &namespace,
-            kube_context,
+            kube_context.as_ref(),
             target_revision,
         )?;
         let diff = crate::resource_diff::build_yaml_document_diff(
@@ -125,7 +125,7 @@ pub async fn fetch_release_manifest(
     let release_name = release_name.to_string();
     let namespace = namespace.to_string();
     tokio::task::spawn_blocking(move || {
-        fetch_release_manifest_blocking(&release_name, &namespace, kube_context, revision)
+        fetch_release_manifest_blocking(&release_name, &namespace, kube_context.as_ref(), revision)
     })
     .await
     .map_err(|err| anyhow!("Helm manifest task failed: {err}"))?
@@ -226,10 +226,10 @@ fn parse_helm_repositories(yaml_content: &str) -> Option<Vec<HelmRepoInfo>> {
 fn fetch_release_history_blocking(
     release_name: &str,
     namespace: &str,
-    kube_context: Option<String>,
+    kube_context: Option<&String>,
 ) -> Result<HelmHistoryResult> {
     let cli = helm_cli_info().map_err(anyhow::Error::msg)?;
-    let mut args = base_command_args(kube_context.as_deref(), namespace);
+    let mut args = base_command_args(kube_context.map(String::as_str), namespace);
     args.extend([
         "history".to_string(),
         release_name.to_string(),
@@ -261,11 +261,11 @@ fn fetch_release_history_blocking(
 fn fetch_release_values_blocking(
     release_name: &str,
     namespace: &str,
-    kube_context: Option<String>,
+    kube_context: Option<&String>,
     revision: i32,
 ) -> Result<String> {
     helm_cli_info().map_err(anyhow::Error::msg)?;
-    let mut args = base_command_args(kube_context.as_deref(), namespace);
+    let mut args = base_command_args(kube_context.map(String::as_str), namespace);
     args.extend([
         "get".to_string(),
         "values".to_string(),
@@ -282,11 +282,11 @@ fn fetch_release_values_blocking(
 fn fetch_release_manifest_blocking(
     release_name: &str,
     namespace: &str,
-    kube_context: Option<String>,
+    kube_context: Option<&String>,
     revision: i32,
 ) -> Result<String> {
     helm_cli_info().map_err(anyhow::Error::msg)?;
-    let mut args = base_command_args(kube_context.as_deref(), namespace);
+    let mut args = base_command_args(kube_context.map(String::as_str), namespace);
     args.extend([
         "get".to_string(),
         "manifest".to_string(),

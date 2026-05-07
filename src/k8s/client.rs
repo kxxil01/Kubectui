@@ -95,7 +95,7 @@ pub struct K8sClient {
 
 /// Generates a namespace-scoped fetch method on `K8sClient`.
 macro_rules! fetch_namespaced {
-    ($(#[$meta:meta])* $method:ident, $k8s_type:ty, $info_type:ty, $converter:path, $resource_name:literal) => {
+    ($(#[$meta:meta])* $method:ident, $k8s_type:ty, $info_type:ty, $converter:expr, $resource_name:literal) => {
         $(#[$meta])*
         pub async fn $method(&self, namespace: Option<&str>) -> Result<Vec<$info_type>> {
             let api: Api<$k8s_type> = match namespace {
@@ -121,7 +121,7 @@ macro_rules! fetch_namespaced {
 
 /// Generates a cluster-scoped fetch method on `K8sClient`.
 macro_rules! fetch_cluster {
-    ($(#[$meta:meta])* $method:ident, $k8s_type:ty, $info_type:ty, $converter:path, $resource_name:literal) => {
+    ($(#[$meta:meta])* $method:ident, $k8s_type:ty, $info_type:ty, $converter:expr, $resource_name:literal) => {
         $(#[$meta])*
         pub async fn $method(&self) -> Result<Vec<$info_type>> {
             let api: Api<$k8s_type> = Api::all(self.client.clone());
@@ -437,7 +437,7 @@ impl K8sClient {
                 "failed fetching namespaces".to_string()
             })
             .await?
-            .into_iter()
+            .iter()
             .map(namespace_metadata_to_info)
             .collect();
         items.sort_unstable_by(|left, right| left.name.cmp(&right.name));
@@ -483,12 +483,12 @@ impl K8sClient {
     fetch_namespaced!(
         /// Fetches service accounts from a namespace or all namespaces.
         fetch_service_accounts, ServiceAccount, ServiceAccountInfo,
-        crate::k8s::conversions::service_account_to_info, "serviceaccounts"
+        |item| crate::k8s::conversions::service_account_to_info(&item), "serviceaccounts"
     );
     fetch_namespaced!(
         /// Fetches roles from a namespace or all namespaces.
         fetch_roles, Role, RoleInfo,
-        crate::k8s::conversions::role_to_info, "roles"
+        |item| crate::k8s::conversions::role_to_info(&item), "roles"
     );
     fetch_namespaced!(
         /// Fetches role bindings from a namespace or all namespaces.
@@ -508,17 +508,17 @@ impl K8sClient {
     fetch_namespaced!(
         /// Fetches resource quotas from a namespace or all namespaces.
         fetch_resource_quotas, ResourceQuota, ResourceQuotaInfo,
-        crate::k8s::conversions::resource_quota_to_info, "resource quotas"
+        |item| crate::k8s::conversions::resource_quota_to_info(&item), "resource quotas"
     );
     fetch_namespaced!(
         /// Fetches limit ranges from a namespace or all namespaces.
         fetch_limit_ranges, LimitRange, LimitRangeInfo,
-        crate::k8s::conversions::limit_range_to_info, "limit ranges"
+        |item| crate::k8s::conversions::limit_range_to_info(&item), "limit ranges"
     );
     fetch_namespaced!(
         /// Fetches pod disruption budgets from a namespace or all namespaces.
         fetch_pod_disruption_budgets, PodDisruptionBudget, PodDisruptionBudgetInfo,
-        crate::k8s::conversions::pdb_to_info, "pod disruption budgets"
+        |item| crate::k8s::conversions::pdb_to_info(&item), "pod disruption budgets"
     );
     fetch_namespaced!(
         /// Fetches Endpoints.
@@ -528,7 +528,7 @@ impl K8sClient {
     fetch_namespaced!(
         /// Fetches Ingresses.
         fetch_ingresses, Ingress, IngressInfo,
-        crate::k8s::conversions::ingress_to_info, "ingresses"
+        |item| crate::k8s::conversions::ingress_to_info(&item), "ingresses"
     );
     /// Fetches Gateway API Gateways when the CRD is installed.
     pub async fn fetch_gateways(&self, namespace: Option<&str>) -> Result<Vec<GatewayInfo>> {
@@ -552,7 +552,7 @@ impl K8sClient {
     fetch_namespaced!(
         /// Fetches NetworkPolicies.
         fetch_network_policies, NetworkPolicy, NetworkPolicyInfo,
-        crate::k8s::conversions::network_policy_to_info, "network policies"
+        |item| crate::k8s::conversions::network_policy_to_info(&item), "network policies"
     );
     fetch_namespaced!(
         /// Fetches ConfigMaps.
@@ -567,24 +567,24 @@ impl K8sClient {
     fetch_namespaced!(
         /// Fetches HPAs.
         fetch_hpas, HorizontalPodAutoscaler, HpaInfo,
-        crate::k8s::conversions::hpa_to_info, "HPAs"
+        |item| crate::k8s::conversions::hpa_to_info(&item), "HPAs"
     );
     fetch_namespaced!(
         /// Fetches PersistentVolumeClaims.
         fetch_pvcs, PersistentVolumeClaim, PvcInfo,
-        crate::k8s::conversions::pvc_to_info, "PVCs"
+        |item| crate::k8s::conversions::pvc_to_info(&item), "PVCs"
     );
 
     // ── Cluster-scoped resources ────────────────────────────────────
     fetch_cluster!(
         /// Fetches all nodes from the cluster.
         fetch_nodes, Node, NodeInfo,
-        crate::k8s::conversions::node_to_info, "Kubernetes nodes"
+        |item| crate::k8s::conversions::node_to_info(&item), "Kubernetes nodes"
     );
     fetch_cluster!(
         /// Fetches cluster roles.
         fetch_cluster_roles, ClusterRole, ClusterRoleInfo,
-        crate::k8s::conversions::cluster_role_to_info, "clusterroles"
+        |item| crate::k8s::conversions::cluster_role_to_info(&item), "clusterroles"
     );
     fetch_cluster!(
         /// Fetches cluster role bindings.
@@ -594,7 +594,7 @@ impl K8sClient {
     fetch_cluster!(
         /// Fetches IngressClasses.
         fetch_ingress_classes, IngressClass, IngressClassInfo,
-        crate::k8s::conversions::ingress_class_to_info, "ingress classes"
+        |item| crate::k8s::conversions::ingress_class_to_info(&item), "ingress classes"
     );
     /// Fetches Gateway API GatewayClasses when the CRD is installed.
     pub async fn fetch_gateway_classes(&self) -> Result<Vec<GatewayClassInfo>> {
@@ -603,7 +603,7 @@ impl K8sClient {
     fetch_cluster!(
         /// Fetches PersistentVolumes.
         fetch_pvs, PersistentVolume, PvInfo,
-        crate::k8s::conversions::pv_to_info, "PVs"
+        |item| crate::k8s::conversions::pv_to_info(&item), "PVs"
     );
     fetch_cluster!(
         /// Fetches StorageClasses.

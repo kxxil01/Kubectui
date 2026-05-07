@@ -402,7 +402,7 @@ async fn resolve_access_review_context(
         ));
     };
 
-    let mut resource_ctx = resource_action_context(snapshot, resource.clone());
+    let mut resource_ctx = resource_action_context(snapshot, resource);
     resource_ctx.action_authorizations = client
         .fetch_detail_action_authorizations(&resource_ctx.resource)
         .await;

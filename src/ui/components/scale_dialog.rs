@@ -89,12 +89,12 @@ impl ScaleDialogState {
     }
 
     /// Handles a scale action and updates state accordingly.
-    pub fn handle_action(&mut self, action: ScaleAction) {
+    pub fn handle_action(&mut self, action: &ScaleAction) {
         match action {
             ScaleAction::AddChar(c)
                 if c.is_ascii_digit() && self.input_buffer.len() < MAX_REPLICA_INPUT_DIGITS =>
             {
-                self.input_buffer.push(c);
+                self.input_buffer.push(*c);
                 self.validate_and_update();
             }
             ScaleAction::DeleteChar => {
@@ -513,21 +513,21 @@ mod tests {
     #[test]
     fn test_increment_logic() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
-        state.handle_action(ScaleAction::Increment);
+        state.handle_action(&ScaleAction::Increment);
         assert_eq!(state.input_buffer, "4");
     }
 
     #[test]
     fn test_decrement_logic() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
-        state.handle_action(ScaleAction::Decrement);
+        state.handle_action(&ScaleAction::Decrement);
         assert_eq!(state.input_buffer, "2");
     }
 
     #[test]
     fn test_digit_input() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
-        state.handle_action(ScaleAction::AddChar('5'));
+        state.handle_action(&ScaleAction::AddChar('5'));
         assert_eq!(state.input_buffer, "5");
     }
 
@@ -535,7 +535,7 @@ mod tests {
     fn digit_input_caps_to_max_replica_width() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         for digit in ['9', '9', '9', '9'] {
-            state.handle_action(ScaleAction::AddChar(digit));
+            state.handle_action(&ScaleAction::AddChar(digit));
         }
         assert_eq!(state.input_buffer, "999");
     }
@@ -543,16 +543,16 @@ mod tests {
     #[test]
     fn test_backspace() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
-        state.handle_action(ScaleAction::AddChar('5'));
-        state.handle_action(ScaleAction::AddChar('0'));
-        state.handle_action(ScaleAction::DeleteChar);
+        state.handle_action(&ScaleAction::AddChar('5'));
+        state.handle_action(&ScaleAction::AddChar('0'));
+        state.handle_action(&ScaleAction::DeleteChar);
         assert_eq!(state.input_buffer, "5");
     }
 
     #[test]
     fn test_backspace_edits_visible_current_replicas_when_buffer_empty() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 12);
-        state.handle_action(ScaleAction::DeleteChar);
+        state.handle_action(&ScaleAction::DeleteChar);
         assert_eq!(state.input_buffer, "1");
         assert_eq!(state.desired_replicas, "1");
     }
@@ -585,8 +585,8 @@ mod tests {
     #[test]
     fn test_large_jump_warning() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 5);
-        state.handle_action(ScaleAction::AddChar('8'));
-        state.handle_action(ScaleAction::AddChar('0'));
+        state.handle_action(&ScaleAction::AddChar('8'));
+        state.handle_action(&ScaleAction::AddChar('0'));
         assert!(state.warning_message.is_some());
     }
 
@@ -614,15 +614,15 @@ mod tests {
     #[test]
     fn test_submit_updates_desired_replicas_when_valid() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
-        state.handle_action(ScaleAction::AddChar('9'));
-        state.handle_action(ScaleAction::Submit);
+        state.handle_action(&ScaleAction::AddChar('9'));
+        state.handle_action(&ScaleAction::Submit);
         assert_eq!(state.desired_replicas, "9");
     }
 
     #[test]
     fn test_submit_keeps_current_replicas_when_input_untouched() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
-        state.handle_action(ScaleAction::Submit);
+        state.handle_action(&ScaleAction::Submit);
         assert_eq!(state.desired_replicas, "3");
     }
 
@@ -631,7 +631,7 @@ mod tests {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.input_buffer = "500".to_string();
         state.validate_and_update();
-        state.handle_action(ScaleAction::Submit);
+        state.handle_action(&ScaleAction::Submit);
         assert_eq!(state.desired_replicas, "3");
     }
 
@@ -641,18 +641,18 @@ mod tests {
         assert_eq!(state.desired_replicas_as_int(), Some(3));
         assert!(state.is_valid());
 
-        state.handle_action(ScaleAction::AddChar('7'));
+        state.handle_action(&ScaleAction::AddChar('7'));
         assert_eq!(state.desired_replicas_as_int(), Some(7));
     }
 
     #[test]
     fn test_increment_and_decrement_boundaries() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 100);
-        state.handle_action(ScaleAction::Increment);
+        state.handle_action(&ScaleAction::Increment);
         assert_eq!(state.input_buffer, "100");
 
         state.input_buffer = "0".to_string();
-        state.handle_action(ScaleAction::Decrement);
+        state.handle_action(&ScaleAction::Decrement);
         assert_eq!(state.input_buffer, "0");
     }
 
