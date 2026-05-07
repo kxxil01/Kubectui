@@ -8,3 +8,4 @@ pub mod node_debug;
 pub mod node_ops;
 pub mod rollout;
 pub mod scale;
+pub mod wait_ready;

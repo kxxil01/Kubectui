@@ -2899,6 +2899,7 @@ pub(crate) async fn run_app_inner(
     let (deferred_refresh_tx, mut deferred_refresh_rx) =
         tokio::sync::mpsc::channel::<DeferredRefreshTrigger>(32);
     let (scale_tx, mut scale_rx) = tokio::sync::mpsc::channel::<ScaleAsyncResult>(16);
+    let (wait_ready_tx, mut wait_ready_rx) = tokio::sync::mpsc::channel::<WaitReadyAsyncResult>(16);
     let (rollout_tx, mut rollout_rx) = tokio::sync::mpsc::channel::<RolloutMutationAsyncResult>(16);
     let (flux_reconcile_tx, mut flux_reconcile_rx) =
         tokio::sync::mpsc::channel::<FluxReconcileAsyncResult>(16);
@@ -4020,6 +4021,58 @@ pub(crate) async fn run_app_inner(
                             );
                             status_message_clear_at = None;
                             app.set_error(format!("Scale failed: {err}"));
+                        }
+                    }
+                }
+            }
+
+            result = wait_ready_rx.recv() => {
+                if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Wait-ready verification was cancelled because the active context changed.",
+                            true,
+                        );
+                        continue;
+                    }
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(()) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!("{} is ready.", result.resource_label),
+                                true,
+                            );
+                            apply_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!("{} is ready. Refreshing view...", result.resource_label),
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                        }
+                        Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Wait ready failed: {err}"),
+                                true,
+                            );
+                            status_message_clear_at = None;
+                            app.set_error(format!("Wait ready failed: {err}"));
                         }
                     }
                 }
@@ -7510,6 +7563,20 @@ pub(crate) async fn run_app_inner(
                         &client,
                         &cached_snapshot,
                         &rollout_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                AppAction::WaitUntilReady => {
+                    if action::wait_ready::handle_wait_until_ready(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                        &wait_ready_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
                     )

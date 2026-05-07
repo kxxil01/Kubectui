@@ -148,6 +148,7 @@ pub enum AppAction {
     ExecClearOutput,
     ExecRestartSession,
     ExecOpenExternalTerminal,
+    WaitUntilReady,
     RolloutRestart,
     ToggleRolloutPauseResume,
     ConfirmRolloutUndo,

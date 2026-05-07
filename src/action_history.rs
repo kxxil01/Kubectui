@@ -12,6 +12,7 @@ pub const MAX_ACTION_HISTORY_ENTRIES: usize = 128;
 pub enum ActionKind {
     Delete,
     Scale,
+    WaitReady,
     Restart,
     Pause,
     FluxReconcile,
@@ -34,6 +35,7 @@ impl ActionKind {
         match self {
             ActionKind::Delete => "Delete",
             ActionKind::Scale => "Scale",
+            ActionKind::WaitReady => "Wait Ready",
             ActionKind::Restart => "Restart",
             ActionKind::Pause => "Pause",
             ActionKind::FluxReconcile => "Reconcile",

@@ -467,6 +467,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs event loop (needs async K8s call)
             true
         }
+        AppAction::WaitUntilReady => {
+            // Handled in main.rs event loop (needs async K8s watch condition)
+            true
+        }
         AppAction::ToggleRolloutPauseResume
         | AppAction::ConfirmRolloutUndo
         | AppAction::ExecuteRolloutUndo => {
