@@ -508,40 +508,38 @@ fn render_compact_resource_template_dialog(
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let editable_fields = state
-        .visible_fields()
-        .into_iter()
-        .filter(|field| {
-            !matches!(
-                field,
-                ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn
-            )
-        })
-        .collect::<Vec<_>>();
-    let selected_idx = editable_fields
+    let fields = state.visible_fields();
+    let selected_idx = fields
         .iter()
         .position(|field| *field == state.focus_field)
-        .unwrap_or_else(|| editable_fields.len().saturating_sub(1));
-    let window = table_window(editable_fields.len(), selected_idx, 1);
-    let focused = editable_fields
-        .get(window.start)
+        .unwrap_or(0);
+    let focused = fields
+        .get(selected_idx)
         .copied()
         .unwrap_or(ResourceTemplateField::Name);
-    let (label, value) = match focused {
-        ResourceTemplateField::Name => ("name", state.values.name.as_str()),
-        ResourceTemplateField::Namespace => ("ns", state.values.namespace.as_str()),
-        ResourceTemplateField::Image => ("image", state.values.image.as_str()),
-        ResourceTemplateField::Replicas => ("replicas", state.values.replicas.as_str()),
-        ResourceTemplateField::ContainerPort => ("ctr-port", state.values.container_port.as_str()),
-        ResourceTemplateField::ServicePort => ("svc-port", state.values.service_port.as_str()),
-        ResourceTemplateField::ConfigKey => ("cfg-key", state.values.config_key.as_str()),
-        ResourceTemplateField::ConfigValue => ("cfg-val", state.values.config_value.as_str()),
-        ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => unreachable!(),
-    };
-    let focus = match state.focus_field {
-        ResourceTemplateField::CreateBtn => "create",
-        ResourceTemplateField::CancelBtn => "cancel",
-        _ => label,
+    let (focus, detail) = match focused {
+        ResourceTemplateField::Name => ("name", format!("name: {}", state.values.name)),
+        ResourceTemplateField::Namespace => ("ns", format!("ns: {}", state.values.namespace)),
+        ResourceTemplateField::Image => ("image", format!("image: {}", state.values.image)),
+        ResourceTemplateField::Replicas => {
+            ("replicas", format!("replicas: {}", state.values.replicas))
+        }
+        ResourceTemplateField::ContainerPort => (
+            "ctr-port",
+            format!("ctr-port: {}", state.values.container_port),
+        ),
+        ResourceTemplateField::ServicePort => (
+            "svc-port",
+            format!("svc-port: {}", state.values.service_port),
+        ),
+        ResourceTemplateField::ConfigKey => {
+            ("cfg-key", format!("cfg-key: {}", state.values.config_key))
+        }
+        ResourceTemplateField::ConfigValue => {
+            ("cfg-val", format!("cfg-val: {}", state.values.config_value))
+        }
+        ResourceTemplateField::CreateBtn => ("create", "button: create".to_string()),
+        ResourceTemplateField::CancelBtn => ("cancel", "button: cancel".to_string()),
     };
     let status = if state.pending {
         format!("{} opening editor...", loading_spinner_char())
@@ -557,12 +555,12 @@ fn render_compact_resource_template_dialog(
         compact_line(format!(
             "field {}/{} {}",
             selected_idx + 1,
-            editable_fields.len(),
+            fields.len(),
             focus
         )),
-        compact_line(format!("{label}: {value}")),
+        compact_line(detail),
         compact_line(status),
-        compact_line("tab move  type edit".to_string()),
+        compact_line("tab move  enter activate".to_string()),
     ];
     frame.render_widget(Paragraph::new(lines), inner);
 }
@@ -619,6 +617,31 @@ mod tests {
         terminal
             .draw(|frame| render_resource_template_dialog(frame, frame.area(), &state))
             .expect("compact resource template dialog should render");
+    }
+
+    #[test]
+    fn compact_template_dialog_renders_button_focus() {
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let mut state =
+            ResourceTemplateDialogState::new(ResourceTemplateKind::Deployment, "default");
+        state.focus_field = ResourceTemplateField::CreateBtn;
+
+        terminal
+            .draw(|frame| render_resource_template_dialog(frame, frame.area(), &state))
+            .expect("compact resource template dialog should render");
+
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("field 6/7 create"));
+        assert!(rendered.contains("button: create"));
+        assert!(!rendered.contains("ctr-port:"));
     }
 
     #[test]
