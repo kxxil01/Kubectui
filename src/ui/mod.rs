@@ -9,7 +9,7 @@ pub mod theme;
 pub mod views;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Margin, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Position, Rect, Size},
     prelude::Frame,
     style::{Modifier, Style},
     text::{Line, Span},
@@ -393,6 +393,66 @@ pub(crate) struct ResourceTableConfig<'a> {
     pub selected_idx: usize,
     pub widths: &'a [Constraint],
     pub sort_suffix: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseRegions {
+    pub sidebar: Rect,
+    pub content: Rect,
+    pub workbench: Option<Rect>,
+}
+
+pub fn mouse_regions(
+    app: &AppState,
+    cluster: &ClusterSnapshot,
+    size: Size,
+) -> Option<MouseRegions> {
+    let area = Rect::new(0, 0, size.width, size.height);
+    if area.height < MIN_TERMINAL_HEIGHT || area.width < MIN_TERMINAL_WIDTH {
+        return None;
+    }
+
+    let secondary_pane_active = app.content_secondary_pane_active();
+    let (status, _) = status_bar_message(app, cluster, secondary_pane_active);
+    let status_height = components::status_bar_height(area.width, &status, area.height);
+    let root = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(status_height),
+        ])
+        .split(area);
+    let body_root = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(8),
+            Constraint::Length(effective_workbench_height(
+                root[1].height,
+                app.workbench().height,
+                app.workbench().open,
+                app.workbench().maximized,
+            )),
+        ])
+        .split(root[1]);
+    let sidebar_width = effective_sidebar_width(body_root[0].width);
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(sidebar_width),
+            Constraint::Min(MIN_CONTENT_WIDTH),
+        ])
+        .split(body_root[0]);
+
+    Some(MouseRegions {
+        sidebar: body[0],
+        content: body[1],
+        workbench: (app.workbench().open && body_root[1].height > 0).then_some(body_root[1]),
+    })
+}
+
+pub fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    rect.contains(Position::new(column, row))
 }
 
 /// Renders the shared table frame: selection state, title block, table widget, and scrollbar.
@@ -3230,6 +3290,44 @@ mod tests {
         };
 
         assert_eq!(centered_rect_by_size(40, 10, area), area);
+    }
+
+    #[test]
+    fn mouse_regions_match_main_layout_with_workbench() {
+        let mut app = AppState::default();
+        app.workbench.open = true;
+        app.workbench.height = 8;
+        let regions = mouse_regions(
+            &app,
+            &ClusterSnapshot::default(),
+            ratatui::layout::Size {
+                width: 120,
+                height: 40,
+            },
+        )
+        .expect("mouse regions should exist");
+
+        assert_eq!(regions.sidebar.x, 0);
+        assert_eq!(regions.sidebar.y, 3);
+        assert_eq!(regions.sidebar.width, effective_sidebar_width(120));
+        assert_eq!(regions.content.x, regions.sidebar.width);
+        assert!(regions.content.width >= MIN_CONTENT_WIDTH);
+        assert_eq!(regions.workbench.expect("workbench region").height, 8);
+    }
+
+    #[test]
+    fn mouse_regions_are_absent_for_too_small_terminal() {
+        assert!(
+            mouse_regions(
+                &AppState::default(),
+                &ClusterSnapshot::default(),
+                ratatui::layout::Size {
+                    width: MIN_TERMINAL_WIDTH - 1,
+                    height: MIN_TERMINAL_HEIGHT,
+                }
+            )
+            .is_none()
+        );
     }
 
     #[test]
