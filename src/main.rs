@@ -928,7 +928,8 @@ fn refresh_palette_runbooks(
 ) {
     let selected = palette_action_resource(app, snapshot);
     let runbooks = registry.palette_runbooks_for(selected.as_ref());
-    app.command_palette.set_runbooks(runbooks, selected);
+    app.command_palette
+        .set_runbooks(runbooks, selected.as_ref());
 }
 
 fn palette_action_resource(
