@@ -25,12 +25,16 @@ pub fn route_mouse_input(
         MouseEventKind::ScrollDown => app_state.handle_key_event(KeyEvent::from(KeyCode::Down)),
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(regions) = regions {
-                if regions
-                    .workbench
-                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                if let Some(area) = regions.workbench
+                    && rect_contains(area, mouse.column, mouse.row)
                 {
                     if app_state.workbench().open {
                         app_state.focus = Focus::Workbench;
+                        if let Some(tab_idx) =
+                            workbench_tab_at(app_state, area, mouse.column, mouse.row)
+                        {
+                            app_state.workbench.active_tab = tab_idx;
+                        }
                     }
                 } else if rect_contains(regions.sidebar, mouse.column, mouse.row) {
                     app_state.focus = Focus::Sidebar;
@@ -89,6 +93,41 @@ fn content_row_at(
     let window = crate::ui::table_window(total, selected_idx, viewport_rows);
     let selected = window.start + row_offset;
     (selected < window.end).then_some(selected)
+}
+
+fn workbench_tab_at(
+    app_state: &AppState,
+    workbench: ratatui::layout::Rect,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    if row != workbench.y.saturating_add(1) || column <= workbench.x {
+        return None;
+    }
+
+    let mut cursor = workbench.x.saturating_add(1);
+    for (idx, tab) in app_state.workbench().tabs.iter().enumerate() {
+        let title = if tab.state.is_loading() {
+            format!(
+                " {} {} ",
+                crate::ui::loading_spinner_char(),
+                tab.state.title()
+            )
+        } else {
+            format!(" {} ", tab.state.title())
+        };
+        let width = title.chars().count() as u16;
+        let end = cursor.saturating_add(width);
+        if column >= cursor && column < end {
+            return Some(idx);
+        }
+        cursor = end.saturating_add(1);
+        if cursor >= workbench.x.saturating_add(workbench.width) {
+            return None;
+        }
+    }
+
+    None
 }
 
 fn sidebar_row_at(sidebar: ratatui::layout::Rect, column: u16, row: u16) -> Option<usize> {
@@ -839,7 +878,8 @@ mod tests {
     use super::*;
     use crate::{
         policy::ResourceActionContext,
-        workbench::{PodLogsTabState, WorkbenchTabState},
+        ui::components::port_forward_dialog::PortForwardDialog,
+        workbench::{PodLogsTabState, PortForwardTabState, WorkbenchTabState},
     };
     use crossterm::event::KeyModifiers;
     use ratatui::layout::Rect;
@@ -1009,6 +1049,45 @@ mod tests {
             Some(0),
         );
         assert_eq!(app.selected_idx, 5);
+    }
+
+    #[test]
+    fn mouse_left_click_selects_workbench_tab() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.workbench
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+                crate::app::ResourceRef::Pod("api".into(), "prod".into()),
+            )));
+        app.workbench
+            .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
+                None,
+                PortForwardDialog::default(),
+            )));
+        app.workbench.open = true;
+        app.workbench.active_tab = 0;
+
+        let first_tab_width = format!(" {} ", app.workbench.tabs[0].state.title())
+            .chars()
+            .count() as u16;
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1 + first_tab_width + 1,
+                row: 24,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Workbench);
+        assert_eq!(app.workbench.active_tab, 1);
     }
 
     #[test]
