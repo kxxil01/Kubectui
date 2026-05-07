@@ -6,7 +6,7 @@ use std::{
 };
 
 use ratatui::{
-    layout::{Alignment, Constraint, Rect},
+    layout::{Constraint, HorizontalAlignment, Rect},
     prelude::{Frame, Style},
     text::Span,
     widgets::{Cell, Paragraph, Row},
@@ -138,7 +138,7 @@ pub fn render_events(
                     format!("Failed to load events: {error}"),
                     theme.inactive_style(),
                 ))
-                .alignment(Alignment::Center)
+                .alignment(HorizontalAlignment::Center)
                 .block(crate::ui::components::content_block("Events", focused)),
                 area,
             );

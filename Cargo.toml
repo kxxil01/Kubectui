@@ -13,7 +13,13 @@ categories = ["command-line-utilities"]
 test-utils = []
 
 [dependencies]
-ratatui = "0.30.0"
+ratatui = { version = "0.30.0", default-features = false, features = [
+    "all-widgets",
+    "crossterm_0_29",
+    "layout-cache",
+    "macros",
+    "underline-color",
+] }
 tokio = { version = "1.52.2", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 kube = { version = "3.1.0", features = ["client", "ws", "runtime", "gzip"] }
 k8s-openapi = { version = "0.27.1", features = ["v1_35"] }

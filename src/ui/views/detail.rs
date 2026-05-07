@@ -1128,7 +1128,7 @@ fn render_detail_confirm_dialog(
         lines.push(Line::from(""));
         lines.push(truncate_line_content(&footer, width));
         frame.render_widget(
-            Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+            Paragraph::new(lines).alignment(ratatui::layout::HorizontalAlignment::Center),
             inner,
         );
         return;
@@ -1144,11 +1144,11 @@ fn render_detail_confirm_dialog(
         .map(|line| truncate_line_content(&line, body_width))
         .collect::<Vec<_>>();
     frame.render_widget(
-        Paragraph::new(body).alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(body).alignment(ratatui::layout::HorizontalAlignment::Center),
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(footer).alignment(ratatui::layout::HorizontalAlignment::Center),
         rows[1],
     );
 }

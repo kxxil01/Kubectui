@@ -326,7 +326,7 @@ pub fn render_flux_resources(
                     default_theme().inactive_style(),
                 ),
             ]))
-            .alignment(ratatui::layout::Alignment::Center)
+            .alignment(ratatui::layout::HorizontalAlignment::Center)
             .block(content_block("FluxCD", focused)),
             area,
         );

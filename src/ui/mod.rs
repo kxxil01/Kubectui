@@ -623,7 +623,7 @@ pub(crate) fn render_centered_message(
     no_match_text: &str,
     focused: bool,
 ) {
-    use ratatui::layout::Alignment;
+    use ratatui::layout::HorizontalAlignment;
     use ratatui::text::Line;
 
     let theme = default_theme();
@@ -665,7 +665,7 @@ pub(crate) fn render_centered_message(
 
     frame.render_widget(
         Paragraph::new(line)
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .block(components::content_block(title, focused)),
         area,
     );
@@ -2466,23 +2466,10 @@ pub(crate) fn readiness_style(
 }
 
 pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
+    area.centered(
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage(percent_y),
+    )
 }
 
 pub(crate) fn centered_rect_by_size(width: u16, height: u16, area: Rect) -> Rect {

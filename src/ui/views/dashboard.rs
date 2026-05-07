@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::sync::{LazyLock, Mutex};
 
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, HorizontalAlignment, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Gauge, LineGauge, Paragraph, Row, Table, Wrap},
@@ -956,7 +956,7 @@ fn render_overcommit_governance(
 
     if res.total_running_pods == 0 && res.total_cpu_allocatable_m == 0 {
         let msg = Paragraph::new(Span::styled("No data available", theme.inactive_style()))
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .block(block);
         frame.render_widget(msg, area);
         return;
@@ -1071,7 +1071,7 @@ fn render_consumer_panel(
 
     if consumers.is_empty() {
         let msg = Paragraph::new(Span::styled("No metrics available", theme.inactive_style()))
-            .alignment(Alignment::Center)
+            .alignment(HorizontalAlignment::Center)
             .block(block);
         frame.render_widget(msg, area);
         return;
@@ -1134,7 +1134,7 @@ fn render_namespace_utilization(
             "No metrics available (metrics-server not detected)",
             theme.inactive_style(),
         ))
-        .alignment(Alignment::Center)
+        .alignment(HorizontalAlignment::Center)
         .block(block);
         frame.render_widget(msg, area);
         return;

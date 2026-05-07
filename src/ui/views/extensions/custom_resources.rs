@@ -52,7 +52,7 @@ pub fn render_custom_resources(frame: &mut Frame, area: Rect, pane: CustomResour
                     theme.inactive_style(),
                 ),
             ]))
-            .alignment(ratatui::layout::Alignment::Center)
+            .alignment(ratatui::layout::HorizontalAlignment::Center)
             .block(crate::ui::components::content_block(
                 "Custom Resources",
                 pane.is_focused,
@@ -76,7 +76,7 @@ pub fn render_custom_resources(frame: &mut Frame, area: Rect, pane: CustomResour
                     theme.inactive_style(),
                 ),
             ]))
-            .alignment(ratatui::layout::Alignment::Center)
+            .alignment(ratatui::layout::HorizontalAlignment::Center)
             .block(crate::ui::components::content_block(
                 "Custom Resources",
                 pane.is_focused,
@@ -96,7 +96,7 @@ pub fn render_custom_resources(frame: &mut Frame, area: Rect, pane: CustomResour
                 Span::styled("○ ", Style::default().fg(theme.fg_dim)),
                 Span::styled(empty_message, theme.inactive_style()),
             ]))
-            .alignment(ratatui::layout::Alignment::Center)
+            .alignment(ratatui::layout::HorizontalAlignment::Center)
             .block(crate::ui::components::content_block(
                 "Custom Resources",
                 pane.is_focused,
