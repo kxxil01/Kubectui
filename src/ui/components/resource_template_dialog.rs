@@ -149,7 +149,9 @@ impl ResourceTemplateDialogState {
     }
 
     pub fn cursor_left(&mut self) {
-        move_cursor_left(self.active_cursor_mut());
+        if let Some((_, cursor)) = self.active_buffer_and_cursor_mut() {
+            move_cursor_left(cursor);
+        }
     }
 
     pub fn cursor_right(&mut self) {
@@ -159,7 +161,9 @@ impl ResourceTemplateDialogState {
     }
 
     pub fn cursor_home(&mut self) {
-        move_cursor_home(self.active_cursor_mut());
+        if let Some((_, cursor)) = self.active_buffer_and_cursor_mut() {
+            move_cursor_home(cursor);
+        }
     }
 
     pub fn cursor_end(&mut self) {
@@ -225,22 +229,6 @@ impl ResourceTemplateDialogState {
                 Some((&mut self.values.config_value, &mut self.config_value_cursor))
             }
             ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => None,
-        }
-    }
-
-    fn active_cursor_mut(&mut self) -> &mut usize {
-        match self.focus_field {
-            ResourceTemplateField::Name => &mut self.name_cursor,
-            ResourceTemplateField::Namespace => &mut self.namespace_cursor,
-            ResourceTemplateField::Image => &mut self.image_cursor,
-            ResourceTemplateField::Replicas => &mut self.replicas_cursor,
-            ResourceTemplateField::ContainerPort => &mut self.container_port_cursor,
-            ResourceTemplateField::ServicePort => &mut self.service_port_cursor,
-            ResourceTemplateField::ConfigKey => &mut self.config_key_cursor,
-            ResourceTemplateField::ConfigValue => &mut self.config_value_cursor,
-            ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => {
-                &mut self.name_cursor
-            }
         }
     }
 
@@ -681,6 +669,24 @@ mod tests {
 
         assert!(state.values.namespace.is_empty());
         assert_eq!(state.cursor_for(ResourceTemplateField::Namespace), 0);
+    }
+
+    #[test]
+    fn template_dialog_button_focus_does_not_mutate_input_cursors() {
+        let mut state =
+            ResourceTemplateDialogState::new(ResourceTemplateKind::Deployment, "default");
+        let original_name_cursor = state.cursor_for(ResourceTemplateField::Name);
+        state.focus_field = ResourceTemplateField::CreateBtn;
+
+        state.cursor_left();
+        state.cursor_home();
+        state.cursor_right();
+        state.cursor_end();
+
+        assert_eq!(
+            state.cursor_for(ResourceTemplateField::Name),
+            original_name_cursor
+        );
     }
 
     #[test]
