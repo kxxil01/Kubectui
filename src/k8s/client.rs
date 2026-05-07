@@ -940,6 +940,13 @@ impl K8sClient {
             }
             ResourceRef::Service(name, namespace) => {
                 let api: Api<Service> = Api::namespaced(self.client.clone(), namespace);
+                let service = api
+                    .get(name)
+                    .await
+                    .with_context(|| format!("failed fetching Service '{}'", name))?;
+                if !service_requires_load_balancer_readiness(&service) {
+                    return Ok(());
+                }
                 wait_for_condition(
                     await_condition(api, name, conditions::is_service_loadbalancer_provisioned()),
                     resource,
@@ -1817,6 +1824,10 @@ fn valid_guarded_dynamic_items(items: Vec<DeserializeGuard<DynamicObject>>) -> V
         .into_iter()
         .filter_map(|guarded| guarded.0.ok())
         .collect()
+}
+
+fn service_requires_load_balancer_readiness(service: &Service) -> bool {
+    service.spec.as_ref().and_then(|spec| spec.type_.as_deref()) == Some("LoadBalancer")
 }
 
 async fn wait_for_condition<K, F>(
@@ -3227,6 +3238,26 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].metadata.name.as_deref(), Some("valid"));
+    }
+
+    #[test]
+    fn service_load_balancer_readiness_only_waits_for_load_balancer_services() {
+        let mut cluster_ip = Service::default();
+        cluster_ip.spec = Some(k8s_openapi::api::core::v1::ServiceSpec {
+            type_: Some("ClusterIP".to_string()),
+            ..Default::default()
+        });
+        let mut load_balancer = Service::default();
+        load_balancer.spec = Some(k8s_openapi::api::core::v1::ServiceSpec {
+            type_: Some("LoadBalancer".to_string()),
+            ..Default::default()
+        });
+
+        assert!(!service_requires_load_balancer_readiness(
+            &Service::default()
+        ));
+        assert!(!service_requires_load_balancer_readiness(&cluster_ip));
+        assert!(service_requires_load_balancer_readiness(&load_balancer));
     }
 
     #[test]

@@ -574,15 +574,8 @@ async fn await_exec_output_task(task: Option<JoinHandle<()>>) {
 }
 
 async fn await_attached_process(attached: AttachedProcess) {
-    let mut task = tokio::spawn(attached.join());
-    tokio::select! {
-        result = &mut task => {
-            let _ = result;
-        }
-        _ = tokio::time::sleep(EXEC_SESSION_TEARDOWN_TIMEOUT) => {
-            task.abort();
-        }
-    }
+    attached.abort();
+    let _ = tokio::time::timeout(EXEC_SESSION_TEARDOWN_TIMEOUT, attached.join()).await;
 }
 
 async fn open_shell_process(
