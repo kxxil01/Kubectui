@@ -66,7 +66,7 @@ pub const REFERENCE_GRANT_SPEC: GatewayApiKindSpec = GatewayApiKindSpec {
 pub async fn fetch_gateway_classes(client: &Client) -> Result<Vec<GatewayClassInfo>> {
     let (version, items) = list_gateway_api_resources(client, None, GATEWAY_CLASS_SPEC).await?;
     Ok(items
-        .into_iter()
+        .iter()
         .filter_map(|item| parse_gateway_class(version, item))
         .collect())
 }
@@ -108,7 +108,7 @@ pub async fn fetch_reference_grants(
     let (version, items) =
         list_gateway_api_resources(client, namespace, REFERENCE_GRANT_SPEC).await?;
     Ok(items
-        .into_iter()
+        .iter()
         .filter_map(|item| parse_reference_grant(version, item))
         .collect())
 }
@@ -149,7 +149,7 @@ async fn list_gateway_api_resources(
     Ok((spec.versions[0], Vec::new()))
 }
 
-fn parse_gateway_class(version: &str, item: DynamicObject) -> Option<GatewayClassInfo> {
+fn parse_gateway_class(version: &str, item: &DynamicObject) -> Option<GatewayClassInfo> {
     let metadata = extract_common_metadata(&item.metadata);
     Some(GatewayClassInfo {
         name: metadata.name,
@@ -286,7 +286,7 @@ fn parse_route_common(version: &str, item: DynamicObject) -> Option<ParsedRouteC
     ))
 }
 
-fn parse_reference_grant(version: &str, item: DynamicObject) -> Option<ReferenceGrantInfo> {
+fn parse_reference_grant(version: &str, item: &DynamicObject) -> Option<ReferenceGrantInfo> {
     let metadata = extract_common_metadata(&item.metadata);
     Some(ReferenceGrantInfo {
         name: metadata.name,
