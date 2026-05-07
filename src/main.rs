@@ -35,7 +35,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crossterm::event::{Event, EventStream, KeyCode, MouseButton, MouseEventKind};
+use crossterm::event::{Event, EventStream, KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
@@ -56,7 +56,7 @@ use kubectui::{
         load_ai_config_from_path, load_config, save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
-    events::{apply_action, mouse_content_row_at, route_mouse_input},
+    events::{apply_action, mouse_background_blocked, mouse_content_row_at, route_mouse_input},
     extensions::{
         ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
         PreparedExtensionCommand, load_extensions_registry, prepare_command,
@@ -136,6 +136,34 @@ fn activate_selected_content_resource(
     } else {
         app.sidebar_activate()
     }
+}
+
+fn mouse_activates_selected_content(
+    app: &AppState,
+    mouse: MouseEvent,
+    regions: Option<&kubectui::ui::MouseRegions>,
+    content_total: Option<usize>,
+) -> bool {
+    if mouse_background_blocked(app) {
+        return false;
+    }
+
+    regions
+        .zip(content_total)
+        .and_then(|(regions, total)| {
+            mouse_content_row_at(
+                regions.content,
+                app.selected_idx(),
+                total,
+                mouse.column,
+                mouse.row,
+            )
+        })
+        .is_some_and(|row| {
+            row == app.selected_idx()
+                && app.focus == kubectui::app::Focus::Content
+                && app.detail_view.is_none()
+        })
 }
 
 fn should_exit_extension_instances(key: crossterm::event::KeyEvent, app: &AppState) -> bool {
@@ -5574,23 +5602,12 @@ pub(crate) async fn run_app_inner(
                             )
                             .len()
                         });
-                        let activates_selected_content = regions
-                            .as_ref()
-                            .zip(content_total)
-                            .and_then(|(regions, total)| {
-                                mouse_content_row_at(
-                                    regions.content,
-                                    app.selected_idx(),
-                                    total,
-                                    mouse.column,
-                                    mouse.row,
-                                )
-                            })
-                            .is_some_and(|row| {
-                                row == app.selected_idx()
-                                    && app.focus == kubectui::app::Focus::Content
-                                    && app.detail_view.is_none()
-                            });
+                        let activates_selected_content = mouse_activates_selected_content(
+                            &app,
+                            mouse,
+                            regions.as_ref(),
+                            content_total,
+                        );
                         let action = route_mouse_input(mouse, &mut app, regions.as_ref(), content_total);
                         if action == AppAction::None && activates_selected_content {
                             activate_selected_content_resource(&mut app, &cached_snapshot)

@@ -2,4 +2,7 @@
 
 pub mod input;
 
-pub use input::{apply_action, mouse_content_row_at, route_keyboard_input, route_mouse_input};
+pub use input::{
+    apply_action, mouse_background_blocked, mouse_content_row_at, route_keyboard_input,
+    route_mouse_input,
+};
