@@ -1567,51 +1567,6 @@ fn watch_update_needs_flux_refresh_ignores_non_flux_payloads() {
 }
 
 #[test]
-fn should_refresh_from_flux_watch_for_flux_views() {
-    assert!(!super::should_refresh_from_flux_watch(
-        AppView::FluxCDAll,
-        &[]
-    ));
-}
-
-#[test]
-fn should_refresh_from_flux_watch_for_issues_views() {
-    assert!(!super::should_refresh_from_flux_watch(AppView::Issues, &[]));
-    assert!(!super::should_refresh_from_flux_watch(
-        AppView::HealthReport,
-        &[]
-    ));
-}
-
-#[test]
-fn should_refresh_from_flux_watch_when_reconcile_verification_pending() {
-    let pending = vec![PendingFluxReconcileVerification {
-        action_history_id: 1,
-        resource: ResourceRef::CustomResource {
-            name: "apps".to_string(),
-            namespace: Some("flux-system".to_string()),
-            group: "kustomize.toolkit.fluxcd.io".to_string(),
-            version: "v1".to_string(),
-            kind: "Kustomization".to_string(),
-            plural: "kustomizations".to_string(),
-        },
-        resource_label: "Kustomization/apps".to_string(),
-        baseline: None,
-        deadline: Instant::now() + Duration::from_secs(30),
-    }];
-
-    assert!(!super::should_refresh_from_flux_watch(
-        AppView::Pods,
-        &pending
-    ));
-}
-
-#[test]
-fn should_refresh_from_flux_watch_ignores_non_flux_views_without_pending_verification() {
-    assert!(!super::should_refresh_from_flux_watch(AppView::Pods, &[]));
-}
-
-#[test]
 fn should_mark_snapshot_dirty_after_watch_when_non_flux_update() {
     assert!(super::should_mark_snapshot_dirty_after_watch(false, false));
     assert!(super::should_mark_snapshot_dirty_after_watch(false, true));
@@ -1623,7 +1578,7 @@ fn should_mark_snapshot_dirty_after_watch_when_flux_refresh_requested() {
 }
 
 #[test]
-fn should_mark_snapshot_dirty_after_watch_skips_flux_no_refresh_case() {
+fn should_mark_snapshot_dirty_after_watch_preserves_flux_watch_payload_render() {
     assert!(super::should_mark_snapshot_dirty_after_watch(true, false));
 }
 
