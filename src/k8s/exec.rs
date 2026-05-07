@@ -16,12 +16,14 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     sync::{mpsc, oneshot},
+    task::JoinHandle,
 };
 
 use crate::k8s::client::K8sClient;
 
 const SHELL_READY_GRACE_PERIOD_MS: u64 = 250;
 const READ_CHUNK_SIZE: usize = 1024;
+const EXEC_SESSION_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const DEBUG_CONTAINER_NAME_PREFIX: &str = "kubectui-debug";
 const DEBUG_CONTAINER_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const DEBUG_CONTAINER_READY_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -459,10 +461,14 @@ async fn run_exec_session(
         })
         .await;
 
-    let mut stdin = attached
-        .stdin()
-        .context("exec session missing stdin writer")?;
+    let mut stdin = Some(
+        attached
+            .stdin()
+            .context("exec session missing stdin writer")?,
+    );
     let mut terminal_size_tx = attached.terminal_size();
+    let mut input_open = true;
+    let mut resize_open = terminal_size_tx.is_some();
     let stdout = attached.stdout();
     let stderr = attached.stderr();
     let stdout_task = stdout.map(|reader| {
@@ -484,19 +490,21 @@ async fn run_exec_session(
 
     loop {
         tokio::select! {
-            maybe_input = input_rx.recv() => {
+            maybe_input = input_rx.recv(), if input_open => {
                 match maybe_input {
                     Some(bytes) => {
-                        stdin.write_all(&bytes).await.context("failed writing to exec stdin")?;
-                        stdin.flush().await.context("failed flushing exec stdin")?;
+                        if let Some(writer) = stdin.as_mut() {
+                            writer.write_all(&bytes).await.context("failed writing to exec stdin")?;
+                            writer.flush().await.context("failed flushing exec stdin")?;
+                        }
                     }
                     None => {
-                        attached.abort();
-                        break;
+                        input_open = false;
+                        drop(stdin.take());
                     }
                 }
             }
-            maybe_size = resize_rx.recv() => {
+            maybe_size = resize_rx.recv(), if resize_open => {
                 match maybe_size {
                     Some(size) => {
                         if let Some(writer) = &mut terminal_size_tx {
@@ -504,8 +512,8 @@ async fn run_exec_session(
                         }
                     }
                     None => {
-                        attached.abort();
-                        break;
+                        resize_open = false;
+                        drop(terminal_size_tx.take());
                     }
                 }
             }
@@ -543,14 +551,38 @@ async fn run_exec_session(
         }
     }
 
-    if let Some(task) = stdout_task {
-        let _ = task.await;
-    }
-    if let Some(task) = stderr_task {
-        let _ = task.await;
-    }
-    let _ = attached.join().await;
+    drop(stdin);
+    drop(terminal_size_tx);
+    await_exec_output_task(stdout_task).await;
+    await_exec_output_task(stderr_task).await;
+    await_attached_process(attached).await;
     Ok(())
+}
+
+async fn await_exec_output_task(task: Option<JoinHandle<()>>) {
+    let Some(mut task) = task else {
+        return;
+    };
+    tokio::select! {
+        result = &mut task => {
+            let _ = result;
+        }
+        _ = tokio::time::sleep(EXEC_SESSION_TEARDOWN_TIMEOUT) => {
+            task.abort();
+        }
+    }
+}
+
+async fn await_attached_process(attached: AttachedProcess) {
+    let mut task = tokio::spawn(attached.join());
+    tokio::select! {
+        result = &mut task => {
+            let _ = result;
+        }
+        _ = tokio::time::sleep(EXEC_SESSION_TEARDOWN_TIMEOUT) => {
+            task.abort();
+        }
+    }
 }
 
 async fn open_shell_process(
