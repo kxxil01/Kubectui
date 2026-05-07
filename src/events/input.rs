@@ -3,7 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::{
-    app::{AppAction, AppState, ContentPaneFocus, Focus, sidebar_rows},
+    app::{ActiveComponent, AppAction, AppState, ContentPaneFocus, Focus, sidebar_rows},
     ui::{MouseRegions, rect_contains},
     workbench::WorkbenchTabState,
 };
@@ -20,6 +20,14 @@ pub fn route_mouse_input(
     regions: Option<&MouseRegions>,
     content_total: Option<usize>,
 ) -> AppAction {
+    if mouse_background_blocked(app_state) {
+        return match mouse.kind {
+            MouseEventKind::ScrollUp => app_state.handle_key_event(KeyEvent::from(KeyCode::Up)),
+            MouseEventKind::ScrollDown => app_state.handle_key_event(KeyEvent::from(KeyCode::Down)),
+            _ => AppAction::None,
+        };
+    }
+
     match mouse.kind {
         MouseEventKind::ScrollUp => {
             focus_mouse_region(app_state, regions, mouse.column, mouse.row);
@@ -77,6 +85,20 @@ pub fn route_mouse_input(
         }
         _ => AppAction::None,
     }
+}
+
+fn mouse_background_blocked(app_state: &AppState) -> bool {
+    app_state.help_overlay.is_open()
+        || app_state.command_palette.is_open()
+        || app_state.context_picker.is_open()
+        || app_state.namespace_picker.is_open()
+        || app_state.resource_template_dialog.is_some()
+        || app_state.confirm_quit
+        || app_state.active_component() != ActiveComponent::None
+        || app_state
+            .detail_view
+            .as_ref()
+            .is_some_and(|detail| detail.has_confirmation_dialog())
 }
 
 fn focus_mouse_region(
@@ -1027,6 +1049,34 @@ mod tests {
     }
 
     #[test]
+    fn mouse_scroll_does_not_shift_background_focus_when_help_is_open() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.focus = Focus::Sidebar;
+        app.help_overlay.open();
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 30,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(app.help_overlay.scroll(), 1);
+    }
+
+    #[test]
     fn mouse_scroll_targets_secondary_content_pane() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 30),
@@ -1122,6 +1172,36 @@ mod tests {
             Some(10),
         );
         assert_eq!(app.focus, Focus::Workbench);
+    }
+
+    #[test]
+    fn mouse_left_click_does_not_select_background_when_palette_is_open() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.focus = Focus::Sidebar;
+        app.selected_idx = 3;
+        app.command_palette.open();
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(100),
+        );
+
+        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(app.selected_idx, 3);
+        assert!(app.command_palette.is_open());
     }
 
     #[test]
