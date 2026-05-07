@@ -3,7 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::{
-    app::{AppAction, AppState, Focus},
+    app::{AppAction, AppState, Focus, sidebar_rows},
     ui::{MouseRegions, rect_contains},
     workbench::WorkbenchTabState,
 };
@@ -33,6 +33,13 @@ pub fn route_mouse_input(
                     }
                 } else if rect_contains(regions.sidebar, mouse.column, mouse.row) {
                     app_state.focus = Focus::Sidebar;
+                    if let Some(row) = sidebar_row_at(regions.sidebar, mouse.column, mouse.row) {
+                        let rows = sidebar_rows(&app_state.collapsed_groups);
+                        if row < rows.len() {
+                            app_state.sidebar_cursor = row;
+                            return app_state.sidebar_activate();
+                        }
+                    }
                 } else if rect_contains(regions.content, mouse.column, mouse.row) {
                     app_state.focus = Focus::Content;
                 }
@@ -41,6 +48,14 @@ pub fn route_mouse_input(
         }
         _ => AppAction::None,
     }
+}
+
+fn sidebar_row_at(sidebar: ratatui::layout::Rect, column: u16, row: u16) -> Option<usize> {
+    let inner = sidebar.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    rect_contains(inner, column, row).then_some((row - inner.y) as usize)
 }
 
 /// Applies an action to the application state and returns whether state changed.
@@ -856,7 +871,7 @@ mod tests {
         route_mouse_input(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: 2,
+                column: 0,
                 row: 4,
                 modifiers: KeyModifiers::NONE,
             },
@@ -876,6 +891,60 @@ mod tests {
             Some(&regions),
         );
         assert_eq!(app.focus, Focus::Workbench);
+    }
+
+    #[test]
+    fn mouse_left_click_activates_sidebar_rows() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.view = crate::app::AppView::Dashboard;
+
+        let action = route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+        );
+
+        assert_eq!(app.sidebar_cursor, 1);
+        assert_eq!(app.focus, Focus::Content);
+        assert_eq!(action, AppAction::NavigateTo(crate::app::AppView::Projects));
+    }
+
+    #[test]
+    fn mouse_left_click_toggles_sidebar_group_rows() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 40),
+            content: Rect::new(28, 3, 92, 40),
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        let group_row = crate::app::sidebar_rows(&app.collapsed_groups)
+            .iter()
+            .position(|row| matches!(row, crate::app::SidebarItem::Group(_)))
+            .expect("default sidebar has a group row");
+
+        let action = route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 4 + group_row as u16,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+        );
+
+        assert_eq!(app.sidebar_cursor, group_row);
+        assert!(matches!(action, AppAction::ToggleNavGroup(_)));
     }
 
     #[test]
