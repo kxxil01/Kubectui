@@ -27,14 +27,16 @@ use k8s_openapi::api::{
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::{
     CustomResourceDefinition, CustomResourceDefinitionVersion,
 };
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::{
     Api, Client, Config,
     api::{
-        ApiResource, DynamicObject, GroupVersionKind, ListParams, PartialObjectMeta, Patch,
-        PatchParams, PostParams,
+        ApiResource, DynamicObject, GetParams, GroupVersionKind, ListParams, PartialObjectMeta,
+        Patch, PatchParams, PostParams,
     },
     client::{ClientBuilder, retry::RetryPolicy},
     config::KubeConfigOptions,
+    core::DeserializeGuard,
 };
 use tower::{buffer::BufferLayer, retry::RetryLayer};
 
@@ -390,7 +392,10 @@ impl K8sClient {
                         "drain timed out after {timeout_secs}s waiting for pod '{pod_name}' in '{pod_ns}' to terminate"
                     );
                 }
-                match ns_pods.get_opt(pod_name).await {
+                match ns_pods
+                    .get_metadata_opt_with(pod_name, &GetParams::default())
+                    .await
+                {
                     Ok(None) => break,
                     Ok(Some(_)) => {
                         consecutive_errors = 0;
@@ -701,7 +706,7 @@ impl K8sClient {
             Api::all_with(self.client.clone(), &ar)
         };
 
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
+        let list = list_metadata_items_or_empty(&api, &ListParams::default(), || {
             format!("failed fetching custom resources for CRD '{}'", crd.name)
         })
         .await?;
@@ -709,22 +714,7 @@ impl K8sClient {
         let now = now();
         let mut resources = list
             .into_iter()
-            .map(|item| {
-                let created_at = item
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
-                CustomResourceInfo {
-                    name: item
-                        .metadata
-                        .name
-                        .unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: item.metadata.namespace,
-                    created_at,
-                    age: age_from_created_at(created_at, now),
-                }
-            })
+            .map(|item| custom_resource_info_from_metadata(item.metadata, now))
             .collect::<Vec<_>>();
 
         resources.sort_unstable_by(|a, b| a.name.cmp(&b.name));
@@ -763,13 +753,13 @@ impl K8sClient {
         );
         let mut ar = ApiResource::from_gvk(&gvk);
         ar.plural = "vulnerabilityreports".to_string();
-        let api: Api<DynamicObject> = match namespace {
+        let api: Api<DeserializeGuard<DynamicObject>> = match namespace {
             Some(ns) => Api::namespaced_with(self.client.clone(), ns, &ar),
             None => Api::all_with(self.client.clone(), &ar),
         };
 
         let items = match api.list(&ListParams::default()).await {
-            Ok(list) => list.items,
+            Ok(list) => valid_guarded_dynamic_items(list.items),
             Err(err) if is_forbidden_error(&err) || is_missing_api_error(&err) => {
                 return Ok(Vec::new());
             }
@@ -798,10 +788,10 @@ impl K8sClient {
         );
         let mut ar = ApiResource::from_gvk(&gvk);
         ar.plural = "clustervulnerabilityreports".to_string();
-        let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
+        let api: Api<DeserializeGuard<DynamicObject>> = Api::all_with(self.client.clone(), &ar);
 
         let items = match api.list(&ListParams::default()).await {
-            Ok(list) => list.items,
+            Ok(list) => valid_guarded_dynamic_items(list.items),
             Err(err) if is_forbidden_error(&err) || is_missing_api_error(&err) => {
                 return Ok(Vec::new());
             }
@@ -1721,6 +1711,29 @@ fn choose_crd_request_version(versions: &[CustomResourceDefinitionVersion]) -> S
         .unwrap_or_else(|| "v1".to_string())
 }
 
+fn custom_resource_info_from_metadata(
+    metadata: ObjectMeta,
+    now: crate::time::AppTimestamp,
+) -> CustomResourceInfo {
+    let created_at = metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    CustomResourceInfo {
+        name: metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: metadata.namespace,
+        created_at,
+        age: age_from_created_at(created_at, now),
+    }
+}
+
+fn valid_guarded_dynamic_items(items: Vec<DeserializeGuard<DynamicObject>>) -> Vec<DynamicObject> {
+    items
+        .into_iter()
+        .filter_map(|guarded| guarded.0.ok())
+        .collect()
+}
+
 fn events_unavailable_info(namespace: Option<&str>, message: &str) -> K8sEventInfo {
     K8sEventInfo {
         name: "events-unavailable".to_string(),
@@ -2580,7 +2593,7 @@ mod tests {
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
-    use kube::core::Status;
+    use kube::core::{Status, error_boundary::InvalidObject};
 
     use super::*;
     use crate::k8s::conversions::{
@@ -3054,5 +3067,52 @@ mod tests {
         assert_eq!(api_resource.version, "v1");
         assert_eq!(api_resource.kind, "Policy");
         assert_eq!(api_resource.plural, "policies");
+    }
+
+    #[test]
+    fn custom_resource_info_from_metadata_preserves_lightweight_fields() {
+        let now = parse_timestamp("2026-05-07T00:00:10Z").expect("valid timestamp");
+        let metadata = ObjectMeta {
+            name: Some("policy-a".to_string()),
+            namespace: Some("prod".to_string()),
+            creation_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                parse_timestamp("2026-05-07T00:00:00Z").expect("valid timestamp"),
+            )),
+            ..ObjectMeta::default()
+        };
+
+        let info = custom_resource_info_from_metadata(metadata, now);
+
+        assert_eq!(info.name, "policy-a");
+        assert_eq!(info.namespace.as_deref(), Some("prod"));
+        assert!(info.created_at.is_some());
+        assert!(info.age.is_some());
+    }
+
+    #[test]
+    fn valid_guarded_dynamic_items_skips_invalid_custom_resources() {
+        let valid = DynamicObject {
+            types: None,
+            metadata: ObjectMeta {
+                name: Some("valid".to_string()),
+                ..ObjectMeta::default()
+            },
+            data: serde_json::json!({}),
+        };
+        let invalid = InvalidObject {
+            error: "invalid custom resource body".to_string(),
+            metadata: ObjectMeta {
+                name: Some("invalid".to_string()),
+                ..ObjectMeta::default()
+            },
+        };
+
+        let items = valid_guarded_dynamic_items(vec![
+            DeserializeGuard(Ok(valid)),
+            DeserializeGuard(Err(invalid)),
+        ]);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].metadata.name.as_deref(), Some("valid"));
     }
 }
