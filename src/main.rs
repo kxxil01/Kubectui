@@ -5593,16 +5593,15 @@ pub(crate) async fn run_app_inner(
                                     kubectui::ui::mouse_regions(&app, &cached_snapshot, size)
                                 })
                         }).flatten();
-                        let content_click = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                            && regions
-                                .as_ref()
-                                .is_some_and(|regions| {
-                                    kubectui::ui::rect_contains(
-                                        regions.content,
-                                        mouse.column,
-                                        mouse.row,
-                                    )
-                                });
+                        let content_click = app.detail_view.is_none()
+                            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                            && regions.as_ref().is_some_and(|regions| {
+                                kubectui::ui::rect_contains(
+                                    regions.content,
+                                    mouse.column,
+                                    mouse.row,
+                                )
+                            });
                         let content_total = content_click
                         .then(|| {
                             kubectui::ui::views::filtering::filtered_indices_for_view(
