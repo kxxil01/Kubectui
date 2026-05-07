@@ -15,6 +15,7 @@ use crate::ui::{
 
 const NARROW_CUSTOM_RESOURCE_WIDTH: u16 = 88;
 
+#[derive(Clone, Copy)]
 pub struct CustomResourcesPane<'a> {
     pub resources: &'a [CustomResourceInfo],
     pub error: Option<&'a str>,

@@ -378,6 +378,7 @@ pub(crate) enum SplitPaneFocus {
 }
 
 /// Shared configuration for the common resource table render path.
+#[derive(Clone, Copy)]
 pub(crate) struct ResourceTableConfig<'a> {
     pub snapshot: &'a ClusterSnapshot,
     pub view: AppView,

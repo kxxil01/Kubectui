@@ -12,6 +12,7 @@ use crate::k8s::relationships::{FlatNode, RelationKind, flatten_tree};
 use crate::ui::{loading_spinner_char, theme::Theme};
 use crate::workbench::RelationsTabState;
 
+#[derive(Clone, Copy)]
 pub struct RelationTreeView<'a> {
     pub tree: &'a [crate::k8s::relationships::RelationNode],
     pub expanded: &'a std::collections::HashSet<usize>,
