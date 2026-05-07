@@ -1208,7 +1208,7 @@ impl CommandPalette {
         self.update_loaded_entries(selected_entry);
     }
 
-    pub fn set_runbooks(&mut self, runbooks: Vec<LoadedRunbook>, resource: Option<ResourceRef>) {
+    pub fn set_runbooks(&mut self, runbooks: Vec<LoadedRunbook>, resource: Option<&ResourceRef>) {
         let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.runbooks = runbooks
             .into_iter()
@@ -1217,7 +1217,7 @@ impl CommandPalette {
                 title: runbook.title,
                 aliases: runbook.aliases,
                 shortcut: runbook.shortcut,
-                resource: resource.clone(),
+                resource: resource.cloned(),
             })
             .collect();
         self.update_loaded_entries(selected_entry);
@@ -2347,7 +2347,7 @@ mod tests {
                 shortcut: None,
                 steps: Vec::new(),
             }],
-            Some(resource.clone()),
+            Some(&resource),
         );
         for ch in "incident".chars() {
             palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
@@ -2363,7 +2363,7 @@ mod tests {
                 shortcut: None,
                 steps: Vec::new(),
             }],
-            Some(resource),
+            Some(&resource),
         );
 
         let filtered = palette.filtered();
@@ -2944,7 +2944,7 @@ mod tests {
                 shortcut: Some("rp".into()),
                 steps: Vec::new(),
             }],
-            Some(ResourceRef::Pod("api".into(), "prod".into())),
+            Some(&ResourceRef::Pod("api".into(), "prod".into())),
         );
         palette.open_with_context(Some(ctx(
             ResourceRef::Pod("api".into(), "prod".into()),
@@ -2972,7 +2972,7 @@ mod tests {
                 shortcut: None,
                 steps: Vec::new(),
             }],
-            Some(resource.clone()),
+            Some(&resource),
         );
         palette.open_with_context(Some(ctx(resource.clone(), None)));
         for c in "incident".chars() {
