@@ -56,7 +56,7 @@ use kubectui::{
         load_ai_config_from_path, load_config, save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
-    events::{apply_action, route_mouse_input},
+    events::{apply_action, mouse_content_row_at, route_mouse_input},
     extensions::{
         ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
         PreparedExtensionCommand, load_extensions_registry, prepare_command,
@@ -106,6 +106,36 @@ fn should_handle_root_enter(key: crossterm::event::KeyEvent, app: &AppState) -> 
         && !app.confirm_quit
         && app.detail_view.is_none()
         && app.focus != kubectui::app::Focus::Workbench
+}
+
+fn activate_selected_content_resource(
+    app: &mut AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+) -> AppAction {
+    if app.focus == kubectui::app::Focus::Content
+        && app.view() == AppView::Extensions
+        && !app.extension_in_instances
+    {
+        if !app.extension_instances.is_empty() {
+            app.extension_in_instances = true;
+            app.extension_instance_cursor = 0;
+        }
+        AppAction::None
+    } else if app.focus == kubectui::app::Focus::Content && app.view() == AppView::Bookmarks {
+        match prepare_bookmark_target(app, snapshot) {
+            Ok(resource) => AppAction::OpenDetail(resource),
+            Err(err) => {
+                app.set_error(err);
+                AppAction::None
+            }
+        }
+    } else if app.focus == kubectui::app::Focus::Content {
+        selected_resource(app, snapshot)
+            .map(AppAction::OpenDetail)
+            .unwrap_or(AppAction::None)
+    } else {
+        app.sidebar_activate()
+    }
 }
 
 fn should_exit_extension_instances(key: crossterm::event::KeyEvent, app: &AppState) -> bool {
@@ -5516,33 +5546,7 @@ pub(crate) async fn run_app_inner(
                 let action = match input {
                     TerminalInput::Key(key) => {
                         if should_handle_root_enter(key, &app) {
-                            if app.focus == kubectui::app::Focus::Content
-                                && app.view() == AppView::Extensions
-                                && !app.extension_in_instances
-                            {
-                                // Drill into instances pane
-                                if !app.extension_instances.is_empty() {
-                                    app.extension_in_instances = true;
-                                    app.extension_instance_cursor = 0;
-                                }
-                                AppAction::None
-                            } else if app.focus == kubectui::app::Focus::Content
-                                && app.view() == AppView::Bookmarks
-                            {
-                                match prepare_bookmark_target(&mut app, &cached_snapshot) {
-                                    Ok(resource) => AppAction::OpenDetail(resource),
-                                    Err(err) => {
-                                        app.set_error(err);
-                                        AppAction::None
-                                    }
-                                }
-                            } else if app.focus == kubectui::app::Focus::Content {
-                                selected_resource(&app, &cached_snapshot)
-                                    .map(AppAction::OpenDetail)
-                                    .unwrap_or(AppAction::None)
-                            } else {
-                                app.sidebar_activate()
-                            }
+                            activate_selected_content_resource(&mut app, &cached_snapshot)
                         } else if should_exit_extension_instances(key, &app) {
                             // Return from instances pane to CRD picker
                             app.extension_in_instances = false;
@@ -5556,19 +5560,43 @@ pub(crate) async fn run_app_inner(
                             .size()
                             .ok()
                             .and_then(|size| kubectui::ui::mouse_regions(&app, &cached_snapshot, size));
-                        let content_total =
-                            matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                                .then(|| {
-                                    kubectui::ui::views::filtering::filtered_indices_for_view(
-                                        app.view(),
-                                        &cached_snapshot,
-                                        app.search_query(),
-                                        app.workload_sort(),
-                                        app.pod_sort(),
-                                    )
-                                    .len()
-                                });
-                        route_mouse_input(mouse, &mut app, regions.as_ref(), content_total)
+                        let content_total = matches!(
+                            mouse.kind,
+                            MouseEventKind::Down(MouseButton::Left)
+                        )
+                        .then(|| {
+                            kubectui::ui::views::filtering::filtered_indices_for_view(
+                                app.view(),
+                                &cached_snapshot,
+                                app.search_query(),
+                                app.workload_sort(),
+                                app.pod_sort(),
+                            )
+                            .len()
+                        });
+                        let activates_selected_content = regions
+                            .as_ref()
+                            .zip(content_total)
+                            .and_then(|(regions, total)| {
+                                mouse_content_row_at(
+                                    regions.content,
+                                    app.selected_idx(),
+                                    total,
+                                    mouse.column,
+                                    mouse.row,
+                                )
+                            })
+                            .is_some_and(|row| {
+                                row == app.selected_idx()
+                                    && app.focus == kubectui::app::Focus::Content
+                                    && app.detail_view.is_none()
+                            });
+                        let action = route_mouse_input(mouse, &mut app, regions.as_ref(), content_total);
+                        if action == AppAction::None && activates_selected_content {
+                            activate_selected_content_resource(&mut app, &cached_snapshot)
+                        } else {
+                            action
+                        }
                     }
                 };
                 let current_extension_crd =
