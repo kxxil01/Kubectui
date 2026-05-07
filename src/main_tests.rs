@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use jiff::ToSpan;
 
 use super::flux_reconcile::{
@@ -52,6 +52,7 @@ use kubectui::{
         watch::{WatchPayload, WatchUpdate, WatchedResource},
     },
     time::{AppTimestamp, now},
+    ui::MouseRegions,
     ui::components::{
         command_palette::CommandPaletteAction, debug_container_dialog::DebugContainerDialogState,
         node_debug_dialog::NodeDebugDialogState,
@@ -61,6 +62,7 @@ use kubectui::{
         WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
     },
 };
+use ratatui::layout::Rect;
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -143,6 +145,63 @@ fn activate_selected_content_resource_opens_selected_pod() {
         super::activate_selected_content_resource(&mut app, &snapshot),
         AppAction::OpenDetail(ResourceRef::Pod("worker".to_string(), "prod".to_string()))
     );
+}
+
+#[test]
+fn mouse_selected_row_activation_is_blocked_by_palette() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        selected_idx: 2,
+        ..AppState::default()
+    };
+    app.command_palette.open();
+    let regions = MouseRegions {
+        sidebar: Rect::new(0, 3, 28, 20),
+        content: Rect::new(28, 3, 92, 20),
+        secondary: None,
+        workbench: None,
+    };
+
+    assert!(!super::mouse_activates_selected_content(
+        &app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        },
+        Some(&regions),
+        Some(100),
+    ));
+}
+
+#[test]
+fn mouse_selected_row_activation_allows_unblocked_selected_row() {
+    let app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        selected_idx: 2,
+        ..AppState::default()
+    };
+    let regions = MouseRegions {
+        sidebar: Rect::new(0, 3, 28, 20),
+        content: Rect::new(28, 3, 92, 20),
+        secondary: None,
+        workbench: None,
+    };
+
+    assert!(super::mouse_activates_selected_content(
+        &app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        },
+        Some(&regions),
+        Some(100),
+    ));
 }
 
 #[test]

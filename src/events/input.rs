@@ -87,7 +87,7 @@ pub fn route_mouse_input(
     }
 }
 
-fn mouse_background_blocked(app_state: &AppState) -> bool {
+pub fn mouse_background_blocked(app_state: &AppState) -> bool {
     app_state.help_overlay.is_open()
         || app_state.command_palette.is_open()
         || app_state.context_picker.is_open()
