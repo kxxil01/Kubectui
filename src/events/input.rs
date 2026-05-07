@@ -59,6 +59,14 @@ pub fn route_mouse_input(
                             return app_state.sidebar_activate();
                         }
                     }
+                } else if regions
+                    .search
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                {
+                    app_state.focus = Focus::Content;
+                    app_state.content_pane_focus = ContentPaneFocus::List;
+                    app_state.is_search_mode = true;
+                    app_state.search_cursor = app_state.search_query.chars().count();
                 } else if let Some(area) = regions.secondary
                     && rect_contains(area, mouse.column, mouse.row)
                 {
@@ -1013,6 +1021,7 @@ mod tests {
     fn mouse_scroll_targets_region_under_pointer() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
@@ -1041,6 +1050,7 @@ mod tests {
     fn mouse_scroll_can_target_open_workbench() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
@@ -1072,6 +1082,7 @@ mod tests {
     fn mouse_scroll_does_not_shift_background_focus_when_help_is_open() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
@@ -1100,6 +1111,7 @@ mod tests {
     fn mouse_scroll_targets_secondary_content_pane() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 30),
+            search: None,
             content: Rect::new(28, 3, 92, 16),
             secondary: Some(Rect::new(28, 19, 92, 14)),
             workbench: None,
@@ -1147,6 +1159,7 @@ mod tests {
     fn mouse_left_click_focuses_hit_region() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
@@ -1198,6 +1211,7 @@ mod tests {
     fn mouse_left_click_does_not_select_background_when_palette_is_open() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: None,
@@ -1225,9 +1239,43 @@ mod tests {
     }
 
     #[test]
+    fn mouse_left_click_focuses_visible_search_bar() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: Some(Rect::new(28, 3, 92, 1)),
+            content: Rect::new(28, 4, 92, 19),
+            secondary: None,
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.focus = Focus::Sidebar;
+        app.search_query = "api".to_string();
+        app.search_cursor = 0;
+        app.is_search_mode = false;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(100),
+        );
+
+        assert_eq!(app.focus, Focus::Content);
+        assert!(app.is_search_mode());
+        assert_eq!(app.search_cursor(), 3);
+        assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+    }
+
+    #[test]
     fn mouse_left_click_selects_content_table_row() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 12),
             secondary: None,
             workbench: None,
@@ -1259,6 +1307,7 @@ mod tests {
     fn mouse_left_click_focuses_secondary_content_pane_without_selecting_row() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 30),
+            search: None,
             content: Rect::new(28, 3, 92, 16),
             secondary: Some(Rect::new(28, 19, 92, 14)),
             workbench: None,
@@ -1289,6 +1338,7 @@ mod tests {
     fn mouse_left_click_ignores_content_header_and_empty_tables() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 12),
             secondary: None,
             workbench: None,
@@ -1327,6 +1377,7 @@ mod tests {
     fn mouse_left_click_selects_workbench_tab() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
@@ -1367,6 +1418,7 @@ mod tests {
     fn mouse_drag_resizes_workbench_from_top_border() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
@@ -1395,6 +1447,7 @@ mod tests {
     fn mouse_drag_inside_workbench_does_not_resize() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: Some(Rect::new(0, 23, 120, 10)),
@@ -1422,6 +1475,7 @@ mod tests {
     fn mouse_left_click_activates_sidebar_rows() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
             content: Rect::new(28, 3, 92, 20),
             secondary: None,
             workbench: None,
@@ -1450,6 +1504,7 @@ mod tests {
     fn mouse_left_click_toggles_sidebar_group_rows() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 40),
+            search: None,
             content: Rect::new(28, 3, 92, 40),
             secondary: None,
             workbench: None,

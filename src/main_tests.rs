@@ -158,6 +158,7 @@ fn mouse_selected_row_activation_is_blocked_by_palette() {
     app.command_palette.open();
     let regions = MouseRegions {
         sidebar: Rect::new(0, 3, 28, 20),
+        search: None,
         content: Rect::new(28, 3, 92, 20),
         secondary: None,
         workbench: None,
@@ -186,6 +187,7 @@ fn mouse_selected_row_activation_allows_unblocked_selected_row() {
     };
     let regions = MouseRegions {
         sidebar: Rect::new(0, 3, 28, 20),
+        search: None,
         content: Rect::new(28, 3, 92, 20),
         secondary: None,
         workbench: None,

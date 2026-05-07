@@ -551,6 +551,10 @@ fn readme_lists_mouse_controls() {
         "README must document row activation click"
     );
     assert!(
+        readme.contains("| Left click filter bar | Edit filter |"),
+        "README must document mouse filter editing"
+    );
+    assert!(
         readme.contains("| Drag workbench top border | Resize workbench |"),
         "README must document workbench mouse resize"
     );

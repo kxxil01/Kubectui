@@ -398,6 +398,7 @@ pub(crate) struct ResourceTableConfig<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MouseRegions {
     pub sidebar: Rect,
+    pub search: Option<Rect>,
     pub content: Rect,
     pub secondary: Option<Rect>,
     pub workbench: Option<Rect>,
@@ -445,19 +446,21 @@ pub fn mouse_regions(
         ])
         .split(body_root[0]);
 
-    let mut content = if app.is_search_mode() || !app.search_query().is_empty() {
-        Layout::default()
+    let (search, mut content) = if app.is_search_mode() || !app.search_query().is_empty() {
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(body[1])[1]
+            .split(body[1]);
+        (Some(chunks[0]), chunks[1])
     } else {
-        body[1]
+        (None, body[1])
     };
     let secondary = secondary_mouse_region(app.view(), content);
     if let Some((primary, detail)) = secondary {
         content = primary;
         return Some(MouseRegions {
             sidebar: body[0],
+            search,
             content,
             secondary: Some(detail),
             workbench: (app.workbench().open && body_root[1].height > 0).then_some(body_root[1]),
@@ -466,6 +469,7 @@ pub fn mouse_regions(
 
     Some(MouseRegions {
         sidebar: body[0],
+        search,
         content,
         secondary: None,
         workbench: (app.workbench().open && body_root[1].height > 0).then_some(body_root[1]),
