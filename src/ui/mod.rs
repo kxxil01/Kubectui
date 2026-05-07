@@ -2030,14 +2030,7 @@ fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
 
     let theme = default_theme();
 
-    let w = 36u16;
-    let h = 5u16;
-    let popup = ratatui::layout::Rect {
-        x: (area.width.saturating_sub(w)) / 2,
-        y: (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
+    let popup = centered_rect_by_size(36, 5, area);
 
     frame.render_widget(Clear, popup);
 
@@ -2475,12 +2468,7 @@ pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
 pub(crate) fn centered_rect_by_size(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.max(1).min(area.width.max(1));
     let height = height.max(1).min(area.height.max(1));
-    Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    }
+    area.centered(Constraint::Length(width), Constraint::Length(height))
 }
 
 pub(crate) fn scaled_popup_dimension(
@@ -3210,6 +3198,38 @@ mod tests {
             height: 2,
         };
         assert_eq!(table_viewport_rows(area), 1);
+    }
+
+    #[test]
+    fn centered_rect_by_size_preserves_parent_origin() {
+        let area = ratatui::layout::Rect {
+            x: 10,
+            y: 5,
+            width: 80,
+            height: 20,
+        };
+
+        assert_eq!(
+            centered_rect_by_size(36, 6, area),
+            ratatui::layout::Rect {
+                x: 32,
+                y: 12,
+                width: 36,
+                height: 6,
+            }
+        );
+    }
+
+    #[test]
+    fn centered_rect_by_size_clamps_to_parent_size() {
+        let area = ratatui::layout::Rect {
+            x: 3,
+            y: 4,
+            width: 8,
+            height: 3,
+        };
+
+        assert_eq!(centered_rect_by_size(40, 10, area), area);
     }
 
     #[test]
