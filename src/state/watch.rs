@@ -29,12 +29,37 @@ use k8s_openapi::api::core::v1::{Namespace, Node, Pod, ReplicationController, Se
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind};
 use kube::core::PartialObjectMeta;
 use kube::runtime::WatchStreamExt;
-use kube::runtime::watcher::{self, Event};
+use kube::runtime::watcher::{self, Event, ExponentialBackoff};
 use kube::{Api, Client, ResourceExt};
 use tokio::sync::mpsc;
 
 const STREAMING_LISTS_MIN_MINOR: u32 = 34;
 const WATCH_PUBLISH_DEBOUNCE_MS: u64 = 75;
+const WATCH_BACKOFF_BROAD_SCOPE_THRESHOLD: u32 = 6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WatchBackoffTuning {
+    min_delay: Duration,
+    max_delay: Duration,
+    factor_tenths: u32,
+    jitter: bool,
+}
+
+impl WatchBackoffTuning {
+    fn into_exponential_backoff(self) -> ExponentialBackoff {
+        let builder = backon::ExponentialBuilder::default()
+            .with_min_delay(self.min_delay)
+            .with_max_delay(self.max_delay)
+            .with_factor(self.factor_tenths as f32 / 10.0)
+            .without_max_times();
+        let builder = if self.jitter {
+            builder.with_jitter()
+        } else {
+            builder
+        };
+        builder.into()
+    }
+}
 
 fn normalize_watch_scope(scope: RefreshScope) -> RefreshScope {
     scope
@@ -69,6 +94,29 @@ pub fn recommended_watch_config(version: Option<&ClusterVersionInfo>) -> watcher
         watcher::Config::default().streaming_lists()
     } else {
         watcher::Config::default().any_semantic()
+    }
+}
+
+pub fn recommended_watch_backoff_tuning(scope: RefreshScope) -> WatchBackoffTuning {
+    let watched_resource_count = scope
+        .intersection(RefreshScope::WATCHED_SCOPES)
+        .0
+        .count_ones()
+        + u32::from(scope.contains(RefreshScope::FLUX));
+    if watched_resource_count >= WATCH_BACKOFF_BROAD_SCOPE_THRESHOLD {
+        WatchBackoffTuning {
+            min_delay: Duration::from_millis(1_200),
+            max_delay: Duration::from_secs(60),
+            factor_tenths: 20,
+            jitter: true,
+        }
+    } else {
+        WatchBackoffTuning {
+            min_delay: Duration::from_millis(800),
+            max_delay: Duration::from_secs(30),
+            factor_tenths: 20,
+            jitter: true,
+        }
     }
 }
 
@@ -319,11 +367,13 @@ macro_rules! define_watcher {
                 session: WatchSessionKey,
                 watch_tx: mpsc::Sender<WatchUpdate>,
                 watcher_config: watcher::Config,
+                watch_backoff: WatchBackoffTuning,
                 mut cancel_rx: tokio::sync::watch::Receiver<()>,
             ) {
                 tokio::spawn(async move {
                     let api: Api<$ApiType> = define_watcher!(@api $scope, client, session);
-                    let stream = $watch_fn(api, watcher_config).default_backoff();
+                    let stream =
+                        $watch_fn(api, watcher_config).backoff(watch_backoff.into_exponential_backoff());
                     let mut store = ResourceStore::<$DtoType>::new();
                     let mut publish_pending = false;
                     let mut publish_tick =
@@ -590,6 +640,7 @@ fn start_flux_watch(
     session: WatchSessionKey,
     watch_tx: mpsc::Sender<WatchUpdate>,
     watcher_config: watcher::Config,
+    watch_backoff: WatchBackoffTuning,
     mut cancel_rx: tokio::sync::watch::Receiver<()>,
     target: FluxWatchTarget,
 ) {
@@ -605,7 +656,8 @@ fn start_flux_watch(
         } else {
             Api::all_with(client, &ar)
         };
-        let stream = watcher::watcher(api, watcher_config).default_backoff();
+        let stream =
+            watcher::watcher(api, watcher_config).backoff(watch_backoff.into_exponential_backoff());
         let mut store = ResourceStore::<FluxWatchInfo>::new();
         let mut publish_pending = false;
         let mut publish_tick =
@@ -895,6 +947,7 @@ impl WatchManager {
         };
         let kube_client = client.get_client();
         let cancel_rx = cancel_tx.subscribe();
+        let watch_backoff = recommended_watch_backoff_tuning(self.requested_scope.union(scope));
 
         if missing_scope.contains(RefreshScope::PODS) {
             start_pod_watch(
@@ -902,6 +955,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -911,6 +965,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -920,6 +975,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -929,6 +985,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -938,6 +995,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -947,6 +1005,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -956,6 +1015,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -965,6 +1025,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -974,6 +1035,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -983,6 +1045,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -992,6 +1055,7 @@ impl WatchManager {
                 self.session.clone(),
                 watch_tx.clone(),
                 watcher_config.clone(),
+                watch_backoff,
                 cancel_rx.clone(),
             );
         }
@@ -1003,6 +1067,7 @@ impl WatchManager {
             let flux_session = self.session.clone();
             let flux_watch_tx = watch_tx.clone();
             let flux_watcher_config = watcher_config.clone();
+            let flux_watch_backoff = watch_backoff;
             let mut flux_cancel_rx = cancel_rx.clone();
             let flux_kube_client = kube_client.clone();
             tokio::spawn(async move {
@@ -1029,6 +1094,7 @@ impl WatchManager {
                         flux_session.clone(),
                         flux_watch_tx.clone(),
                         flux_watcher_config.clone(),
+                        flux_watch_backoff,
                         flux_cancel_rx.clone(),
                         target,
                     );
@@ -1343,6 +1409,26 @@ mod tests {
 
         assert_eq!(cfg.initial_list_strategy, InitialListStrategy::ListWatch);
         assert_eq!(cfg.list_semantic, ListSemantic::Any);
+    }
+
+    #[test]
+    fn recommended_watch_backoff_uses_default_window_for_narrow_scope() {
+        let tuning = recommended_watch_backoff_tuning(RefreshScope::PODS);
+
+        assert_eq!(tuning.min_delay, Duration::from_millis(800));
+        assert_eq!(tuning.max_delay, Duration::from_secs(30));
+        assert_eq!(tuning.factor_tenths, 20);
+        assert!(tuning.jitter);
+    }
+
+    #[test]
+    fn recommended_watch_backoff_expands_for_broad_scope() {
+        let tuning = recommended_watch_backoff_tuning(RefreshScope::DASHBOARD_WATCHED);
+
+        assert_eq!(tuning.min_delay, Duration::from_millis(1_200));
+        assert_eq!(tuning.max_delay, Duration::from_secs(60));
+        assert_eq!(tuning.factor_tenths, 20);
+        assert!(tuning.jitter);
     }
 
     #[test]
