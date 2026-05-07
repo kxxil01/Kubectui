@@ -222,7 +222,7 @@ fn truncate_ai_block_respects_character_limit() {
 
 #[test]
 fn extension_command_timeout_kills_hung_background_command() {
-    let result = super::run_extension_command(kubectui::extensions::PreparedExtensionCommand {
+    let result = super::run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
         program: "sh".into(),
         args: vec!["-c".into(), "sleep 5".into()],
         cwd: None,
@@ -242,7 +242,7 @@ fn extension_command_timeout_kills_hung_background_command() {
 
 #[test]
 fn extension_command_timeout_preserves_completed_output() {
-    let result = super::run_extension_command(kubectui::extensions::PreparedExtensionCommand {
+    let result = super::run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
         program: "sh".into(),
         args: vec!["-c".into(), "printf ready; printf warn >&2".into()],
         cwd: Some(PathBuf::from(".")),
@@ -1280,7 +1280,7 @@ fn stale_ai_analysis_result_completes_history_as_ignored() {
 
     super::discard_stale_ai_analysis_result(
         &mut app,
-        AiAnalysisAsyncResult {
+        &AiAnalysisAsyncResult {
             context_generation: 2,
             action_history_id,
             resource,
@@ -1338,7 +1338,7 @@ fn ai_analysis_success_completes_history_when_tab_was_closed() {
 
     super::apply_ai_analysis_result(
         &mut app,
-        AiAnalysisAsyncResult {
+        &AiAnalysisAsyncResult {
             context_generation: 0,
             action_history_id,
             resource,
@@ -1391,7 +1391,7 @@ fn ai_analysis_failure_completes_history_when_tab_was_closed() {
 
     super::apply_ai_analysis_result(
         &mut app,
-        AiAnalysisAsyncResult {
+        &AiAnalysisAsyncResult {
             context_generation: 0,
             action_history_id,
             resource,
@@ -2024,7 +2024,7 @@ fn closing_active_logs_tab_collects_follow_stream_to_stop() {
         viewer.follow_mode = true;
     }
 
-    let streams = workbench_follow_streams_to_stop(&app, AppAction::WorkbenchCloseActiveTab);
+    let streams = workbench_follow_streams_to_stop(&app, &AppAction::WorkbenchCloseActiveTab);
     assert_eq!(
         streams,
         vec![("pod-0".to_string(), "ns".to_string(), "main".to_string())]
@@ -2155,7 +2155,7 @@ fn detail_node_debug_launch_owned_requires_matching_resource_and_action_id() {
 #[test]
 fn closing_non_logs_workbench_does_not_collect_streams() {
     let app = AppState::default();
-    let streams = workbench_follow_streams_to_stop(&app, AppAction::WorkbenchCloseActiveTab);
+    let streams = workbench_follow_streams_to_stop(&app, &AppAction::WorkbenchCloseActiveTab);
     assert!(streams.is_empty());
 }
 
@@ -3015,8 +3015,8 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
 
     fn assert_preserves(
         view: AppView,
-        previous: ClusterSnapshot,
-        current: ClusterSnapshot,
+        previous: &ClusterSnapshot,
+        current: &ClusterSnapshot,
         initial_idx: usize,
         expected_idx: usize,
         expected_name: &str,
@@ -3028,17 +3028,14 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
         };
 
         assert_eq!(
-            selected_name(&app, &previous).as_deref(),
+            selected_name(&app, previous).as_deref(),
             Some(expected_name)
         );
         assert!(preserve_selection_identity_after_snapshot_change(
-            &mut app, &previous, &current
+            &mut app, previous, current
         ));
         assert_eq!(app.selected_idx(), expected_idx);
-        assert_eq!(
-            selected_name(&app, &current).as_deref(),
-            Some(expected_name)
-        );
+        assert_eq!(selected_name(&app, current).as_deref(), Some(expected_name));
         assert_eq!(app.status_message(), None);
     }
 
@@ -3083,11 +3080,11 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
 
     assert_preserves(
         AppView::Pods,
-        ClusterSnapshot {
+        &ClusterSnapshot {
             pods: vec![pod("api-0"), pod("api-1"), pod("api-2")],
             ..ClusterSnapshot::default()
         },
-        ClusterSnapshot {
+        &ClusterSnapshot {
             pods: vec![pod("api-1"), pod("api-0"), pod("api-2")],
             ..ClusterSnapshot::default()
         },
@@ -3097,7 +3094,7 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
     );
     assert_preserves(
         AppView::Deployments,
-        ClusterSnapshot {
+        &ClusterSnapshot {
             deployments: vec![
                 deployment("worker"),
                 deployment("api"),
@@ -3105,7 +3102,7 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
             ],
             ..ClusterSnapshot::default()
         },
-        ClusterSnapshot {
+        &ClusterSnapshot {
             deployments: vec![
                 deployment("api"),
                 deployment("frontend"),
@@ -3119,11 +3116,11 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
     );
     assert_preserves(
         AppView::Services,
-        ClusterSnapshot {
+        &ClusterSnapshot {
             services: vec![service("web"), service("api"), service("metrics")],
             ..ClusterSnapshot::default()
         },
-        ClusterSnapshot {
+        &ClusterSnapshot {
             services: vec![service("metrics"), service("web"), service("api")],
             ..ClusterSnapshot::default()
         },
@@ -3133,11 +3130,11 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
     );
     assert_preserves(
         AppView::Jobs,
-        ClusterSnapshot {
+        &ClusterSnapshot {
             jobs: vec![job("seed"), job("backup"), job("cleanup")],
             ..ClusterSnapshot::default()
         },
-        ClusterSnapshot {
+        &ClusterSnapshot {
             jobs: vec![job("cleanup"), job("seed"), job("backup")],
             ..ClusterSnapshot::default()
         },
@@ -3147,7 +3144,7 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
     );
     assert_preserves(
         AppView::Namespaces,
-        ClusterSnapshot {
+        &ClusterSnapshot {
             namespace_list: vec![
                 namespace("default"),
                 namespace("prod"),
@@ -3155,7 +3152,7 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
             ],
             ..ClusterSnapshot::default()
         },
-        ClusterSnapshot {
+        &ClusterSnapshot {
             namespace_list: vec![
                 namespace("staging"),
                 namespace("default"),

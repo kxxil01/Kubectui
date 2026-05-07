@@ -258,7 +258,7 @@ impl LogsViewerState {
             self.searching = false;
             return;
         }
-        let preserved_line = self.current_visible_line().cloned();
+        let preserved_line = self.current_visible_line_index();
         let previous_compiled = self.compiled_search.clone();
         self.search_query = self.search_input.clone();
         self.search_error = None;
@@ -331,7 +331,7 @@ impl LogsViewerState {
     }
 
     pub fn toggle_search_mode(&mut self) {
-        let preserved_line = self.current_visible_line().cloned();
+        let preserved_line = self.current_visible_line_index();
         self.search_mode = self.search_mode.toggle();
         self.search_error = None;
         match compile_query(&self.search_query, self.search_mode) {
@@ -349,7 +349,7 @@ impl LogsViewerState {
     }
 
     pub fn cycle_time_window(&mut self) {
-        let preserved_line = self.current_visible_line().cloned();
+        let preserved_line = self.current_visible_line_index();
         self.time_window = self.time_window.next();
         if !self.jump_to_first_match() {
             self.restore_filtered_scroll(preserved_line);
@@ -541,24 +541,28 @@ impl LogsViewerState {
     }
 
     pub fn current_visible_line(&self) -> Option<&LogEntry> {
+        self.current_visible_line_index()
+            .and_then(|index| self.lines.get(index))
+    }
+
+    fn current_visible_line_index(&self) -> Option<usize> {
         let now = crate::time::now();
         let mut last = None;
-        for (index, line) in self
+        for (index, _line) in self
             .lines
             .iter()
             .enumerate()
             .filter(|(_, line)| self.matches_visible_filters_at(line, now))
         {
             if index >= self.scroll_offset {
-                return Some(line);
+                return Some(index);
             }
-            last = Some(line);
+            last = Some(index);
         }
         last
     }
 
-    fn restore_filtered_scroll(&mut self, preserved_line: Option<LogEntry>) {
-        let preserved_line = preserved_line.as_ref();
+    fn restore_filtered_scroll(&mut self, preserved_line: Option<usize>) {
         if self.restore_scroll_with_filter(preserved_line, |viewer, line, now| {
             viewer.matches_visible_filters_at(line, now)
         }) {
@@ -572,7 +576,7 @@ impl LogsViewerState {
 
     fn restore_scroll_with_filter(
         &mut self,
-        preserved_line: Option<&LogEntry>,
+        preserved_line: Option<usize>,
         matches: impl Fn(&Self, &LogEntry, crate::time::AppTimestamp) -> bool,
     ) -> bool {
         let now = crate::time::now();
@@ -585,7 +589,7 @@ impl LogsViewerState {
                 continue;
             }
 
-            if preserved_line.is_some_and(|preserved| line == preserved) {
+            if preserved_line == Some(index) {
                 self.scroll_offset = index;
                 return true;
             }
@@ -686,7 +690,7 @@ impl LogsViewerState {
     }
 
     pub fn apply_preset(&mut self, preset: &PodLogPreset) {
-        let preserved_line = self.current_visible_line().cloned();
+        let preserved_line = self.current_visible_line_index();
         self.searching = false;
         self.jumping_to_time = false;
         self.search_query = preset.query.clone();
@@ -1068,9 +1072,7 @@ mod tests {
         ];
         viewer.correlation_request_id = Some("req-7".to_string());
         viewer.scroll_offset = 0;
-        let selected = viewer.lines[2].clone();
-
-        viewer.restore_filtered_scroll(Some(selected));
+        viewer.restore_filtered_scroll(Some(2));
 
         assert_eq!(viewer.scroll_offset, 2);
         assert_eq!(

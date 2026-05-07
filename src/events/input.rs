@@ -407,7 +407,9 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(scale) = &mut detail.scale_dialog
             {
-                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::AddChar(c));
+                scale.handle_action(&crate::ui::components::scale_dialog::ScaleAction::AddChar(
+                    c,
+                ));
                 return true;
             }
             false
@@ -416,7 +418,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(scale) = &mut detail.scale_dialog
             {
-                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::DeleteChar);
+                scale.handle_action(&crate::ui::components::scale_dialog::ScaleAction::DeleteChar);
                 return true;
             }
             false
@@ -425,7 +427,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(scale) = &mut detail.scale_dialog
             {
-                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::Increment);
+                scale.handle_action(&crate::ui::components::scale_dialog::ScaleAction::Increment);
                 return true;
             }
             false
@@ -434,7 +436,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(scale) = &mut detail.scale_dialog
             {
-                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::Decrement);
+                scale.handle_action(&crate::ui::components::scale_dialog::ScaleAction::Decrement);
                 return true;
             }
             false

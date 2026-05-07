@@ -176,7 +176,7 @@ pub fn collect_extension_resource_search_entries(
 
 pub fn merge_resource_search_entries(
     base_entries: GlobalSearchCacheValue,
-    extension_entries: ExtensionSearchCacheValue,
+    extension_entries: &ExtensionSearchCacheValue,
 ) -> GlobalSearchCacheValue {
     if extension_entries.is_empty() {
         return base_entries;
@@ -184,7 +184,7 @@ pub fn merge_resource_search_entries(
 
     let key = (
         Arc::as_ptr(&base_entries) as usize,
-        Arc::as_ptr(&extension_entries) as usize,
+        Arc::as_ptr(extension_entries) as usize,
     );
     {
         let mut guard = MERGED_SEARCH_CACHE
@@ -1018,8 +1018,8 @@ mod tests {
         );
         let base = collect_global_resource_search_entries(&snapshot);
 
-        let first = merge_resource_search_entries(Arc::clone(&base), Arc::clone(&extension));
-        let second = merge_resource_search_entries(base, extension);
+        let first = merge_resource_search_entries(Arc::clone(&base), &extension);
+        let second = merge_resource_search_entries(base, &extension);
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(first.len(), 2);

@@ -535,13 +535,14 @@ fn stringify_ai_field(value: Value) -> String {
         Value::Array(items) => items
             .into_iter()
             .map(stringify_ai_field)
-            .filter_map(normalize_nested_ai_text)
+            .filter_map(|value| normalize_nested_ai_text(&value))
             .collect::<Vec<_>>()
             .join("; "),
         Value::Object(object) => object
             .into_iter()
             .map(|(key, value)| {
-                let value = normalize_nested_ai_text(stringify_ai_field(value));
+                let rendered_value = stringify_ai_field(value);
+                let value = normalize_nested_ai_text(&rendered_value);
                 if let Some(value) = value {
                     format!("{key}: {value}")
                 } else {
@@ -554,7 +555,7 @@ fn stringify_ai_field(value: Value) -> String {
     }
 }
 
-fn normalize_nested_ai_text(value: String) -> Option<String> {
+fn normalize_nested_ai_text(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
 }

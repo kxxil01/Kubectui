@@ -407,7 +407,7 @@ pub(crate) fn apply_helm_values_diff_error_to_workbench(
 
 pub(crate) fn workbench_follow_streams_to_stop(
     app: &AppState,
-    action: AppAction,
+    action: &AppAction,
 ) -> Vec<(String, String, String)> {
     let tabs: Vec<&WorkbenchTabState> = match action {
         AppAction::ToggleWorkbench if app.workbench().open => {
@@ -456,7 +456,7 @@ fn pod_log_follow_streams_from_tabs<'a>(
 
 pub(crate) fn workbench_workload_log_sessions_to_stop(
     app: &AppState,
-    action: AppAction,
+    action: &AppAction,
 ) -> Vec<u64> {
     let tabs: Vec<&WorkbenchTabState> = match action {
         AppAction::ToggleWorkbench if app.workbench().open => {
@@ -478,7 +478,7 @@ pub(crate) fn workbench_workload_log_sessions_to_stop(
         .collect()
 }
 
-pub(crate) fn workbench_exec_sessions_to_stop(app: &AppState, action: AppAction) -> Vec<u64> {
+pub(crate) fn workbench_exec_sessions_to_stop(app: &AppState, action: &AppAction) -> Vec<u64> {
     let tabs: Vec<&WorkbenchTabState> = match action {
         AppAction::ToggleWorkbench if app.workbench().open => {
             app.workbench().tabs.iter().map(|tab| &tab.state).collect()
@@ -568,7 +568,7 @@ pub(crate) fn apply_mutation_success(
         runtime.deferred_refresh_tx,
         runtime.refresh_state.context_generation,
         plan.origin_view,
-        plan.namespace,
+        plan.namespace.as_ref(),
         plan.dispatch,
         delays_secs,
     );

@@ -792,7 +792,7 @@ fn build_extension_output_lines(output: &std::process::Output) -> Vec<String> {
     lines
 }
 
-fn run_extension_command(prepared: PreparedExtensionCommand) -> ExtensionCommandRunResult {
+fn run_extension_command(prepared: &PreparedExtensionCommand) -> ExtensionCommandRunResult {
     let mut command = std::process::Command::new(&prepared.program);
     command.args(&prepared.args);
     if let Some(cwd) = &prepared.cwd {
@@ -978,7 +978,7 @@ fn refresh_palette_resources(
         return;
     }
     app.command_palette.set_resource_entries(
-        kubectui::global_search::merge_resource_search_entries(base_entries, extension_entries),
+        kubectui::global_search::merge_resource_search_entries(base_entries, &extension_entries),
     );
 }
 
@@ -1001,7 +1001,7 @@ fn invalidate_context_generation(refresh_state: &mut RefreshRuntimeState) {
 
 fn discard_stale_ai_analysis_result(
     app: &mut kubectui::app::AppState,
-    result: AiAnalysisAsyncResult,
+    result: &AiAnalysisAsyncResult,
 ) {
     let resource_label = format!(
         "{} on {} '{}'",
@@ -1026,7 +1026,7 @@ fn discard_stale_ai_analysis_result(
 
 fn apply_ai_analysis_result(
     app: &mut kubectui::app::AppState,
-    result: AiAnalysisAsyncResult,
+    result: &AiAnalysisAsyncResult,
     status_message_clear_at: &mut Option<Instant>,
 ) {
     let resource_label = format!(
@@ -1036,7 +1036,7 @@ fn apply_ai_analysis_result(
         result.resource.name(),
     );
     let context_summary = result.context_summary.clone();
-    match result.result {
+    match &result.result {
         Ok(analysis) => {
             if let Some(tab) = app
                 .workbench_mut()
@@ -1045,12 +1045,12 @@ fn apply_ai_analysis_result(
             {
                 tab_state.context_summary = context_summary;
                 tab_state.apply_result(
-                    analysis.provider_label,
-                    analysis.model,
-                    analysis.summary,
-                    analysis.likely_causes,
-                    analysis.next_steps,
-                    analysis.uncertainty,
+                    analysis.provider_label.clone(),
+                    analysis.model.clone(),
+                    analysis.summary.clone(),
+                    analysis.likely_causes.clone(),
+                    analysis.next_steps.clone(),
+                    analysis.uncertainty.clone(),
                 );
             }
             app.complete_action_history(
@@ -1080,7 +1080,7 @@ fn apply_ai_analysis_result(
                 error.clone(),
                 true,
             );
-            app.set_error(error);
+            app.set_error(error.clone());
         }
     }
 }
@@ -2746,7 +2746,7 @@ fn start_ai_analysis(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
     resource: &ResourceRef,
-    action: LoadedAiAction,
+    action: &LoadedAiAction,
     action_history_id: u64,
     runtime: &mut AiAnalysisRuntime<'_>,
 ) {
@@ -3207,7 +3207,7 @@ pub(crate) async fn run_app_inner(
             break;
         }
 
-        watch_manager.ensure_watches(&client, watch_tx.clone(), watch_scope_for_view(app.view()));
+        watch_manager.ensure_watches(&client, &watch_tx, watch_scope_for_view(app.view()));
 
         // Check if a deferred palette action is ready to dispatch.
         let pending_action_ready = pending_palette_action
@@ -5156,11 +5156,11 @@ pub(crate) async fn run_app_inner(
             result = ai_analysis_rx.recv() => {
                 if let Some(result) = result {
                     if !ai_analysis_result_is_current(&result, &refresh_state) {
-                        discard_stale_ai_analysis_result(&mut app, result);
+                        discard_stale_ai_analysis_result(&mut app, &result);
                         needs_redraw = true;
                         continue;
                     }
-                    apply_ai_analysis_result(&mut app, result, &mut status_message_clear_at);
+                    apply_ai_analysis_result(&mut app, &result, &mut status_message_clear_at);
                     needs_redraw = true;
                 }
             }
@@ -5611,11 +5611,10 @@ pub(crate) async fn run_app_inner(
                 | AppAction::WorkbenchCloseActiveTab
                 | AppAction::WorkbenchIncreaseHeight
                 | AppAction::WorkbenchDecreaseHeight => {
-                    let streams_to_stop = workbench_follow_streams_to_stop(&app, action.clone());
+                    let streams_to_stop = workbench_follow_streams_to_stop(&app, &action);
                     let workload_sessions_to_stop =
-                        workbench_workload_log_sessions_to_stop(&app, action.clone());
-                    let exec_sessions_to_stop =
-                        workbench_exec_sessions_to_stop(&app, action.clone());
+                        workbench_workload_log_sessions_to_stop(&app, &action);
+                    let exec_sessions_to_stop = workbench_exec_sessions_to_stop(&app, &action);
                     for (pod_name, namespace, container_name) in streams_to_stop {
                         let _ = coordinator
                             .stop_log_streaming(&pod_name, &namespace, &container_name)
@@ -5721,7 +5720,7 @@ pub(crate) async fn run_app_inner(
                             &cached_snapshot,
                             &client,
                             &detail_tx,
-                            resource.clone(),
+                            &resource,
                             &mut detail_request_seq,
                             refresh_state.context_generation,
                         );
@@ -5841,7 +5840,7 @@ pub(crate) async fn run_app_inner(
                                     &cached_snapshot,
                                     &client,
                                     &detail_tx,
-                                    resource.clone(),
+                                    &resource,
                                     &mut detail_request_seq,
                                     refresh_state.context_generation,
                                 );
@@ -5956,7 +5955,7 @@ pub(crate) async fn run_app_inner(
                         &mut app,
                         &cached_snapshot,
                         &resource,
-                        action,
+                        &action,
                         action_history_id,
                         &mut ai_runtime,
                     );
@@ -6085,7 +6084,7 @@ pub(crate) async fn run_app_inner(
                             let context_generation = refresh_state.context_generation;
                             tokio::spawn(async move {
                                 let result = match tokio::task::spawn_blocking(move || {
-                                    run_extension_command(prepared)
+                                    run_extension_command(&prepared)
                                 })
                                 .await
                                 {
@@ -6414,7 +6413,7 @@ pub(crate) async fn run_app_inner(
                                 &cached_snapshot,
                                 &client,
                                 &detail_tx,
-                                resource,
+                                &resource,
                                 &mut detail_request_seq,
                                 refresh_state.context_generation,
                             );
@@ -6436,7 +6435,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &client,
                         &detail_tx,
-                        resource,
+                        &resource,
                         &mut detail_request_seq,
                         refresh_state.context_generation,
                     );
@@ -6465,7 +6464,7 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &client,
                         &detail_tx,
-                        target.resource,
+                        &target.resource,
                         &mut detail_request_seq,
                         refresh_state.context_generation,
                     );
@@ -6674,7 +6673,7 @@ pub(crate) async fn run_app_inner(
                         _ => None,
                     }) else {
                         if !matches!(
-                            resource,
+                            &resource,
                             ResourceRef::Deployment(_, _)
                                 | ResourceRef::StatefulSet(_, _)
                                 | ResourceRef::DaemonSet(_, _)
