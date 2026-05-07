@@ -55,7 +55,7 @@ pub fn route_mouse_input(
                     app_state.focus = Focus::Content;
                     if app_state.detail_view.is_none()
                         && let Some(total) = content_total
-                        && let Some(selected) = content_row_at(
+                        && let Some(selected) = mouse_content_row_at(
                             regions.content,
                             app_state.selected_idx,
                             total,
@@ -98,7 +98,7 @@ fn focus_mouse_region(
     }
 }
 
-fn content_row_at(
+pub fn mouse_content_row_at(
     content: ratatui::layout::Rect,
     selected_idx: usize,
     total: usize,

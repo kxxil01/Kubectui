@@ -116,6 +116,36 @@ fn root_enter_shortcut_rejects_modified_keys() {
 }
 
 #[test]
+fn activate_selected_content_resource_opens_selected_pod() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        selected_idx: 1,
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        pods: vec![
+            PodInfo {
+                name: "api".to_string(),
+                namespace: "prod".to_string(),
+                ..PodInfo::default()
+            },
+            PodInfo {
+                name: "worker".to_string(),
+                namespace: "prod".to_string(),
+                ..PodInfo::default()
+            },
+        ],
+        ..ClusterSnapshot::default()
+    };
+
+    assert_eq!(
+        super::activate_selected_content_resource(&mut app, &snapshot),
+        AppAction::OpenDetail(ResourceRef::Pod("worker".to_string(), "prod".to_string()))
+    );
+}
+
+#[test]
 fn extension_instances_escape_shortcut_rejects_modified_keys() {
     let app = AppState {
         focus: Focus::Content,
