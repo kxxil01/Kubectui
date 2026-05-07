@@ -27,7 +27,7 @@ pub struct ViewPreferences {
     pub hidden_columns: Vec<String>,
     /// Column IDs to explicitly un-hide (overrides `hidden_columns` from lower layers).
     /// Useful for cluster-level prefs to re-show columns hidden globally.
-    /// Currently settable via config file only; no UI action writes this yet.
+    /// Written by column toggles when a hidden column should become visible.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shown_columns: Vec<String>,
     /// Custom column ordering. `None` = default order.
