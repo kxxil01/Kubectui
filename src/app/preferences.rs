@@ -129,19 +129,30 @@ impl AppState {
             return;
         }
 
+        let prefs = crate::preferences::resolve_view_preferences(
+            view_key,
+            &self.preferences,
+            &self.cluster_preferences,
+            self.current_context_name.as_deref(),
+        );
+        let currently_visible = if col.default_visible {
+            !prefs
+                .hidden_columns
+                .iter()
+                .any(|hidden| hidden == column_id)
+        } else {
+            prefs.shown_columns.iter().any(|shown| shown == column_id)
+        };
+
         let vp = self.view_prefs_mut(view_key);
-        if col.default_visible {
+        if currently_visible {
             vp.shown_columns.retain(|c| c != column_id);
-            if let Some(pos) = vp.hidden_columns.iter().position(|c| c == column_id) {
-                vp.hidden_columns.remove(pos);
-            } else {
+            if !vp.hidden_columns.iter().any(|c| c == column_id) {
                 vp.hidden_columns.push(column_id.to_string());
             }
         } else {
             vp.hidden_columns.retain(|c| c != column_id);
-            if let Some(pos) = vp.shown_columns.iter().position(|c| c == column_id) {
-                vp.shown_columns.remove(pos);
-            } else {
+            if !vp.shown_columns.iter().any(|c| c == column_id) {
                 vp.shown_columns.push(column_id.to_string());
             }
         }

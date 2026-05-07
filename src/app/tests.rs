@@ -7321,6 +7321,60 @@ fn toggle_default_hidden_column_uses_shown_columns() {
 }
 
 #[test]
+fn cluster_column_toggle_unhides_global_hidden_column() {
+    use crate::columns::{POD_COLUMNS, resolve_columns};
+
+    let mut app = AppState::default();
+    app.navigate_to_view(AppView::Pods);
+    app.preferences = Some(UserPreferences::default());
+    app.preferences
+        .as_mut()
+        .unwrap()
+        .views
+        .entry("pods".into())
+        .or_default()
+        .hidden_columns
+        .push("namespace".into());
+    app.current_context_name = Some("prod".into());
+
+    let before = crate::preferences::resolve_view_preferences(
+        "pods",
+        &app.preferences,
+        &app.cluster_preferences,
+        app.current_context_name.as_deref(),
+    );
+    assert!(
+        !resolve_columns(POD_COLUMNS, &before)
+            .iter()
+            .any(|column| column.id == "namespace")
+    );
+
+    app.toggle_column_visibility("namespace");
+
+    let global = app.preferences.as_ref().unwrap();
+    assert_eq!(
+        global.views.get("pods").unwrap().hidden_columns.as_slice(),
+        ["namespace"]
+    );
+    let clusters = app.cluster_preferences.as_ref().unwrap();
+    let prod_pods = clusters.get("prod").unwrap().views.get("pods").unwrap();
+    assert_eq!(prod_pods.shown_columns, vec!["namespace"]);
+    assert!(prod_pods.hidden_columns.is_empty());
+
+    let after = crate::preferences::resolve_view_preferences(
+        "pods",
+        &app.preferences,
+        &app.cluster_preferences,
+        app.current_context_name.as_deref(),
+    );
+    assert!(
+        resolve_columns(POD_COLUMNS, &after)
+            .iter()
+            .any(|column| column.id == "namespace")
+    );
+}
+
+#[test]
 fn config_round_trip_with_preferences() {
     use crate::{
         icons::IconMode,
