@@ -6,6 +6,8 @@ A keyboard-driven terminal UI for Kubernetes operations.
 ![License](https://img.shields.io/badge/license-MIT-blue)
 [![CI](https://github.com/kxxil01/Kubectui/actions/workflows/ci.yml/badge.svg)](https://github.com/kxxil01/Kubectui/actions/workflows/ci.yml)
 
+Current release: `1.1.21`.
+
 ## Install
 
 ```bash
@@ -95,6 +97,11 @@ mode (`bash`, `zsh`, `fish`):
 
 **Inspect** with a bottom workbench that holds persistent tabs — YAML, drift diffs, rollout control, Helm history, decoded Secrets, timelines, pod/workload logs, exec sessions, extension output, AI analysis, port-forwards, relationship graphs, NetworkPolicy analysis, pod reachability, and traffic debugging.
 
+**Point and click** where it helps — mouse capture is enabled in the TUI, with
+wheel scrolling for the pane under the pointer, sidebar row activation, table
+row selection/open, filter-bar focus, secondary-pane focus, workbench tab
+selection, and workbench border drag-resize.
+
 **Monitor** via a dashboard with health gauges, CPU/memory utilization, namespace breakdown, top consumers, alerts, a Health Report, sanitizer findings, and Trivy-backed vulnerability summaries. Live watch streams keep 10 core resources updated in real-time.
 
 ## Release highlights
@@ -105,6 +112,11 @@ mode (`bash`, `zsh`, `fish`):
 - Workspaces, banks, and configurable hotkeys for repeatable operator layouts
 - Health Report, sanitizer findings, vulnerability center, NetworkPolicy analysis, traffic debug, and AI-assisted analysis workflows
 - Resource drift view, ephemeral pod debugging, node debug shell, and built-in apply templates
+- Mouse support for everyday navigation: scroll the pane under the pointer,
+  focus panes, choose rows, open selected rows, edit the filter bar, switch
+  workbench tabs, and drag-resize the workbench
+- Stability sweep for safer YAML handling, cleaner terminal recovery on startup
+  failures, and safer `$EDITOR` handoff when editing resources
 
 ## Key features
 
@@ -115,6 +127,7 @@ mode (`bash`, `zsh`, `fish`):
 | **Workbench** | 17 tab types: History, YAML, Drift, Rollout, Helm, Decoded Secret, Timeline, Pod Logs, Workload Logs, Exec, Extension, AI, Port-Forward, Relations, NetPol, Reachability, Traffic |
 | **Diagnostics** | Dashboard, Issue Center, Health Report, sanitizer rules, Trivy vulnerability summaries, NetworkPolicy intent analysis |
 | **Search** | `/` filters any list live. `:` opens the action palette for fuzzy navigation, actions, workspaces, banks, templates, extensions, and AI workflows |
+| **Mouse** | Wheel scrolls the pane under pointer; left click focuses panes, selects/open rows, edits the filter bar, selects workbench tabs; drag resizes workbench |
 | **RBAC-aware** | Actions filtered by resource capability and cluster permissions; forbidden reads degrade gracefully |
 | **Themes & UX** | Dark, Nord, Dracula, Catppuccin Mocha, Light; 3 icon modes; saved workspaces and hotkeys |
 | **Resilience** | Connection health indicator, backoff on failures, staleness display, watch auto-reconnect |
