@@ -56,7 +56,7 @@ use kubectui::{
         load_ai_config_from_path, load_config, save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
-    events::apply_action,
+    events::{apply_action, route_mouse_input},
     extensions::{
         ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
         PreparedExtensionCommand, load_extensions_registry, prepare_command,
@@ -5486,7 +5486,12 @@ pub(crate) async fn run_app_inner(
 
             // Keyboard / terminal input — lowest priority so messages are drained first
             maybe_event = event_stream.next() => {
-                let key = match maybe_event {
+                enum TerminalInput {
+                    Key(crossterm::event::KeyEvent),
+                    Mouse(crossterm::event::MouseEvent),
+                }
+
+                let input = match maybe_event {
                     Some(Ok(Event::Resize(width, height))) => {
                         let size = ExecTerminalSize::from_terminal_resize(width, height);
                         for handle in exec_sessions.values() {
@@ -5495,7 +5500,8 @@ pub(crate) async fn run_app_inner(
                         needs_redraw = true;
                         continue;
                     }
-                    Some(Ok(Event::Key(key))) => key,
+                    Some(Ok(Event::Key(key))) => TerminalInput::Key(key),
+                    Some(Ok(Event::Mouse(mouse))) => TerminalInput::Mouse(mouse),
                     _ => continue,
                 };
                 needs_redraw = true;
@@ -5507,40 +5513,45 @@ pub(crate) async fn run_app_inner(
                         })
                         .flatten();
 
-                let action = if should_handle_root_enter(key, &app) {
-                    if app.focus == kubectui::app::Focus::Content
-                        && app.view() == AppView::Extensions
-                        && !app.extension_in_instances
-                    {
-                        // Drill into instances pane
-                        if !app.extension_instances.is_empty() {
-                            app.extension_in_instances = true;
-                            app.extension_instance_cursor = 0;
-                        }
-                        AppAction::None
-                    } else if app.focus == kubectui::app::Focus::Content
-                        && app.view() == AppView::Bookmarks
-                    {
-                        match prepare_bookmark_target(&mut app, &cached_snapshot) {
-                            Ok(resource) => AppAction::OpenDetail(resource),
-                            Err(err) => {
-                                app.set_error(err);
+                let action = match input {
+                    TerminalInput::Key(key) => {
+                        if should_handle_root_enter(key, &app) {
+                            if app.focus == kubectui::app::Focus::Content
+                                && app.view() == AppView::Extensions
+                                && !app.extension_in_instances
+                            {
+                                // Drill into instances pane
+                                if !app.extension_instances.is_empty() {
+                                    app.extension_in_instances = true;
+                                    app.extension_instance_cursor = 0;
+                                }
                                 AppAction::None
+                            } else if app.focus == kubectui::app::Focus::Content
+                                && app.view() == AppView::Bookmarks
+                            {
+                                match prepare_bookmark_target(&mut app, &cached_snapshot) {
+                                    Ok(resource) => AppAction::OpenDetail(resource),
+                                    Err(err) => {
+                                        app.set_error(err);
+                                        AppAction::None
+                                    }
+                                }
+                            } else if app.focus == kubectui::app::Focus::Content {
+                                selected_resource(&app, &cached_snapshot)
+                                    .map(AppAction::OpenDetail)
+                                    .unwrap_or(AppAction::None)
+                            } else {
+                                app.sidebar_activate()
                             }
+                        } else if should_exit_extension_instances(key, &app) {
+                            // Return from instances pane to CRD picker
+                            app.extension_in_instances = false;
+                            AppAction::None
+                        } else {
+                            app.handle_key_event(key)
                         }
-                    } else if app.focus == kubectui::app::Focus::Content {
-                        selected_resource(&app, &cached_snapshot)
-                            .map(AppAction::OpenDetail)
-                            .unwrap_or(AppAction::None)
-                    } else {
-                        app.sidebar_activate()
                     }
-                } else if should_exit_extension_instances(key, &app) {
-                    // Return from instances pane to CRD picker
-                    app.extension_in_instances = false;
-                    AppAction::None
-                } else {
-                    app.handle_key_event(key)
+                    TerminalInput::Mouse(mouse) => route_mouse_input(mouse, &mut app),
                 };
                 let current_extension_crd =
                     (app.view() == AppView::Extensions && app.focus == kubectui::app::Focus::Content)

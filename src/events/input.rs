@@ -1,6 +1,6 @@
 //! Input event routing and dispatching.
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 
 use crate::{
     app::{AppAction, AppState, Focus},
@@ -10,6 +10,15 @@ use crate::{
 /// Routes a keyboard event to the appropriate handler based on application state.
 pub fn route_keyboard_input(key: KeyEvent, app_state: &mut AppState) -> AppAction {
     app_state.handle_key_event(key)
+}
+
+/// Routes mouse input to the same canonical actions as keyboard navigation.
+pub fn route_mouse_input(mouse: MouseEvent, app_state: &mut AppState) -> AppAction {
+    match mouse.kind {
+        MouseEventKind::ScrollUp => app_state.handle_key_event(KeyEvent::from(KeyCode::Up)),
+        MouseEventKind::ScrollDown => app_state.handle_key_event(KeyEvent::from(KeyCode::Down)),
+        _ => AppAction::None,
+    }
 }
 
 /// Applies an action to the application state and returns whether state changed.
@@ -754,6 +763,45 @@ mod tests {
         policy::ResourceActionContext,
         workbench::{PodLogsTabState, WorkbenchTabState},
     };
+    use crossterm::event::KeyModifiers;
+
+    fn mouse_event(kind: MouseEventKind) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_scroll_routes_to_keyboard_navigation() {
+        let mut from_mouse = AppState::default();
+        let mut from_keyboard = AppState::default();
+
+        assert_eq!(
+            route_mouse_input(mouse_event(MouseEventKind::ScrollDown), &mut from_mouse),
+            route_keyboard_input(KeyEvent::from(KeyCode::Down), &mut from_keyboard)
+        );
+
+        assert_eq!(
+            route_mouse_input(mouse_event(MouseEventKind::ScrollUp), &mut from_mouse),
+            route_keyboard_input(KeyEvent::from(KeyCode::Up), &mut from_keyboard)
+        );
+    }
+
+    #[test]
+    fn mouse_non_scroll_events_are_noops() {
+        let mut app = AppState::default();
+
+        assert_eq!(
+            route_mouse_input(
+                mouse_event(MouseEventKind::Down(crossterm::event::MouseButton::Left)),
+                &mut app,
+            ),
+            AppAction::None
+        );
+    }
 
     #[test]
     fn test_apply_action_none() {
