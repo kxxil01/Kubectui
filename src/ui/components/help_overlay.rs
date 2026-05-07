@@ -67,6 +67,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Mouse wheel", "Scroll pane under pointer"),
             ("Left click", "Focus panes / select rows / tabs"),
             ("Click selected row", "Open detail"),
+            ("Drag workbench border", "Resize workbench"),
             (";", "Toggle list / secondary pane focus"),
             ("/", "Search / filter"),
             ("~", "Namespace picker"),
@@ -836,6 +837,11 @@ mod tests {
             global
                 .iter()
                 .any(|(key, desc)| *key == "Click selected row" && *desc == "Open detail")
+        );
+        assert!(
+            global.iter().any(|(key, desc)| {
+                *key == "Drag workbench border" && *desc == "Resize workbench"
+            })
         );
     }
 
