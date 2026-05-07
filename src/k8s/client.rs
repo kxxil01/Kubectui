@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::time::{now, parse_timestamp};
+use crate::time::{AppTimestamp, format_rfc3339, now, parse_timestamp};
 use anyhow::{Context, Result};
 use futures::{StreamExt, stream};
 use k8s_openapi::api::{
@@ -80,6 +80,7 @@ pub use crate::k8s::{
 const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
 const MAX_RECENT_EVENTS_ITEMS: usize = 250;
 const CLIENT_RETRY_BUFFER_SIZE: usize = 1024;
+const CREDENTIAL_EXPIRY_WARNING_SECS: i64 = 30 * 60;
 const EPHEMERAL_CONTAINERS_MIN_MINOR: u32 = 25;
 const FLUX_EMPTY_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(20);
 const TRIVY_OPERATOR_GROUP: &str = "aquasecurity.github.io";
@@ -251,6 +252,19 @@ impl K8sClient {
     /// Returns reference to the underlying Kubernetes client.
     pub fn get_client(&self) -> Client {
         self.client.clone()
+    }
+
+    /// Returns the credential expiration timestamp exposed by kube-client.
+    ///
+    /// kube-client derives this from kubeconfig exec/certificate identity data.
+    /// KubecTUI surfaces it so short-lived credentials do not silently expire mid-session.
+    pub fn credential_valid_until(&self) -> Option<AppTimestamp> {
+        *self.client.valid_until()
+    }
+
+    /// Builds a user-facing warning when kube credentials are already expired or close to expiry.
+    pub fn credential_expiry_warning(&self, now: AppTimestamp) -> Option<String> {
+        credential_expiry_warning(self.credential_valid_until(), now)
     }
 
     /// Cordons a node by setting `spec.unschedulable = true`.
@@ -1720,6 +1734,41 @@ fn build_kube_client(config: Config) -> Result<Client> {
         .build())
 }
 
+fn credential_expiry_warning(
+    valid_until: Option<AppTimestamp>,
+    now: AppTimestamp,
+) -> Option<String> {
+    let valid_until = valid_until?;
+    let remaining_secs = valid_until.as_second().saturating_sub(now.as_second());
+
+    if valid_until.as_second() <= now.as_second() {
+        return Some(format!(
+            "Kube credentials expired at {}. Refresh context credentials.",
+            format_rfc3339(valid_until)
+        ));
+    }
+
+    if remaining_secs > CREDENTIAL_EXPIRY_WARNING_SECS {
+        return None;
+    }
+
+    Some(format!(
+        "Kube credentials expire in {} at {}. Refresh context credentials soon.",
+        format_compact_duration(remaining_secs as u64),
+        format_rfc3339(valid_until)
+    ))
+}
+
+fn format_compact_duration(total_secs: u64) -> String {
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    if mins > 0 {
+        format!("{mins}m {secs}s")
+    } else {
+        format!("{secs}s")
+    }
+}
+
 fn default_retry_policy() -> RetryPolicy {
     RetryPolicy::default()
 }
@@ -3178,5 +3227,44 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].metadata.name.as_deref(), Some("valid"));
+    }
+
+    #[test]
+    fn credential_expiry_warning_is_none_without_expiry() {
+        let now = parse_timestamp("2026-05-07T00:00:00Z").expect("valid timestamp");
+
+        assert_eq!(credential_expiry_warning(None, now), None);
+    }
+
+    #[test]
+    fn credential_expiry_warning_is_none_when_expiry_is_not_soon() {
+        let now = parse_timestamp("2026-05-07T00:00:00Z").expect("valid timestamp");
+        let valid_until = parse_timestamp("2026-05-07T00:31:01Z").expect("valid timestamp");
+
+        assert_eq!(credential_expiry_warning(Some(valid_until), now), None);
+    }
+
+    #[test]
+    fn credential_expiry_warning_reports_short_remaining_window() {
+        let now = parse_timestamp("2026-05-07T00:00:00Z").expect("valid timestamp");
+        let valid_until = parse_timestamp("2026-05-07T00:29:59Z").expect("valid timestamp");
+
+        assert_eq!(
+            credential_expiry_warning(Some(valid_until), now).as_deref(),
+            Some(
+                "Kube credentials expire in 29m 59s at 2026-05-07T00:29:59Z. Refresh context credentials soon."
+            )
+        );
+    }
+
+    #[test]
+    fn credential_expiry_warning_reports_expired_credentials() {
+        let now = parse_timestamp("2026-05-07T00:00:00Z").expect("valid timestamp");
+        let valid_until = parse_timestamp("2026-05-06T23:59:59Z").expect("valid timestamp");
+
+        assert_eq!(
+            credential_expiry_warning(Some(valid_until), now).as_deref(),
+            Some("Kube credentials expired at 2026-05-06T23:59:59Z. Refresh context credentials.")
+        );
     }
 }

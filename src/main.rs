@@ -267,6 +267,20 @@ fn fail_context_switch(
     app.set_error(message);
 }
 
+fn notify_credential_expiry_if_needed(
+    app: &mut AppState,
+    client: &K8sClient,
+    status_message_clear_at: &mut Option<Instant>,
+) {
+    if app.error_message().is_some() || app.status_message().is_some() {
+        return;
+    }
+
+    if let Some(message) = client.credential_expiry_warning(kubectui::time::now()) {
+        set_transient_status(app, status_message_clear_at, message);
+    }
+}
+
 fn ui_staleness_visible(
     app: &kubectui::app::AppState,
     snapshot: &ClusterSnapshot,
@@ -2838,6 +2852,7 @@ pub(crate) async fn run_app_inner(
 
     let mut client = pick_context_at_startup(terminal, &mut app).await?;
     app.current_context_name = client.cluster_context().map(str::to_string);
+    let mut status_message_clear_at: Option<Instant> = None;
 
     let mut global_state = GlobalState::default();
     let mut startup_namespace_scope = namespace_scope(app.get_namespace()).map(str::to_string);
@@ -2867,6 +2882,7 @@ pub(crate) async fn run_app_inner(
             }
         }
     }
+    notify_credential_expiry_if_needed(&mut app, &client, &mut status_message_clear_at);
 
     let mut port_forwarder = PortForwarderService::new(std::sync::Arc::new(client.clone()));
 
@@ -3049,7 +3065,6 @@ pub(crate) async fn run_app_inner(
     let mut backoff_until: Option<Instant> = None;
     let mut last_config_save: Option<Instant> = None;
     let mut auto_refresh_count: u64 = 0;
-    let mut status_message_clear_at: Option<Instant> = None;
     let mut pending_palette_action: Option<PendingPaletteAction> = None;
     let mut pending_flux_reconcile_verifications: Vec<PendingFluxReconcileVerification> =
         Vec::new();
@@ -5298,6 +5313,11 @@ pub(crate) async fn run_app_inner(
                             delete_in_flight_id = None;
                             status_message_clear_at = None;
                             app.clear_status();
+                            notify_credential_expiry_if_needed(
+                                &mut app,
+                                &client,
+                                &mut status_message_clear_at,
+                            );
                             needs_redraw = true;
 
                             request_refresh(
