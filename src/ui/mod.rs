@@ -444,9 +444,18 @@ pub fn mouse_regions(
         ])
         .split(body_root[0]);
 
+    let content = if app.is_search_mode() || !app.search_query().is_empty() {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(body[1])[1]
+    } else {
+        body[1]
+    };
+
     Some(MouseRegions {
         sidebar: body[0],
-        content: body[1],
+        content,
         workbench: (app.workbench().open && body_root[1].height > 0).then_some(body_root[1]),
     })
 }
@@ -3328,6 +3337,35 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn mouse_regions_skip_search_bar_when_filter_visible() {
+        let mut app = AppState::default();
+        app.search_query = "api".to_string();
+        let filtered = mouse_regions(
+            &app,
+            &ClusterSnapshot::default(),
+            ratatui::layout::Size {
+                width: 120,
+                height: 40,
+            },
+        )
+        .expect("mouse regions should exist");
+
+        app.search_query.clear();
+        let unfiltered = mouse_regions(
+            &app,
+            &ClusterSnapshot::default(),
+            ratatui::layout::Size {
+                width: 120,
+                height: 40,
+            },
+        )
+        .expect("mouse regions should exist");
+
+        assert_eq!(filtered.content.y, unfiltered.content.y + 1);
+        assert_eq!(filtered.content.height, unfiltered.content.height - 1);
     }
 
     #[test]
