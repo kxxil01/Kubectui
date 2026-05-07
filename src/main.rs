@@ -691,7 +691,6 @@ fn edit_yaml_in_external_editor(
         .context("failed to create editor temp file")?;
     let _tmp_path_guard = TempPathGuard(tmp_path.clone());
 
-    let _ = restore_terminal(terminal);
     let editor = std::env::var("EDITOR")
         .or_else(|_| std::env::var("VISUAL"))
         .unwrap_or_else(|_| "vi".to_string());
@@ -700,6 +699,8 @@ fn edit_yaml_in_external_editor(
     let (program, args) = editor_args
         .split_first()
         .context("editor command cannot be empty")?;
+
+    let _ = restore_terminal(terminal);
     let status = std::process::Command::new(program)
         .args(args)
         .arg(&tmp_path)
