@@ -115,7 +115,13 @@ pub fn mouse_background_blocked(app_state: &AppState) -> bool {
         || app_state.namespace_picker.is_open()
         || app_state.resource_template_dialog.is_some()
         || app_state.confirm_quit
-        || app_state.active_component() != ActiveComponent::None
+        || matches!(
+            app_state.active_component(),
+            ActiveComponent::DebugContainer
+                | ActiveComponent::NodeDebug
+                | ActiveComponent::Scale
+                | ActiveComponent::ProbePanel
+        )
         || app_state
             .detail_view
             .as_ref()
@@ -1415,6 +1421,48 @@ mod tests {
     }
 
     #[test]
+    fn mouse_left_click_selects_workbench_tab_while_logs_tab_is_active() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.workbench
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+                crate::app::ResourceRef::Pod("api".into(), "prod".into()),
+            )));
+        app.workbench
+            .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
+                None,
+                PortForwardDialog::default(),
+            )));
+        app.workbench.open = true;
+        app.workbench.active_tab = 0;
+        app.focus = Focus::Workbench;
+
+        let first_tab_width = format!(" {} ", app.workbench.tabs[0].state.title())
+            .chars()
+            .count() as u16;
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1 + first_tab_width + 1,
+                row: 24,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Workbench);
+        assert_eq!(app.workbench.active_tab, 1);
+    }
+
+    #[test]
     fn mouse_drag_resizes_workbench_from_top_border() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
@@ -1426,6 +1474,40 @@ mod tests {
         let mut app = AppState::default();
         app.workbench.open = true;
         app.workbench.height = 10;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 40,
+                row: 21,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Workbench);
+        assert_eq!(app.workbench.height, 12);
+    }
+
+    #[test]
+    fn mouse_drag_resizes_workbench_while_logs_tab_is_active() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.workbench
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+                crate::app::ResourceRef::Pod("api".into(), "prod".into()),
+            )));
+        app.workbench.open = true;
+        app.workbench.height = 10;
+        app.focus = Focus::Workbench;
 
         route_mouse_input(
             MouseEvent {
