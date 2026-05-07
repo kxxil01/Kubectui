@@ -3490,7 +3490,7 @@ fn test_namespace_persistence() {
         ));
     app.toggle_workbench();
     app.workbench.height = 15;
-    save_config_to_path(&app, &path);
+    assert!(save_config_to_path(&app, &path));
 
     let loaded = load_config_from_path(&path);
     assert_eq!(loaded.get_namespace(), "demo");
@@ -3512,7 +3512,7 @@ fn save_config_skips_write_when_parent_is_not_directory() {
 
     let mut app = AppState::default();
     app.set_namespace("demo".to_string());
-    save_config_to_path(&app, &path);
+    assert!(!save_config_to_path(&app, &path));
 
     assert!(!path.exists());
     assert_eq!(
@@ -7462,7 +7462,7 @@ fn config_round_trip_with_preferences() {
     app.collapsed_groups.insert(NavGroup::AccessControl);
     crate::icons::set_icon_mode(IconMode::Plain);
 
-    save_config_to_path(&app, &path);
+    assert!(save_config_to_path(&app, &path));
     crate::icons::set_icon_mode(IconMode::Nerd);
     let loaded = load_config_from_path(&path);
 
