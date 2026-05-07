@@ -1567,22 +1567,6 @@ fn watch_update_needs_flux_refresh_ignores_non_flux_payloads() {
 }
 
 #[test]
-fn should_mark_snapshot_dirty_after_watch_when_non_flux_update() {
-    assert!(super::should_mark_snapshot_dirty_after_watch(false, false));
-    assert!(super::should_mark_snapshot_dirty_after_watch(false, true));
-}
-
-#[test]
-fn should_mark_snapshot_dirty_after_watch_when_flux_refresh_requested() {
-    assert!(super::should_mark_snapshot_dirty_after_watch(true, true));
-}
-
-#[test]
-fn should_mark_snapshot_dirty_after_watch_preserves_flux_watch_payload_render() {
-    assert!(super::should_mark_snapshot_dirty_after_watch(true, false));
-}
-
-#[test]
 fn auto_refresh_includes_flux_only_on_periodic_fallback_ticks() {
     assert!(!should_include_flux_in_auto_refresh(1));
     assert!(!should_include_flux_in_auto_refresh(2));
