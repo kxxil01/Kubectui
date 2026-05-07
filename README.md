@@ -131,6 +131,9 @@ Press `?` in-app for the full list. Summary:
 | `Enter` | Select item / open detail |
 | `Tab` / `Shift+Tab` | Next / previous view |
 | `Esc` | Close current overlay or detail |
+| Mouse wheel | Scroll pane under pointer |
+| Left click | Focus panes, choose sidebar/workbench tabs, select rows |
+| Left click selected row | Open detail |
 
 ### Global
 

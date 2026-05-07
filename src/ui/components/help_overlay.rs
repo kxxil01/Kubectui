@@ -64,6 +64,9 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Tab / Shift+Tab", "Next / previous view"),
             ("j / k / \u{2193} / \u{2191}", "Navigate list"),
             ("Enter", "Open detail / activate"),
+            ("Mouse wheel", "Scroll pane under pointer"),
+            ("Left click", "Focus panes / select rows / tabs"),
+            ("Click selected row", "Open detail"),
             (";", "Toggle list / secondary pane focus"),
             ("/", "Search / filter"),
             ("~", "Namespace picker"),
@@ -810,6 +813,29 @@ mod tests {
             section.iter().any(|(key, desc)| {
                 *key == "Ctrl+Up / Ctrl+Down" && *desc == "Resize workbench"
             })
+        );
+    }
+
+    #[test]
+    fn global_help_lists_mouse_controls() {
+        let global = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Global")
+            .expect("global section exists")
+            .1;
+
+        assert!(
+            global
+                .iter()
+                .any(|(key, desc)| *key == "Mouse wheel" && *desc == "Scroll pane under pointer")
+        );
+        assert!(global.iter().any(|(key, desc)| {
+            *key == "Left click" && *desc == "Focus panes / select rows / tabs"
+        }));
+        assert!(
+            global
+                .iter()
+                .any(|(key, desc)| *key == "Click selected row" && *desc == "Open detail")
         );
     }
 
