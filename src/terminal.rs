@@ -21,11 +21,20 @@ use kubectui::{
 pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode().context("failed enabling raw mode")?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
-        .context("failed entering alternate screen")?;
+    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+        let _ = disable_raw_mode();
+        return Err(err).context("failed entering alternate screen");
+    }
 
     let backend = CrosstermBackend::new(stdout);
-    let terminal = Terminal::new(backend).context("failed creating terminal backend")?;
+    let terminal = match Terminal::new(backend) {
+        Ok(terminal) => terminal,
+        Err(err) => {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            return Err(err).context("failed creating terminal backend");
+        }
+    };
     Ok(terminal)
 }
 
