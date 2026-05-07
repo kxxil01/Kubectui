@@ -1,9 +1,10 @@
 //! Input event routing and dispatching.
 
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::{
     app::{AppAction, AppState, Focus},
+    ui::{MouseRegions, rect_contains},
     workbench::WorkbenchTabState,
 };
 
@@ -13,10 +14,31 @@ pub fn route_keyboard_input(key: KeyEvent, app_state: &mut AppState) -> AppActio
 }
 
 /// Routes mouse input to the same canonical actions as keyboard navigation.
-pub fn route_mouse_input(mouse: MouseEvent, app_state: &mut AppState) -> AppAction {
+pub fn route_mouse_input(
+    mouse: MouseEvent,
+    app_state: &mut AppState,
+    regions: Option<&MouseRegions>,
+) -> AppAction {
     match mouse.kind {
         MouseEventKind::ScrollUp => app_state.handle_key_event(KeyEvent::from(KeyCode::Up)),
         MouseEventKind::ScrollDown => app_state.handle_key_event(KeyEvent::from(KeyCode::Down)),
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(regions) = regions {
+                if regions
+                    .workbench
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                {
+                    if app_state.workbench().open {
+                        app_state.focus = Focus::Workbench;
+                    }
+                } else if rect_contains(regions.sidebar, mouse.column, mouse.row) {
+                    app_state.focus = Focus::Sidebar;
+                } else if rect_contains(regions.content, mouse.column, mouse.row) {
+                    app_state.focus = Focus::Content;
+                }
+            }
+            AppAction::None
+        }
         _ => AppAction::None,
     }
 }
@@ -764,6 +786,7 @@ mod tests {
         workbench::{PodLogsTabState, WorkbenchTabState},
     };
     use crossterm::event::KeyModifiers;
+    use ratatui::layout::Rect;
 
     fn mouse_event(kind: MouseEventKind) -> MouseEvent {
         MouseEvent {
@@ -780,12 +803,16 @@ mod tests {
         let mut from_keyboard = AppState::default();
 
         assert_eq!(
-            route_mouse_input(mouse_event(MouseEventKind::ScrollDown), &mut from_mouse),
+            route_mouse_input(
+                mouse_event(MouseEventKind::ScrollDown),
+                &mut from_mouse,
+                None,
+            ),
             route_keyboard_input(KeyEvent::from(KeyCode::Down), &mut from_keyboard)
         );
 
         assert_eq!(
-            route_mouse_input(mouse_event(MouseEventKind::ScrollUp), &mut from_mouse),
+            route_mouse_input(mouse_event(MouseEventKind::ScrollUp), &mut from_mouse, None),
             route_keyboard_input(KeyEvent::from(KeyCode::Up), &mut from_keyboard)
         );
     }
@@ -798,9 +825,57 @@ mod tests {
             route_mouse_input(
                 mouse_event(MouseEventKind::Down(crossterm::event::MouseButton::Left)),
                 &mut app,
+                None,
             ),
             AppAction::None
         );
+    }
+
+    #[test]
+    fn mouse_left_click_focuses_hit_region() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.workbench.open = true;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+        );
+        assert_eq!(app.focus, Focus::Content);
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+        );
+        assert_eq!(app.focus, Focus::Sidebar);
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 40,
+                row: 24,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+        );
+        assert_eq!(app.focus, Focus::Workbench);
     }
 
     #[test]

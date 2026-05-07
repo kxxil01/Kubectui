@@ -5551,7 +5551,13 @@ pub(crate) async fn run_app_inner(
                             app.handle_key_event(key)
                         }
                     }
-                    TerminalInput::Mouse(mouse) => route_mouse_input(mouse, &mut app),
+                    TerminalInput::Mouse(mouse) => {
+                        let regions = terminal
+                            .size()
+                            .ok()
+                            .and_then(|size| kubectui::ui::mouse_regions(&app, &cached_snapshot, size));
+                        route_mouse_input(mouse, &mut app, regions.as_ref())
+                    }
                 };
                 let current_extension_crd =
                     (app.view() == AppView::Extensions && app.focus == kubectui::app::Focus::Content)
