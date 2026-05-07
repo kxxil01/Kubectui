@@ -2,4 +2,4 @@
 
 pub mod input;
 
-pub use input::{apply_action, route_keyboard_input};
+pub use input::{apply_action, route_keyboard_input, route_mouse_input};
