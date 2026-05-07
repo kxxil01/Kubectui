@@ -21,8 +21,14 @@ pub fn route_mouse_input(
     content_total: Option<usize>,
 ) -> AppAction {
     match mouse.kind {
-        MouseEventKind::ScrollUp => app_state.handle_key_event(KeyEvent::from(KeyCode::Up)),
-        MouseEventKind::ScrollDown => app_state.handle_key_event(KeyEvent::from(KeyCode::Down)),
+        MouseEventKind::ScrollUp => {
+            focus_mouse_region(app_state, regions, mouse.column, mouse.row);
+            app_state.handle_key_event(KeyEvent::from(KeyCode::Up))
+        }
+        MouseEventKind::ScrollDown => {
+            focus_mouse_region(app_state, regions, mouse.column, mouse.row);
+            app_state.handle_key_event(KeyEvent::from(KeyCode::Down))
+        }
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(regions) = regions {
                 if let Some(area) = regions.workbench
@@ -65,6 +71,30 @@ pub fn route_mouse_input(
             AppAction::None
         }
         _ => AppAction::None,
+    }
+}
+
+fn focus_mouse_region(
+    app_state: &mut AppState,
+    regions: Option<&MouseRegions>,
+    column: u16,
+    row: u16,
+) {
+    let Some(regions) = regions else {
+        return;
+    };
+
+    if regions
+        .workbench
+        .is_some_and(|area| rect_contains(area, column, row))
+    {
+        if app_state.workbench().open {
+            app_state.focus = Focus::Workbench;
+        }
+    } else if rect_contains(regions.sidebar, column, row) {
+        app_state.focus = Focus::Sidebar;
+    } else if rect_contains(regions.content, column, row) {
+        app_state.focus = Focus::Content;
     }
 }
 
@@ -917,6 +947,63 @@ mod tests {
             ),
             route_keyboard_input(KeyEvent::from(KeyCode::Up), &mut from_keyboard)
         );
+    }
+
+    #[test]
+    fn mouse_scroll_targets_region_under_pointer() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.focus = Focus::Sidebar;
+        app.selected_idx = 4;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 30,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Content);
+        assert_eq!(app.selected_idx, 5);
+    }
+
+    #[test]
+    fn mouse_scroll_can_target_open_workbench() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 20),
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = AppState::default();
+        app.workbench
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+                crate::app::ResourceRef::Pod("api".into(), "prod".into()),
+            )));
+        app.workbench.open = true;
+        app.focus = Focus::Content;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 30,
+                row: 24,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Workbench);
     }
 
     #[test]
