@@ -288,6 +288,10 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::Probes, &["probes", "health", "probe"]),
     (DetailAction::Scale, &["scale", "replicas"]),
     (
+        DetailAction::WaitReady,
+        &["wait", "wait ready", "wait until ready", "ready"],
+    ),
+    (
         DetailAction::Restart,
         &["restart", "restart rollout", "rollout restart"],
     ),

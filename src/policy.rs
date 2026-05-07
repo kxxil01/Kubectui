@@ -58,6 +58,7 @@ pub enum DetailAction {
     PortForward,
     Probes,
     Scale,
+    WaitReady,
     Restart,
     PauseRollout,
     ResumeRollout,
@@ -107,6 +108,7 @@ impl DetailAction {
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
+        DetailAction::WaitReady,
         DetailAction::Restart,
         DetailAction::PauseRollout,
         DetailAction::ResumeRollout,
@@ -143,6 +145,7 @@ impl DetailAction {
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
+        DetailAction::WaitReady,
         DetailAction::Restart,
         DetailAction::FluxReconcile,
         DetailAction::EditYaml,
@@ -173,6 +176,7 @@ impl DetailAction {
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
+        DetailAction::WaitReady,
         DetailAction::Restart,
         DetailAction::FluxReconcile,
         DetailAction::EditYaml,
@@ -207,6 +211,7 @@ impl DetailAction {
             DetailAction::PortForward => Some("[f]"),
             DetailAction::Probes => Some("[p]"),
             DetailAction::Scale => Some("[s]"),
+            DetailAction::WaitReady => None,
             DetailAction::Restart | DetailAction::FluxReconcile => Some("[R]"),
             DetailAction::PauseRollout
             | DetailAction::ResumeRollout
@@ -251,6 +256,7 @@ impl DetailAction {
             DetailAction::PortForward => "Port-Fwd",
             DetailAction::Probes => "Probes",
             DetailAction::Scale => "Scale",
+            DetailAction::WaitReady => "Wait Ready",
             DetailAction::Restart => "Restart",
             DetailAction::PauseRollout => "Pause Rollout",
             DetailAction::ResumeRollout => "Resume Rollout",
@@ -580,6 +586,12 @@ impl ResourceRef {
                     ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _)
                 )
             }
+            DetailAction::WaitReady => matches!(
+                self,
+                ResourceRef::Deployment(_, _)
+                    | ResourceRef::Service(_, _)
+                    | ResourceRef::Ingress(_, _)
+            ),
             DetailAction::Restart => matches!(
                 self,
                 ResourceRef::Deployment(_, _)

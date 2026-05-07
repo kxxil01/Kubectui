@@ -118,6 +118,7 @@ pub fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
             | DetailAction::PortForward
             | DetailAction::Probes
             | DetailAction::Scale
+            | DetailAction::WaitReady
             | DetailAction::Restart
             | DetailAction::PauseRollout
             | DetailAction::ResumeRollout
@@ -172,6 +173,7 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::PortForward => AppAction::PortForwardOpen,
         DetailAction::Probes => AppAction::ProbePanelOpen,
         DetailAction::Scale => AppAction::ScaleDialogOpen,
+        DetailAction::WaitReady => AppAction::WaitUntilReady,
         DetailAction::Restart => AppAction::RolloutRestart,
         DetailAction::PauseRollout | DetailAction::ResumeRollout => {
             AppAction::ToggleRolloutPauseResume
@@ -201,6 +203,7 @@ pub fn palette_action_requires_loaded_detail(action: &AppAction) -> bool {
         AppAction::ScaleDialogOpen
             | AppAction::RolloutRestart
             | AppAction::ProbePanelOpen
+            | AppAction::WaitUntilReady
             | AppAction::DebugContainerDialogOpen
             | AppAction::NodeDebugDialogOpen
             | AppAction::ConfirmDeleteResource

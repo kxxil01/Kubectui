@@ -170,6 +170,7 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
             | DetailAction::PortForward
             | DetailAction::Probes
             | DetailAction::Scale
+            | DetailAction::WaitReady
             | DetailAction::Restart
             | DetailAction::PauseRollout
             | DetailAction::ResumeRollout
@@ -343,6 +344,12 @@ impl ResourceRef {
             },
             DetailAction::Probes => match self {
                 ResourceRef::Pod(_, _) => self.base_access_checks("get"),
+                _ => Vec::new(),
+            },
+            DetailAction::WaitReady => match self {
+                ResourceRef::Deployment(_, _)
+                | ResourceRef::Service(_, _)
+                | ResourceRef::Ingress(_, _) => self.base_access_checks("get"),
                 _ => Vec::new(),
             },
             DetailAction::Scale => match self {

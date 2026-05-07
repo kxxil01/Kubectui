@@ -37,6 +37,7 @@ use kube::{
     client::{ClientBuilder, retry::RetryPolicy},
     config::KubeConfigOptions,
     core::DeserializeGuard,
+    runtime::wait::{await_condition, conditions},
 };
 use tower::{buffer::BufferLayer, retry::RetryLayer};
 
@@ -912,6 +913,41 @@ impl K8sClient {
             .collect())
     }
 
+    pub async fn wait_until_ready(&self, resource: &ResourceRef, timeout: Duration) -> Result<()> {
+        match resource {
+            ResourceRef::Deployment(name, namespace) => {
+                let api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+                wait_for_condition(
+                    await_condition(api, name, conditions::is_deployment_completed()),
+                    resource,
+                    timeout,
+                )
+                .await
+            }
+            ResourceRef::Service(name, namespace) => {
+                let api: Api<Service> = Api::namespaced(self.client.clone(), namespace);
+                wait_for_condition(
+                    await_condition(api, name, conditions::is_service_loadbalancer_provisioned()),
+                    resource,
+                    timeout,
+                )
+                .await
+            }
+            ResourceRef::Ingress(name, namespace) => {
+                let api: Api<Ingress> = Api::namespaced(self.client.clone(), namespace);
+                wait_for_condition(
+                    await_condition(api, name, conditions::is_ingress_provisioned()),
+                    resource,
+                    timeout,
+                )
+                .await
+            }
+            _ => anyhow::bail!(
+                "wait until ready is only available for Deployment, Service, and Ingress resources"
+            ),
+        }
+    }
+
     /// Fetches and caches API server version metadata for the current context.
     pub async fn fetch_cluster_version(&self) -> Result<ClusterVersionInfo> {
         if let Some(version) = self.cluster_version_cache.read().await.clone() {
@@ -1732,6 +1768,34 @@ fn valid_guarded_dynamic_items(items: Vec<DeserializeGuard<DynamicObject>>) -> V
         .into_iter()
         .filter_map(|guarded| guarded.0.ok())
         .collect()
+}
+
+async fn wait_for_condition<K, F>(
+    condition: F,
+    resource: &ResourceRef,
+    timeout: Duration,
+) -> Result<()>
+where
+    F: std::future::Future<Output = Result<Option<K>, kube::runtime::wait::Error>>,
+{
+    match tokio::time::timeout(timeout, condition).await {
+        Ok(Ok(Some(_))) => Ok(()),
+        Ok(Ok(None)) => anyhow::bail!(
+            "{} was deleted before becoming ready",
+            resource.summary_label()
+        ),
+        Ok(Err(err)) => Err(err).with_context(|| {
+            format!(
+                "failed waiting for {} to become ready",
+                resource.summary_label()
+            )
+        }),
+        Err(_) => anyhow::bail!(
+            "timed out after {}s waiting for {} to become ready",
+            timeout.as_secs(),
+            resource.summary_label()
+        ),
+    }
 }
 
 fn events_unavailable_info(namespace: Option<&str>, message: &str) -> K8sEventInfo {

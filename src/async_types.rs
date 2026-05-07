@@ -91,6 +91,15 @@ pub struct ScaleAsyncResult {
     pub result: Result<(), String>,
 }
 
+#[derive(Debug)]
+pub struct WaitReadyAsyncResult {
+    pub action_history_id: u64,
+    pub context_generation: u64,
+    pub origin_view: AppView,
+    pub resource_label: String,
+    pub result: Result<(), String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RolloutMutationKind {
     Restart,
