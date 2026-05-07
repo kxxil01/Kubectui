@@ -2892,14 +2892,6 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Down if self.detail_view.is_none() && plain_shortcut(key) => {
-                self.select_next();
-                AppAction::None
-            }
-            KeyCode::Up if self.detail_view.is_none() && plain_shortcut(key) => {
-                self.select_previous();
-                AppAction::None
-            }
             KeyCode::Char('n')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
