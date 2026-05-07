@@ -674,6 +674,7 @@ pub(crate) fn abort_in_flight_refresh(refresh_state: &mut RefreshRuntimeState) {
     refresh_state.in_flight_target_view = None;
 }
 
+#[cfg(test)]
 pub(crate) fn refresh_scope_pending(
     refresh_state: &RefreshRuntimeState,
     scope: RefreshScope,

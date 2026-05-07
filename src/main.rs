@@ -121,15 +121,6 @@ fn watch_update_needs_flux_refresh(update: &WatchUpdate) -> bool {
     update.resource == WatchedResource::Flux && matches!(&update.data, WatchPayload::Flux { .. })
 }
 
-const FLUX_WATCH_REFRESH_MIN_INTERVAL_SECS: u64 = 2;
-
-fn should_refresh_from_flux_watch(
-    _view: AppView,
-    _pending_flux_reconcile_verifications: &[PendingFluxReconcileVerification],
-) -> bool {
-    false
-}
-
 fn should_mark_snapshot_dirty_after_watch(
     _flux_changed: bool,
     _flux_refresh_requested: bool,
@@ -3067,7 +3058,6 @@ pub(crate) async fn run_app_inner(
     let mut pending_palette_action: Option<PendingPaletteAction> = None;
     let mut pending_flux_reconcile_verifications: Vec<PendingFluxReconcileVerification> =
         Vec::new();
-    let mut last_flux_watch_refresh_at: Option<Instant> = None;
     let mut pending_context_switch: Option<(String, tokio::task::JoinHandle<Result<K8sClient>>)> =
         None;
     let startup_now_unix = kubectui::time::now_unix_seconds();
@@ -3870,28 +3860,7 @@ pub(crate) async fn run_app_inner(
                     {
                         needs_redraw = true;
                     }
-                    let flux_refresh_requested = flux_changed
-                        && should_refresh_from_flux_watch(
-                            app.view(),
-                            &pending_flux_reconcile_verifications,
-                        )
-                        && !refresh_scope_pending(&refresh_state, RefreshScope::FLUX)
-                        && last_flux_watch_refresh_at.is_none_or(|last| {
-                            last.elapsed()
-                                >= Duration::from_secs(FLUX_WATCH_REFRESH_MIN_INTERVAL_SECS)
-                        });
-                    if flux_refresh_requested {
-                        request_refresh(
-                            &refresh_tx,
-                            &mut global_state,
-                            &client,
-                            namespace_scope(app.get_namespace()).map(str::to_string),
-                            RefreshDispatch::new(RefreshScope::FLUX, RefreshScope::FLUX),
-                            &mut refresh_state,
-                            &mut snapshot_dirty,
-                        );
-                        last_flux_watch_refresh_at = Some(Instant::now());
-                    }
+                    let flux_refresh_requested = false;
                     if should_mark_snapshot_dirty_after_watch(flux_changed, flux_refresh_requested) {
                         snapshot_dirty = true;
                     }
