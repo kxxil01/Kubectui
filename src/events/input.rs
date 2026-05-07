@@ -18,6 +18,7 @@ pub fn route_mouse_input(
     mouse: MouseEvent,
     app_state: &mut AppState,
     regions: Option<&MouseRegions>,
+    content_total: Option<usize>,
 ) -> AppAction {
     match mouse.kind {
         MouseEventKind::ScrollUp => app_state.handle_key_event(KeyEvent::from(KeyCode::Up)),
@@ -42,12 +43,52 @@ pub fn route_mouse_input(
                     }
                 } else if rect_contains(regions.content, mouse.column, mouse.row) {
                     app_state.focus = Focus::Content;
+                    if app_state.detail_view.is_none()
+                        && let Some(total) = content_total
+                        && let Some(selected) = content_row_at(
+                            regions.content,
+                            app_state.selected_idx,
+                            total,
+                            mouse.column,
+                            mouse.row,
+                        )
+                    {
+                        app_state.selected_idx = selected;
+                        app_state.reset_content_secondary_pane_state();
+                    }
                 }
             }
             AppAction::None
         }
         _ => AppAction::None,
     }
+}
+
+fn content_row_at(
+    content: ratatui::layout::Rect,
+    selected_idx: usize,
+    total: usize,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    if total == 0 || !rect_contains(content, column, row) {
+        return None;
+    }
+
+    let first_row = content.y.saturating_add(2);
+    if row < first_row {
+        return None;
+    }
+
+    let row_offset = usize::from(row - first_row);
+    let viewport_rows = crate::ui::table_viewport_rows(content);
+    if row_offset >= viewport_rows {
+        return None;
+    }
+
+    let window = crate::ui::table_window(total, selected_idx, viewport_rows);
+    let selected = window.start + row_offset;
+    (selected < window.end).then_some(selected)
 }
 
 fn sidebar_row_at(sidebar: ratatui::layout::Rect, column: u16, row: u16) -> Option<usize> {
@@ -822,12 +863,18 @@ mod tests {
                 mouse_event(MouseEventKind::ScrollDown),
                 &mut from_mouse,
                 None,
+                None,
             ),
             route_keyboard_input(KeyEvent::from(KeyCode::Down), &mut from_keyboard)
         );
 
         assert_eq!(
-            route_mouse_input(mouse_event(MouseEventKind::ScrollUp), &mut from_mouse, None),
+            route_mouse_input(
+                mouse_event(MouseEventKind::ScrollUp),
+                &mut from_mouse,
+                None,
+                None,
+            ),
             route_keyboard_input(KeyEvent::from(KeyCode::Up), &mut from_keyboard)
         );
     }
@@ -840,6 +887,7 @@ mod tests {
             route_mouse_input(
                 mouse_event(MouseEventKind::Down(crossterm::event::MouseButton::Left)),
                 &mut app,
+                None,
                 None,
             ),
             AppAction::None
@@ -865,6 +913,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
+            Some(10),
         );
         assert_eq!(app.focus, Focus::Content);
 
@@ -877,6 +926,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
+            Some(10),
         );
         assert_eq!(app.focus, Focus::Sidebar);
 
@@ -889,8 +939,76 @@ mod tests {
             },
             &mut app,
             Some(&regions),
+            Some(10),
         );
         assert_eq!(app.focus, Focus::Workbench);
+    }
+
+    #[test]
+    fn mouse_left_click_selects_content_table_row() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 12),
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.focus = Focus::Sidebar;
+        app.selected_idx = 50;
+        app.content_detail_scroll = 10;
+
+        let action = route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(100),
+        );
+
+        assert_eq!(action, AppAction::None);
+        assert_eq!(app.focus, Focus::Content);
+        assert_eq!(app.selected_idx, 49);
+        assert_eq!(app.content_detail_scroll, 0);
+    }
+
+    #[test]
+    fn mouse_left_click_ignores_content_header_and_empty_tables() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            content: Rect::new(28, 3, 92, 12),
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.selected_idx = 5;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(100),
+        );
+        assert_eq!(app.selected_idx, 5);
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(0),
+        );
+        assert_eq!(app.selected_idx, 5);
     }
 
     #[test]
@@ -912,6 +1030,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
+            None,
         );
 
         assert_eq!(app.sidebar_cursor, 1);
@@ -941,6 +1060,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
+            None,
         );
 
         assert_eq!(app.sidebar_cursor, group_row);

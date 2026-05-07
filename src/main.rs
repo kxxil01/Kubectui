@@ -35,7 +35,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crossterm::event::{Event, EventStream, KeyCode};
+use crossterm::event::{Event, EventStream, KeyCode, MouseButton, MouseEventKind};
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
@@ -5556,7 +5556,19 @@ pub(crate) async fn run_app_inner(
                             .size()
                             .ok()
                             .and_then(|size| kubectui::ui::mouse_regions(&app, &cached_snapshot, size));
-                        route_mouse_input(mouse, &mut app, regions.as_ref())
+                        let content_total =
+                            matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                                .then(|| {
+                                    kubectui::ui::views::filtering::filtered_indices_for_view(
+                                        app.view(),
+                                        &cached_snapshot,
+                                        app.search_query(),
+                                        app.workload_sort(),
+                                        app.pod_sort(),
+                                    )
+                                    .len()
+                                });
+                        route_mouse_input(mouse, &mut app, regions.as_ref(), content_total)
                     }
                 };
                 let current_extension_crd =
