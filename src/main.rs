@@ -5584,14 +5584,17 @@ pub(crate) async fn run_app_inner(
                         }
                     }
                     TerminalInput::Mouse(mouse) => {
-                        let regions = terminal
-                            .size()
-                            .ok()
-                            .and_then(|size| kubectui::ui::mouse_regions(&app, &cached_snapshot, size));
-                        let content_total = matches!(
-                            mouse.kind,
-                            MouseEventKind::Down(MouseButton::Left)
-                        )
+                        let mouse_routes_background = !mouse_background_blocked(&app);
+                        let regions = mouse_routes_background.then(|| {
+                            terminal
+                                .size()
+                                .ok()
+                                .and_then(|size| {
+                                    kubectui::ui::mouse_regions(&app, &cached_snapshot, size)
+                                })
+                        }).flatten();
+                        let content_total = (mouse_routes_background
+                            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)))
                         .then(|| {
                             kubectui::ui::views::filtering::filtered_indices_for_view(
                                 app.view(),
