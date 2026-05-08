@@ -1,9 +1,13 @@
 //! Input event routing and dispatching.
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Constraint;
 
 use crate::{
-    app::{ActiveComponent, AppAction, AppState, ContentPaneFocus, Focus, sidebar_rows},
+    app::{
+        ActiveComponent, AppAction, AppState, AppView, ContentPaneFocus, Focus, PodSortColumn,
+        sidebar_rows,
+    },
     ui::{MouseRegions, rect_contains},
     workbench::WorkbenchTabState,
 };
@@ -88,7 +92,14 @@ pub fn route_mouse_input(
                 } else if rect_contains(regions.content, mouse.column, mouse.row) {
                     app_state.focus = Focus::Content;
                     app_state.content_pane_focus = ContentPaneFocus::List;
-                    if app_state.detail_view.is_none()
+                    if let Some(column) = mouse_pod_sort_column_at(
+                        app_state,
+                        regions.content,
+                        mouse.column,
+                        mouse.row,
+                    ) {
+                        app_state.set_or_toggle_pod_sort(column);
+                    } else if app_state.detail_view.is_none()
                         && let Some(target) = content_target
                         && let Some(selected) = mouse_content_row_at(
                             regions.content,
@@ -119,6 +130,82 @@ pub fn route_mouse_input(
         }
         _ => AppAction::None,
     }
+}
+
+pub fn mouse_pod_sort_column_at(
+    app_state: &AppState,
+    content: ratatui::layout::Rect,
+    column: u16,
+    row: u16,
+) -> Option<PodSortColumn> {
+    if app_state.view() != AppView::Pods
+        || app_state.detail_view.is_some()
+        || row != content.y.saturating_add(1)
+        || !rect_contains(content, column, row)
+    {
+        return None;
+    }
+
+    let registry = crate::columns::columns_for_view(AppView::Pods)?;
+    let view_key = crate::columns::view_key(AppView::Pods);
+    let prefs = crate::preferences::resolve_view_preferences(
+        view_key,
+        &app_state.preferences,
+        &app_state.cluster_preferences,
+        app_state.current_context_name.as_deref(),
+    );
+    let visible_columns = crate::columns::resolve_columns(registry, &prefs);
+    let constraints = crate::columns::visible_constraints_for_area(
+        AppView::Pods,
+        &visible_columns,
+        content.width,
+    );
+    let widths = crate::ui::responsive_table_widths_vec(content.width, &constraints);
+    let table_columns = materialize_column_widths(content.width.saturating_sub(3), &widths);
+    let mut cursor = content.x.saturating_add(1);
+    for (column_def, width) in visible_columns.iter().zip(table_columns) {
+        let end = cursor.saturating_add(width);
+        if column >= cursor && column < end {
+            return match column_def.id {
+                "name" => Some(PodSortColumn::Name),
+                "status" => Some(PodSortColumn::Status),
+                "restarts" => Some(PodSortColumn::Restarts),
+                "age" => Some(PodSortColumn::Age),
+                _ => None,
+            };
+        }
+        cursor = end;
+    }
+
+    None
+}
+
+fn materialize_column_widths(area_width: u16, widths: &[Constraint]) -> Vec<u16> {
+    let mut remaining = area_width;
+    widths
+        .iter()
+        .enumerate()
+        .map(|(idx, width)| {
+            if idx + 1 == widths.len() {
+                return remaining;
+            }
+            let resolved = match *width {
+                Constraint::Length(value) | Constraint::Min(value) | Constraint::Max(value) => {
+                    value.min(remaining)
+                }
+                Constraint::Percentage(value) => (u32::from(area_width) * u32::from(value) / 100)
+                    .min(u32::from(remaining))
+                    as u16,
+                Constraint::Ratio(numerator, denominator) if denominator != 0 => {
+                    (u32::from(area_width) * numerator / denominator).min(u32::from(remaining))
+                        as u16
+                }
+                Constraint::Fill(_) | Constraint::Ratio(_, _) => remaining,
+            };
+            remaining = remaining.saturating_sub(resolved);
+            resolved
+        })
+        .collect()
 }
 
 pub fn mouse_background_blocked(app_state: &AppState) -> bool {
@@ -1017,6 +1104,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
 mod tests {
     use super::*;
     use crate::{
+        app::PodSortState,
         policy::ResourceActionContext,
         ui::components::port_forward_dialog::PortForwardDialog,
         workbench::{PodLogsTabState, PortForwardTabState, WorkbenchTabState},
@@ -1446,6 +1534,82 @@ mod tests {
         assert_eq!(app.selected_idx, 9);
         assert_eq!(app.extension_instance_cursor, 49);
         assert_eq!(app.content_detail_scroll, 10);
+    }
+
+    #[test]
+    fn mouse_left_click_pod_header_toggles_sort() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
+            content: Rect::new(28, 3, 120, 12),
+            secondary: None,
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        app.focus = Focus::Sidebar;
+        app.selected_idx = 7;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(MouseContentTarget::Selection { total: 100 }),
+        );
+
+        assert_eq!(app.focus, Focus::Content);
+        assert_eq!(
+            app.pod_sort(),
+            Some(PodSortState::new(PodSortColumn::Name, false))
+        );
+        assert_eq!(app.selected_idx, 0);
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(MouseContentTarget::Selection { total: 100 }),
+        );
+
+        assert_eq!(
+            app.pod_sort(),
+            Some(PodSortState::new(PodSortColumn::Name, true))
+        );
+    }
+
+    #[test]
+    fn mouse_pod_sort_column_at_maps_visible_headers() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        let content = Rect::new(28, 3, 120, 12);
+
+        assert_eq!(
+            mouse_pod_sort_column_at(&app, content, 30, 4),
+            Some(PodSortColumn::Name)
+        );
+        assert_eq!(
+            mouse_pod_sort_column_at(&app, content, 90, 4),
+            Some(PodSortColumn::Status)
+        );
+        assert_eq!(
+            mouse_pod_sort_column_at(&app, content, 130, 4),
+            Some(PodSortColumn::Restarts)
+        );
+        assert_eq!(
+            mouse_pod_sort_column_at(&app, content, 140, 4),
+            Some(PodSortColumn::Age)
+        );
+        assert_eq!(mouse_pod_sort_column_at(&app, content, 30, 5), None);
     }
 
     #[test]
