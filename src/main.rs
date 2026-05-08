@@ -56,7 +56,10 @@ use kubectui::{
         load_ai_config_from_path, load_config, save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
-    events::{apply_action, mouse_background_blocked, mouse_content_row_at, route_mouse_input},
+    events::{
+        MouseContentTarget, apply_action, mouse_background_blocked, mouse_content_row_at,
+        route_mouse_input,
+    },
     extensions::{
         ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
         PreparedExtensionCommand, load_extensions_registry, prepare_command,
@@ -142,28 +145,68 @@ fn mouse_activates_selected_content(
     app: &AppState,
     mouse: MouseEvent,
     regions: Option<&kubectui::ui::MouseRegions>,
-    content_total: Option<usize>,
+    content_target: Option<MouseContentTarget>,
 ) -> bool {
     if mouse_background_blocked(app) {
         return false;
     }
 
     regions
-        .zip(content_total)
-        .and_then(|(regions, total)| {
+        .zip(content_target)
+        .and_then(|(regions, target)| {
+            let selected_idx = match target {
+                MouseContentTarget::Selection { .. } => app.selected_idx(),
+                MouseContentTarget::ExtensionInstances { .. } => app.extension_instance_cursor,
+            };
             mouse_content_row_at(
                 regions.content,
-                app.selected_idx(),
-                total,
+                selected_idx,
+                match target {
+                    MouseContentTarget::Selection { total }
+                    | MouseContentTarget::ExtensionInstances { total } => total,
+                },
                 mouse.column,
                 mouse.row,
             )
+            .map(|row| (target, selected_idx, row))
         })
-        .is_some_and(|row| {
-            row == app.selected_idx()
+        .is_some_and(|(_target, selected_idx, row)| {
+            row == selected_idx
                 && app.focus == kubectui::app::Focus::Content
                 && app.detail_view.is_none()
         })
+}
+
+fn mouse_content_target_for_click(
+    app: &AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+) -> MouseContentTarget {
+    let total = match app.view() {
+        AppView::Bookmarks => {
+            kubectui::bookmarks::filtered_bookmark_indices(app.bookmarks(), app.search_query())
+                .len()
+        }
+        AppView::Extensions if app.extension_in_instances => app.extension_instances.len(),
+        AppView::Extensions => kubectui::ui::views::extensions::crds::filtered_crd_indices(
+            &snapshot.custom_resource_definitions,
+            app.search_query(),
+        )
+        .len(),
+        _ => kubectui::ui::views::filtering::filtered_indices_for_view(
+            app.view(),
+            snapshot,
+            app.search_query(),
+            app.workload_sort(),
+            app.pod_sort(),
+        )
+        .len(),
+    };
+
+    if app.view() == AppView::Extensions && app.extension_in_instances {
+        MouseContentTarget::ExtensionInstances { total }
+    } else {
+        MouseContentTarget::Selection { total }
+    }
 }
 
 fn should_exit_extension_instances(key: crossterm::event::KeyEvent, app: &AppState) -> bool {
@@ -5603,24 +5646,15 @@ pub(crate) async fn run_app_inner(
                                     mouse.row,
                                 )
                             });
-                        let content_total = content_click
-                        .then(|| {
-                            kubectui::ui::views::filtering::filtered_indices_for_view(
-                                app.view(),
-                                &cached_snapshot,
-                                app.search_query(),
-                                app.workload_sort(),
-                                app.pod_sort(),
-                            )
-                            .len()
-                        });
+                        let content_target =
+                            content_click.then(|| mouse_content_target_for_click(&app, &cached_snapshot));
                         let activates_selected_content = mouse_activates_selected_content(
                             &app,
                             mouse,
                             regions.as_ref(),
-                            content_total,
+                            content_target,
                         );
-                        let action = route_mouse_input(mouse, &mut app, regions.as_ref(), content_total);
+                        let action = route_mouse_input(mouse, &mut app, regions.as_ref(), content_target);
                         if action == AppAction::None && activates_selected_content {
                             activate_selected_content_resource(&mut app, &cached_snapshot)
                         } else {
