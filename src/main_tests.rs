@@ -35,6 +35,7 @@ use kubectui::{
     },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
+    events::MouseContentTarget,
     k8s::{
         client::FluxWatchTarget,
         dtos::{
@@ -173,7 +174,7 @@ fn mouse_selected_row_activation_is_blocked_by_palette() {
             modifiers: KeyModifiers::NONE,
         },
         Some(&regions),
-        Some(100),
+        Some(MouseContentTarget::Selection { total: 100 }),
     ));
 }
 
@@ -202,8 +203,91 @@ fn mouse_selected_row_activation_allows_unblocked_selected_row() {
             modifiers: KeyModifiers::NONE,
         },
         Some(&regions),
-        Some(100),
+        Some(MouseContentTarget::Selection { total: 100 }),
     ));
+}
+
+#[test]
+fn mouse_content_target_counts_bookmark_rows() {
+    let mut app = AppState {
+        view: AppView::Bookmarks,
+        current_context_name: Some("prod".to_string()),
+        ..AppState::default()
+    };
+    app.toggle_bookmark(ResourceRef::Pod("api".to_string(), "default".to_string()))
+        .expect("bookmark pod");
+    app.toggle_bookmark(ResourceRef::Secret(
+        "db-secret".to_string(),
+        "default".to_string(),
+    ))
+    .expect("bookmark secret");
+    app.search_query = "secret".to_string();
+
+    assert_eq!(
+        super::mouse_content_target_for_click(&app, &ClusterSnapshot::default()),
+        MouseContentTarget::Selection { total: 1 }
+    );
+}
+
+#[test]
+fn mouse_content_target_uses_extension_instance_cursor_mode() {
+    let app = AppState {
+        view: AppView::Extensions,
+        extension_in_instances: true,
+        extension_instances: vec![
+            CustomResourceInfo {
+                name: "alpha".to_string(),
+                ..CustomResourceInfo::default()
+            },
+            CustomResourceInfo {
+                name: "beta".to_string(),
+                ..CustomResourceInfo::default()
+            },
+        ],
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        super::mouse_content_target_for_click(&app, &ClusterSnapshot::default()),
+        MouseContentTarget::ExtensionInstances { total: 2 }
+    );
+}
+
+#[test]
+fn mouse_content_target_counts_filtered_extension_crds() {
+    let app = AppState {
+        view: AppView::Extensions,
+        search_query: "gadget".to_string(),
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        custom_resource_definitions: vec![
+            CustomResourceDefinitionInfo {
+                name: "widgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 1,
+            },
+            CustomResourceDefinitionInfo {
+                name: "gadgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Gadget".to_string(),
+                plural: "gadgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 2,
+            },
+        ],
+        ..ClusterSnapshot::default()
+    };
+
+    assert_eq!(
+        super::mouse_content_target_for_click(&app, &snapshot),
+        MouseContentTarget::Selection { total: 1 }
+    );
 }
 
 #[test]

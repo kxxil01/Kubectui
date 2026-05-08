@@ -8,6 +8,20 @@ use crate::{
     workbench::WorkbenchTabState,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseContentTarget {
+    Selection { total: usize },
+    ExtensionInstances { total: usize },
+}
+
+impl MouseContentTarget {
+    fn total(self) -> usize {
+        match self {
+            Self::Selection { total } | Self::ExtensionInstances { total } => total,
+        }
+    }
+}
+
 /// Routes a keyboard event to the appropriate handler based on application state.
 pub fn route_keyboard_input(key: KeyEvent, app_state: &mut AppState) -> AppAction {
     app_state.handle_key_event(key)
@@ -18,7 +32,7 @@ pub fn route_mouse_input(
     mouse: MouseEvent,
     app_state: &mut AppState,
     regions: Option<&MouseRegions>,
-    content_total: Option<usize>,
+    content_target: Option<MouseContentTarget>,
 ) -> AppAction {
     if mouse_background_blocked(app_state) {
         return match mouse.kind {
@@ -75,17 +89,16 @@ pub fn route_mouse_input(
                     app_state.focus = Focus::Content;
                     app_state.content_pane_focus = ContentPaneFocus::List;
                     if app_state.detail_view.is_none()
-                        && let Some(total) = content_total
+                        && let Some(target) = content_target
                         && let Some(selected) = mouse_content_row_at(
                             regions.content,
-                            app_state.selected_idx,
-                            total,
+                            content_target_selected_idx(app_state, target),
+                            target.total(),
                             mouse.column,
                             mouse.row,
                         )
                     {
-                        app_state.selected_idx = selected;
-                        app_state.reset_content_secondary_pane_state();
+                        apply_mouse_content_selection(app_state, target, selected);
                     }
                 }
             }
@@ -162,6 +175,29 @@ fn focus_content_secondary_pane(app_state: &mut AppState) {
     if app_state.view().supports_secondary_pane_scroll() && app_state.detail_view.is_none() {
         app_state.focus = Focus::Content;
         app_state.content_pane_focus = ContentPaneFocus::Secondary;
+    }
+}
+
+fn content_target_selected_idx(app_state: &AppState, target: MouseContentTarget) -> usize {
+    match target {
+        MouseContentTarget::Selection { .. } => app_state.selected_idx,
+        MouseContentTarget::ExtensionInstances { .. } => app_state.extension_instance_cursor,
+    }
+}
+
+fn apply_mouse_content_selection(
+    app_state: &mut AppState,
+    target: MouseContentTarget,
+    selected: usize,
+) {
+    match target {
+        MouseContentTarget::Selection { .. } => {
+            app_state.selected_idx = selected;
+            app_state.reset_content_secondary_pane_state();
+        }
+        MouseContentTarget::ExtensionInstances { .. } => {
+            app_state.extension_instance_cursor = selected;
+        }
     }
 }
 
@@ -1182,7 +1218,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(10),
+            Some(MouseContentTarget::Selection { total: 10 }),
         );
         assert_eq!(app.focus, Focus::Content);
 
@@ -1195,7 +1231,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(10),
+            Some(MouseContentTarget::Selection { total: 10 }),
         );
         assert_eq!(app.focus, Focus::Sidebar);
 
@@ -1208,7 +1244,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(10),
+            Some(MouseContentTarget::Selection { total: 10 }),
         );
         assert_eq!(app.focus, Focus::Workbench);
     }
@@ -1236,7 +1272,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(100),
+            Some(MouseContentTarget::Selection { total: 100 }),
         );
 
         assert_eq!(app.focus, Focus::Sidebar);
@@ -1268,7 +1304,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(100),
+            Some(MouseContentTarget::Selection { total: 100 }),
         );
 
         assert_eq!(app.focus, Focus::Content);
@@ -1300,7 +1336,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(100),
+            Some(MouseContentTarget::Selection { total: 100 }),
         );
 
         assert_eq!(action, AppAction::None);
@@ -1332,7 +1368,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(100),
+            Some(MouseContentTarget::Selection { total: 100 }),
         );
 
         assert_eq!(app.focus, Focus::Content);
@@ -1361,7 +1397,7 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(100),
+            Some(MouseContentTarget::Selection { total: 100 }),
         );
         assert_eq!(app.selected_idx, 5);
 
@@ -1374,9 +1410,42 @@ mod tests {
             },
             &mut app,
             Some(&regions),
-            Some(0),
+            Some(MouseContentTarget::Selection { total: 0 }),
         );
         assert_eq!(app.selected_idx, 5);
+    }
+
+    #[test]
+    fn mouse_left_click_selects_extension_instance_row() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
+            content: Rect::new(28, 3, 92, 12),
+            secondary: None,
+            workbench: None,
+        };
+        let mut app = AppState::default();
+        app.focus = Focus::Sidebar;
+        app.selected_idx = 9;
+        app.extension_instance_cursor = 50;
+        app.content_detail_scroll = 10;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(MouseContentTarget::ExtensionInstances { total: 100 }),
+        );
+
+        assert_eq!(app.focus, Focus::Content);
+        assert_eq!(app.selected_idx, 9);
+        assert_eq!(app.extension_instance_cursor, 49);
+        assert_eq!(app.content_detail_scroll, 10);
     }
 
     #[test]
