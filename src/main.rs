@@ -337,6 +337,33 @@ fn finish_mouse_pod_selection(
     }
 }
 
+fn finish_mouse_content_click(
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+    mouse_kind: MouseEventKind,
+    routed_action: AppAction,
+    clicked_row: Option<usize>,
+    can_activate_clicked_content: bool,
+) -> AppAction {
+    if routed_action == AppAction::None
+        && app.mouse_row_selection.is_none()
+        && can_activate_clicked_content
+        && clicked_row.is_some_and(|row| row == app.selected_idx())
+    {
+        activate_selected_content_resource(app, snapshot)
+    } else {
+        if routed_action == AppAction::None
+            && matches!(mouse_kind, MouseEventKind::Down(MouseButton::Left))
+            && app.mouse_row_selection.is_none()
+            && let Some(row) = clicked_row
+        {
+            let view = app.view();
+            remember_mouse_content_selection(app, view, row);
+        }
+        routed_action
+    }
+}
+
 fn mouse_content_target_for_click(
     app: &AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
@@ -5857,22 +5884,15 @@ pub(crate) async fn run_app_inner(
                                 })
                                 .or(clicked_content_row);
                             finish_mouse_pod_selection(&mut app, &cached_snapshot, release_row)
-                        } else if action == AppAction::None
-                            && app.mouse_row_selection.is_none()
-                            && can_activate_clicked_content
-                            && clicked_content_row.is_some_and(|row| row == app.selected_idx())
-                        {
-                            activate_selected_content_resource(&mut app, &cached_snapshot)
                         } else {
-                            if action == AppAction::None
-                                && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                                && app.mouse_row_selection.is_none()
-                                && let Some(row) = clicked_content_row
-                            {
-                                let view = app.view();
-                                remember_mouse_content_selection(&mut app, view, row);
-                            }
-                            action
+                            finish_mouse_content_click(
+                                &mut app,
+                                &cached_snapshot,
+                                mouse.kind,
+                                action,
+                                clicked_content_row,
+                                can_activate_clicked_content,
+                            )
                         }
                     }
                 };
