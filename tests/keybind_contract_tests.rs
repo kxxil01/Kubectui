@@ -555,11 +555,13 @@ fn readme_lists_mouse_controls() {
         "README must document mouse filter editing"
     );
     assert!(
-        readme.contains("| Drag Pods name cells | Copy selected pod name(s) to clipboard |"),
+        readme.contains(
+            "| Drag Pods name cells | Copy selected pod name(s) to clipboard via OSC 52 |"
+        ),
         "README must document Pods name drag-copy"
     );
     assert!(
-        readme.contains("| Drag Pods rows | Copy selected rows to clipboard |"),
+        readme.contains("| Drag Pods rows | Copy selected rows to clipboard via OSC 52 |"),
         "README must document Pods row drag-copy"
     );
     assert!(
