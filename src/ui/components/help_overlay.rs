@@ -70,6 +70,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Click filter bar", "Edit filter"),
             ("Drag Pods names", "Copy selected pod names"),
             ("Drag Pods rows", "Copy selected rows"),
+            ("Shift-drag text", "Native terminal selection"),
             ("Drag workbench border", "Resize workbench"),
             (";", "Toggle list / secondary pane focus"),
             ("/", "Search / filter"),
@@ -849,6 +850,9 @@ mod tests {
                 .iter()
                 .any(|(key, desc)| *key == "Drag Pods rows" && *desc == "Copy selected rows")
         );
+        assert!(global.iter().any(|(key, desc)| {
+            *key == "Shift-drag text" && *desc == "Native terminal selection"
+        }));
         assert!(
             global
                 .iter()
