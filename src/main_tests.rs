@@ -1592,7 +1592,9 @@ async fn stop_port_forward_sessions_clears_service_registry_and_workbench_copy()
         sync::Arc,
     };
 
-    let service = PortForwarderService::new(Arc::new(kubectui::k8s::client::K8sClient::dummy()));
+    let service = PortForwarderService::new(Arc::new(
+        kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client"),
+    ));
     let target = PortForwardTarget::new("default", "api", 8080);
     service
         .start_forward(target.clone(), PortForwardConfig::default())
@@ -2119,7 +2121,7 @@ fn refresh_scope_pending_detects_queued_flux_scope() {
 async fn visible_targeted_refresh_preempts_in_flight_secondary_backfill() {
     let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
     let mut global_state = GlobalState::default();
-    let client = kubectui::k8s::client::K8sClient::dummy();
+    let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
     let mut snapshot_dirty = false;
     let mut refresh_state = RefreshRuntimeState {
         request_seq: 5,
@@ -2210,7 +2212,7 @@ fn loading_spinner_animates_for_visible_idle_resource_view() {
 async fn aggregate_secondary_backfill_stays_untargeted() {
     let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
     let mut global_state = GlobalState::default();
-    let client = kubectui::k8s::client::K8sClient::dummy();
+    let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
     let mut snapshot_dirty = false;
     let mut refresh_state = RefreshRuntimeState::default();
 
@@ -2252,7 +2254,7 @@ async fn aggregate_secondary_backfill_stays_untargeted() {
 async fn visible_targeted_refresh_preempts_actual_aggregate_secondary_backfill() {
     let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
     let mut global_state = GlobalState::default();
-    let client = kubectui::k8s::client::K8sClient::dummy();
+    let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
     let mut snapshot_dirty = false;
     let mut refresh_state = RefreshRuntimeState::default();
 
@@ -2315,7 +2317,7 @@ async fn visible_targeted_refresh_preempts_actual_aggregate_secondary_backfill()
 async fn issues_refresh_starts_core_scope_without_empty_noop_phase() {
     let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
     let mut global_state = GlobalState::default();
-    let client = kubectui::k8s::client::K8sClient::dummy();
+    let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
     let mut snapshot_dirty = false;
     let mut refresh_state = RefreshRuntimeState::default();
 
@@ -2359,7 +2361,7 @@ async fn issues_refresh_starts_core_scope_without_empty_noop_phase() {
 async fn disjoint_refresh_dispatch_starts_requested_scope_without_noop_phase() {
     let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
     let mut global_state = GlobalState::default();
-    let client = kubectui::k8s::client::K8sClient::dummy();
+    let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
     let mut snapshot_dirty = false;
     let mut refresh_state = RefreshRuntimeState::default();
 

@@ -11,7 +11,7 @@ mod coordinator_tests {
     #[tokio::test]
     async fn test_coordinator_creation() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
-        let client = kubectui::k8s::client::K8sClient::dummy();
+        let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
 
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
@@ -22,7 +22,7 @@ mod coordinator_tests {
     #[tokio::test]
     async fn test_coordinator_multiple_probes() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
-        let client = kubectui::k8s::client::K8sClient::dummy();
+        let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
 
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
@@ -42,7 +42,7 @@ mod coordinator_tests {
     #[tokio::test]
     async fn test_coordinator_start_stop_probe() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
-        let client = kubectui::k8s::client::K8sClient::dummy();
+        let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
 
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
@@ -71,7 +71,7 @@ mod coordinator_tests {
     #[tokio::test]
     async fn test_coordinator_idempotent_start_probe() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
-        let client = kubectui::k8s::client::K8sClient::dummy();
+        let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
 
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
@@ -102,7 +102,7 @@ mod coordinator_tests {
     #[tokio::test]
     async fn test_coordinator_multiple_log_streams() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
-        let client = kubectui::k8s::client::K8sClient::dummy();
+        let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
 
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
@@ -144,7 +144,7 @@ mod coordinator_tests {
     #[tokio::test]
     async fn test_coordinator_shutdown_cleanup() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
-        let client = kubectui::k8s::client::K8sClient::dummy();
+        let client = kubectui::k8s::client::K8sClient::try_dummy().expect("dummy client");
 
         let coordinator = UpdateCoordinator::new(client, update_tx);
 

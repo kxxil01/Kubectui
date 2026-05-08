@@ -285,7 +285,7 @@ mod tests {
     #[tokio::test]
     async fn test_coordinator_creation() {
         let (tx, _rx) = mpsc::channel(4096);
-        let client = K8sClient::dummy();
+        let client = K8sClient::try_dummy().expect("dummy client");
 
         let coordinator = UpdateCoordinator::new(client, tx);
 

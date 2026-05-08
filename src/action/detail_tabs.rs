@@ -870,7 +870,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_resource_events_rejects_unsupported_event_rows() {
-        let client = K8sClient::dummy();
+        let client = K8sClient::try_dummy().expect("dummy client");
         let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel(1);
         let mut app = AppState {
             view: AppView::Events,
@@ -908,7 +908,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_resource_yaml_uses_cached_yaml_error_without_refetch() {
-        let client = K8sClient::dummy();
+        let client = K8sClient::try_dummy().expect("dummy client");
         let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel(1);
         let resource = ResourceRef::Pod("api".into(), "prod".into());
         let mut detail = DetailViewState {
@@ -954,7 +954,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_resource_events_uses_cached_event_error_without_refetch() {
-        let client = K8sClient::dummy();
+        let client = K8sClient::try_dummy().expect("dummy client");
         let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel(1);
         let resource = ResourceRef::Pod("api".into(), "prod".into());
         let mut detail = DetailViewState {
@@ -999,7 +999,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_resource_events_uses_loaded_empty_cache_without_refetch() {
-        let client = K8sClient::dummy();
+        let client = K8sClient::try_dummy().expect("dummy client");
         let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel(1);
         let resource = ResourceRef::Pod("api".into(), "prod".into());
         let mut detail = DetailViewState {
@@ -1047,7 +1047,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_network_policy_error_replaces_stale_tab_payload() {
-        let client = K8sClient::dummy();
+        let client = K8sClient::try_dummy().expect("dummy client");
         let resource = ResourceRef::Pod("api".into(), "prod".into());
         let mut app = AppState {
             detail_view: Some(DetailViewState {
@@ -1091,7 +1091,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_traffic_debug_error_replaces_stale_tab_payload() {
-        let client = K8sClient::dummy();
+        let client = K8sClient::try_dummy().expect("dummy client");
         let resource = ResourceRef::Pod("api".into(), "prod".into());
         let mut app = AppState {
             detail_view: Some(DetailViewState {
