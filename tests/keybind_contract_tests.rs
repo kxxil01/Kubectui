@@ -565,6 +565,12 @@ fn readme_lists_mouse_controls() {
         "README must document Pods row drag-copy"
     );
     assert!(
+        readme.contains(
+            "| Shift-drag terminal text | Native terminal selection, when supported by your terminal while mouse capture is active |"
+        ),
+        "README must document native terminal text selection boundary"
+    );
+    assert!(
         readme.contains("| Drag workbench top border | Resize workbench |"),
         "README must document workbench mouse resize"
     );
