@@ -30,8 +30,9 @@ use kubectui::{
     action_history::{ActionKind, ActionStatus},
     ai_actions::{AiConfig, AiProviderConfig, AiProviderKind, AiWorkflowKind, validate_ai_actions},
     app::{
-        AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, ResourceRef,
-        SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem, WorkloadSortColumn, WorkloadSortState,
+        AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, MouseCopyMode,
+        MouseRowSelection, ResourceRef, SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem,
+        WorkloadSortColumn, WorkloadSortState,
     },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
@@ -246,6 +247,103 @@ fn mouse_content_click_activation_requires_content_focus() {
         &app,
         clicked_row
     ));
+}
+
+#[test]
+fn mouse_pod_name_column_selection_copies_names_only() {
+    let app = AppState {
+        view: AppView::Pods,
+        focus: Focus::Content,
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        pods: vec![
+            PodInfo {
+                name: "api-0".to_string(),
+                namespace: "default".to_string(),
+                status: "Running".to_string(),
+                restarts: 1,
+                ..PodInfo::default()
+            },
+            PodInfo {
+                name: "worker-0".to_string(),
+                namespace: "jobs".to_string(),
+                status: "Pending".to_string(),
+                restarts: 0,
+                ..PodInfo::default()
+            },
+        ],
+        ..ClusterSnapshot::default()
+    };
+
+    let text = super::pod_mouse_selection_text(
+        &app,
+        &snapshot,
+        MouseRowSelection {
+            view: AppView::Pods,
+            start_row: 0,
+            end_row: 1,
+            mode: MouseCopyMode::Name,
+            dragged: true,
+        },
+    )
+    .expect("selection text");
+
+    assert_eq!(text, "api-0\nworker-0");
+}
+
+#[test]
+fn mouse_pod_row_selection_copies_tab_separated_rows() {
+    let app = AppState {
+        view: AppView::Pods,
+        focus: Focus::Content,
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        pods: vec![PodInfo {
+            name: "api-0".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            restarts: 2,
+            ..PodInfo::default()
+        }],
+        ..ClusterSnapshot::default()
+    };
+
+    let text = super::pod_mouse_selection_text(
+        &app,
+        &snapshot,
+        MouseRowSelection {
+            view: AppView::Pods,
+            start_row: 0,
+            end_row: 0,
+            mode: MouseCopyMode::Row,
+            dragged: true,
+        },
+    )
+    .expect("selection text");
+
+    assert_eq!(text, "api-0\tdefault\tRunning\t2\t-");
+}
+
+#[test]
+fn mouse_pod_drag_marks_same_row_selection_for_copy() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        selected_idx: 3,
+        mouse_row_selection: Some(MouseRowSelection {
+            view: AppView::Pods,
+            start_row: 3,
+            end_row: 3,
+            mode: MouseCopyMode::Name,
+            dragged: false,
+        }),
+        ..AppState::default()
+    };
+
+    super::update_mouse_pod_selection(&mut app, 3);
+
+    assert!(app.mouse_row_selection.expect("selection").dragged);
 }
 
 #[test]
