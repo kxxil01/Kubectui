@@ -254,6 +254,21 @@ pub enum ContentPaneFocus {
     Secondary,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseCopyMode {
+    Name,
+    Row,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseRowSelection {
+    pub view: AppView,
+    pub start_row: usize,
+    pub end_row: usize,
+    pub mode: MouseCopyMode,
+    pub dragged: bool,
+}
+
 /// Runtime state for UI interaction and navigation.
 ///
 /// # Navigation model
@@ -343,6 +358,8 @@ pub struct AppState {
     pub workload_sort: Option<WorkloadSortState>,
     /// Optional sort mode for Pods view.
     pub pod_sort: Option<PodSortState>,
+    /// Active mouse drag selection in the content list.
+    pub mouse_row_selection: Option<MouseRowSelection>,
     /// Active port-forward tunnels displayed in the PortForwarding view.
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
     /// Canonical mutation/action history.

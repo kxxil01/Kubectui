@@ -52,13 +52,13 @@ use kubectui::{
         validate_ai_actions,
     },
     app::{
-        AppAction, AppState, AppView, DetailViewState, ResourceRef, config_path,
-        load_ai_config_from_path, load_config, save_config,
+        AppAction, AppState, AppView, DetailViewState, MouseCopyMode, MouseRowSelection,
+        ResourceRef, config_path, load_ai_config_from_path, load_config, save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::{
         MouseContentTarget, apply_action, mouse_background_blocked, mouse_content_row_at,
-        route_mouse_input,
+        mouse_pod_copy_mode_at, route_mouse_input,
     },
     extensions::{
         ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
@@ -171,6 +171,113 @@ fn mouse_clicked_content_row(
 
 fn mouse_can_activate_clicked_content(app: &AppState, clicked_row: Option<usize>) -> bool {
     clicked_row.is_some() && app.focus == kubectui::app::Focus::Content && app.detail_view.is_none()
+}
+
+fn start_mouse_pod_selection(app: &mut AppState, row: usize, mode: MouseCopyMode) {
+    app.mouse_row_selection = Some(MouseRowSelection {
+        view: AppView::Pods,
+        start_row: row,
+        end_row: row,
+        mode,
+        dragged: false,
+    });
+}
+
+fn update_mouse_pod_selection(app: &mut AppState, row: usize) {
+    if let Some(selection) = &mut app.mouse_row_selection
+        && selection.view == AppView::Pods
+    {
+        selection.end_row = row;
+        selection.dragged = true;
+        app.selected_idx = row;
+    }
+}
+
+fn format_pod_copy_age(created_at: Option<kubectui::time::AppTimestamp>, now_unix: i64) -> String {
+    let Some(created_at) = created_at else {
+        return "-".to_string();
+    };
+    let age_secs = kubectui::time::age_seconds_since(created_at, now_unix);
+    let days = age_secs / 86_400;
+    let hours = (age_secs % 86_400) / 3_600;
+    let mins = (age_secs % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else {
+        format!("{mins}m")
+    }
+}
+
+fn pod_mouse_selection_text(
+    app: &AppState,
+    snapshot: &ClusterSnapshot,
+    selection: MouseRowSelection,
+) -> Option<String> {
+    if selection.view != AppView::Pods {
+        return None;
+    }
+    let indices = kubectui::ui::views::filtering::filtered_indices_for_view(
+        AppView::Pods,
+        snapshot,
+        app.search_query(),
+        app.workload_sort(),
+        app.pod_sort(),
+    );
+    let start = selection.start_row.min(selection.end_row);
+    let end = selection
+        .start_row
+        .max(selection.end_row)
+        .min(indices.len().saturating_sub(1));
+    if start > end || indices.is_empty() {
+        return None;
+    }
+
+    let now_unix = kubectui::time::now_unix_seconds();
+    let mut lines = Vec::with_capacity(end - start + 1);
+    for pod_idx in indices[start..=end].iter().copied() {
+        let pod = &snapshot.pods[pod_idx];
+        match selection.mode {
+            MouseCopyMode::Name => lines.push(pod.name.clone()),
+            MouseCopyMode::Row => lines.push(format!(
+                "{}\t{}\t{}\t{}\t{}",
+                pod.name,
+                pod.namespace,
+                pod.status,
+                pod.restarts,
+                format_pod_copy_age(pod.created_at, now_unix)
+            )),
+        }
+    }
+    Some(lines.join("\n"))
+}
+
+fn finish_mouse_pod_selection(app: &mut AppState, snapshot: &ClusterSnapshot) -> AppAction {
+    let Some(selection) = app.mouse_row_selection.take() else {
+        return AppAction::None;
+    };
+    if !selection.dragged {
+        return activate_selected_content_resource(app, snapshot);
+    }
+
+    let Some(text) = pod_mouse_selection_text(app, snapshot, selection) else {
+        return AppAction::None;
+    };
+    let line_count = text.lines().count();
+    match kubectui::clipboard::copy_to_clipboard(&text) {
+        Ok(()) => {
+            match selection.mode {
+                MouseCopyMode::Name => app.set_status(format!("Copied {line_count} pod name(s)")),
+                MouseCopyMode::Row => app.set_status(format!("Copied {line_count} pod row(s)")),
+            }
+            AppAction::None
+        }
+        Err(err) => {
+            app.set_error(format!("Clipboard error: {err}"));
+            AppAction::None
+        }
+    }
 }
 
 fn mouse_content_target_for_click(
@@ -5633,8 +5740,13 @@ pub(crate) async fn run_app_inner(
                                     kubectui::ui::mouse_regions(&app, &cached_snapshot, size)
                                 })
                         }).flatten();
-                        let content_click = app.detail_view.is_none()
-                            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                        let content_pointer = app.detail_view.is_none()
+                            && matches!(
+                                mouse.kind,
+                                MouseEventKind::Down(MouseButton::Left)
+                                    | MouseEventKind::Drag(MouseButton::Left)
+                                    | MouseEventKind::Up(MouseButton::Left)
+                            )
                             && regions.as_ref().is_some_and(|regions| {
                                 kubectui::ui::rect_contains(
                                     regions.content,
@@ -5643,17 +5755,35 @@ pub(crate) async fn run_app_inner(
                                 )
                             });
                         let content_target =
-                            content_click.then(|| mouse_content_target_for_click(&app, &cached_snapshot));
+                            content_pointer.then(|| mouse_content_target_for_click(&app, &cached_snapshot));
                         let clicked_content_row = mouse_clicked_content_row(
                             &app,
                             mouse,
                             regions.as_ref(),
                             content_target,
                         );
+                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                            && let (Some(regions), Some(row)) =
+                                (regions.as_ref(), clicked_content_row)
+                            && let Some(mode) =
+                                mouse_pod_copy_mode_at(&app, regions.content, mouse.column, mouse.row)
+                        {
+                            start_mouse_pod_selection(&mut app, row, mode);
+                        } else if matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left))
+                            && let Some(row) = clicked_content_row
+                        {
+                            update_mouse_pod_selection(&mut app, row);
+                        }
                         let can_activate_clicked_content =
-                            mouse_can_activate_clicked_content(&app, clicked_content_row);
+                            matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                                && app.mouse_row_selection.is_none()
+                                && mouse_can_activate_clicked_content(&app, clicked_content_row);
                         let action = route_mouse_input(mouse, &mut app, regions.as_ref(), content_target);
-                        if action == AppAction::None
+                        if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+                            && app.mouse_row_selection.is_some()
+                        {
+                            finish_mouse_pod_selection(&mut app, &cached_snapshot)
+                        } else if action == AppAction::None
                             && can_activate_clicked_content
                             && clicked_content_row.is_some_and(|row| row == app.selected_idx())
                         {

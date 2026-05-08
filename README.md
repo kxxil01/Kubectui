@@ -127,7 +127,7 @@ selection, and workbench border drag-resize.
 | **Workbench** | 17 tab types: History, YAML, Drift, Rollout, Helm, Decoded Secret, Timeline, Pod Logs, Workload Logs, Exec, Extension, AI, Port-Forward, Relations, NetPol, Reachability, Traffic |
 | **Diagnostics** | Dashboard, Issue Center, Health Report, sanitizer rules, Trivy vulnerability summaries, NetworkPolicy intent analysis |
 | **Search** | `/` filters any list live. `:` opens the action palette for fuzzy navigation, actions, workspaces, banks, templates, extensions, and AI workflows |
-| **Mouse** | Wheel scrolls the pane under pointer; left click focuses panes, selects/open rows, edits the filter bar, sorts Pods by header, selects workbench tabs; drag resizes workbench |
+| **Mouse** | Wheel scrolls the pane under pointer; left click focuses panes, selects/open rows, edits the filter bar, sorts Pods by header, selects workbench tabs; drag Pods rows to copy, drag workbench top border to resize |
 | **RBAC-aware** | Actions filtered by resource capability and cluster permissions; forbidden reads degrade gracefully |
 | **Themes & UX** | Dark, Nord, Dracula, Catppuccin Mocha, Light; 3 icon modes; saved workspaces and hotkeys |
 | **Resilience** | Connection health indicator, backoff on failures, staleness display, watch auto-reconnect |
@@ -149,6 +149,8 @@ Press `?` in-app for the full list. Summary:
 | Left click row with list focused | Select and open detail |
 | Left click filter bar | Edit filter |
 | Left click Pods header | Sort by Name, Status, Restarts, or Age |
+| Drag Pods name cells | Copy selected pod name(s) to clipboard |
+| Drag Pods rows | Copy selected rows to clipboard |
 | Drag workbench top border | Resize workbench |
 
 ### Global

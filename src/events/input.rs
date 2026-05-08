@@ -5,8 +5,8 @@ use ratatui::layout::Constraint;
 
 use crate::{
     app::{
-        ActiveComponent, AppAction, AppState, AppView, ContentPaneFocus, Focus, PodSortColumn,
-        sidebar_rows,
+        ActiveComponent, AppAction, AppState, AppView, ContentPaneFocus, Focus, MouseCopyMode,
+        PodSortColumn, sidebar_rows,
     },
     ui::{MouseRegions, rect_contains},
     workbench::WorkbenchTabState,
@@ -178,6 +178,52 @@ pub fn mouse_pod_sort_column_at(
     }
 
     None
+}
+
+pub fn mouse_pod_copy_mode_at(
+    app_state: &AppState,
+    content: ratatui::layout::Rect,
+    column: u16,
+    row: u16,
+) -> Option<MouseCopyMode> {
+    if app_state.view() != AppView::Pods
+        || app_state.detail_view.is_some()
+        || row < content.y.saturating_add(2)
+        || !rect_contains(content, column, row)
+    {
+        return None;
+    }
+
+    let registry = crate::columns::columns_for_view(AppView::Pods)?;
+    let view_key = crate::columns::view_key(AppView::Pods);
+    let prefs = crate::preferences::resolve_view_preferences(
+        view_key,
+        &app_state.preferences,
+        &app_state.cluster_preferences,
+        app_state.current_context_name.as_deref(),
+    );
+    let visible_columns = crate::columns::resolve_columns(registry, &prefs);
+    let constraints = crate::columns::visible_constraints_for_area(
+        AppView::Pods,
+        &visible_columns,
+        content.width,
+    );
+    let widths = crate::ui::responsive_table_widths_vec(content.width, &constraints);
+    let table_columns = materialize_column_widths(content.width.saturating_sub(3), &widths);
+    let mut cursor = content.x.saturating_add(1);
+    for (column_def, width) in visible_columns.iter().zip(table_columns) {
+        let end = cursor.saturating_add(width);
+        if column >= cursor && column < end {
+            return Some(if column_def.id == "name" {
+                MouseCopyMode::Name
+            } else {
+                MouseCopyMode::Row
+            });
+        }
+        cursor = end;
+    }
+
+    Some(MouseCopyMode::Row)
 }
 
 fn materialize_column_widths(area_width: u16, widths: &[Constraint]) -> Vec<u16> {
