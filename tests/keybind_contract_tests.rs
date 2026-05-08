@@ -547,7 +547,7 @@ fn readme_lists_mouse_controls() {
         "README must document left click focus and selection"
     );
     assert!(
-        readme.contains("| Left click selected row | Open detail |"),
+        readme.contains("| Left click row with list focused | Select and open detail |"),
         "README must document row activation click"
     );
     assert!(

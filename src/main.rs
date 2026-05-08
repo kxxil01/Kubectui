@@ -141,40 +141,36 @@ fn activate_selected_content_resource(
     }
 }
 
-fn mouse_activates_selected_content(
+fn mouse_clicked_content_row(
     app: &AppState,
     mouse: MouseEvent,
     regions: Option<&kubectui::ui::MouseRegions>,
     content_target: Option<MouseContentTarget>,
-) -> bool {
+) -> Option<usize> {
     if mouse_background_blocked(app) {
-        return false;
+        return None;
     }
 
-    regions
-        .zip(content_target)
-        .and_then(|(regions, target)| {
-            let selected_idx = match target {
-                MouseContentTarget::Selection { .. } => app.selected_idx(),
-                MouseContentTarget::ExtensionInstances { .. } => app.extension_instance_cursor,
-            };
-            mouse_content_row_at(
-                regions.content,
-                selected_idx,
-                match target {
-                    MouseContentTarget::Selection { total }
-                    | MouseContentTarget::ExtensionInstances { total } => total,
-                },
-                mouse.column,
-                mouse.row,
-            )
-            .map(|row| (target, selected_idx, row))
-        })
-        .is_some_and(|(_target, selected_idx, row)| {
-            row == selected_idx
-                && app.focus == kubectui::app::Focus::Content
-                && app.detail_view.is_none()
-        })
+    regions.zip(content_target).and_then(|(regions, target)| {
+        let selected_idx = match target {
+            MouseContentTarget::Selection { .. } => app.selected_idx(),
+            MouseContentTarget::ExtensionInstances { .. } => app.extension_instance_cursor,
+        };
+        mouse_content_row_at(
+            regions.content,
+            selected_idx,
+            match target {
+                MouseContentTarget::Selection { total }
+                | MouseContentTarget::ExtensionInstances { total } => total,
+            },
+            mouse.column,
+            mouse.row,
+        )
+    })
+}
+
+fn mouse_can_activate_clicked_content(app: &AppState, clicked_row: Option<usize>) -> bool {
+    clicked_row.is_some() && app.focus == kubectui::app::Focus::Content && app.detail_view.is_none()
 }
 
 fn mouse_content_target_for_click(
@@ -5648,14 +5644,19 @@ pub(crate) async fn run_app_inner(
                             });
                         let content_target =
                             content_click.then(|| mouse_content_target_for_click(&app, &cached_snapshot));
-                        let activates_selected_content = mouse_activates_selected_content(
+                        let clicked_content_row = mouse_clicked_content_row(
                             &app,
                             mouse,
                             regions.as_ref(),
                             content_target,
                         );
+                        let can_activate_clicked_content =
+                            mouse_can_activate_clicked_content(&app, clicked_content_row);
                         let action = route_mouse_input(mouse, &mut app, regions.as_ref(), content_target);
-                        if action == AppAction::None && activates_selected_content {
+                        if action == AppAction::None
+                            && can_activate_clicked_content
+                            && clicked_content_row.is_some_and(|row| row == app.selected_idx())
+                        {
                             activate_selected_content_resource(&mut app, &cached_snapshot)
                         } else {
                             action
