@@ -114,7 +114,8 @@ selection, and workbench border drag-resize.
 - Resource drift view, ephemeral pod debugging, node debug shell, and built-in apply templates
 - Mouse support for everyday navigation: scroll the pane under the pointer,
   focus panes, choose rows, open selected rows, edit the filter bar, switch
-  workbench tabs, and drag-resize the workbench
+  workbench tabs, drag-copy Pods names/rows via OSC 52 clipboard, and
+  drag-resize the workbench
 - Stability sweep for safer YAML handling, cleaner terminal recovery on startup
   failures, and safer `$EDITOR` handoff when editing resources
 
@@ -149,8 +150,8 @@ Press `?` in-app for the full list. Summary:
 | Left click row with list focused | Select and open detail |
 | Left click filter bar | Edit filter |
 | Left click Pods header | Sort by Name, Status, Restarts, or Age |
-| Drag Pods name cells | Copy selected pod name(s) to clipboard |
-| Drag Pods rows | Copy selected rows to clipboard |
+| Drag Pods name cells | Copy selected pod name(s) to clipboard via OSC 52 |
+| Drag Pods rows | Copy selected rows to clipboard via OSC 52 |
 | Drag workbench top border | Resize workbench |
 
 ### Global
