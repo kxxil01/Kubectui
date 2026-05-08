@@ -17,11 +17,7 @@ pub fn copy_resource_name(app: &mut AppState, cached_snapshot: &ClusterSnapshot)
         return;
     };
 
-    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&name) {
-        app.set_error(format!("Clipboard error: {e}"));
-    } else {
-        app.status_message = Some(format!("Copied: {name}"));
-    }
+    copy_text_to_clipboard(app, &name, format!("Copied: {name}"));
 }
 
 /// Copies the fully-qualified resource name (`namespace/name`) to the clipboard.
@@ -45,11 +41,7 @@ pub fn copy_resource_full_name(app: &mut AppState, cached_snapshot: &ClusterSnap
         return;
     };
 
-    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&full) {
-        app.set_error(format!("Clipboard error: {e}"));
-    } else {
-        app.status_message = Some(format!("Copied: {full}"));
-    }
+    copy_text_to_clipboard(app, &full, format!("Copied: {full}"));
 }
 
 /// Copies the active log tab content to the clipboard.
@@ -64,11 +56,7 @@ pub fn copy_log_content(app: &mut AppState) {
     };
 
     let line_count = content.lines().count();
-    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
-        app.set_error(format!("Clipboard error: {e}"));
-    } else {
-        app.status_message = Some(format!("Copied {line_count} log lines"));
-    }
+    copy_text_to_clipboard(app, &content, format!("Copied {line_count} log lines"));
 }
 
 /// Exports the active log tab content to a file.
@@ -104,11 +92,11 @@ pub fn copy_exec_output(app: &mut AppState) {
     };
 
     let line_count = content.lines().count();
-    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
-        app.set_error(format!("Clipboard error: {e}"));
-    } else {
-        app.status_message = Some(format!("Copied {line_count} exec output lines"));
-    }
+    copy_text_to_clipboard(
+        app,
+        &content,
+        format!("Copied {line_count} exec output lines"),
+    );
 }
 
 /// Exports the active exec tab output to a file.
@@ -141,6 +129,26 @@ fn empty_or_unsupported_log_action_message(
             format!("No matching log lines to {action}.")
         }
         _ => format!("Open a log tab before {action}ing logs."),
+    }
+}
+
+fn copy_text_to_clipboard(app: &mut AppState, text: &str, success_message: String) {
+    apply_clipboard_result(
+        app,
+        kubectui::clipboard::copy_to_clipboard(text),
+        success_message,
+    );
+}
+
+fn apply_clipboard_result(
+    app: &mut AppState,
+    result: std::io::Result<()>,
+    success_message: String,
+) {
+    if let Err(e) = result {
+        app.set_error(format!("Clipboard error: {e}"));
+    } else {
+        app.set_status(success_message);
     }
 }
 
@@ -286,6 +294,32 @@ mod tests {
         copy_resource_full_name(&mut app, &snapshot);
 
         assert_eq!(app.error_message(), Some("No resource selected to copy."));
+    }
+
+    #[test]
+    fn clipboard_success_sets_status_and_clears_stale_error() {
+        let mut app = AppState::default();
+        app.set_error("old error".to_string());
+
+        apply_clipboard_result(&mut app, Ok(()), "Copied ok".to_string());
+
+        assert_eq!(app.status_message(), Some("Copied ok"));
+        assert_eq!(app.error_message(), None);
+    }
+
+    #[test]
+    fn clipboard_failure_sets_error_and_clears_stale_status() {
+        let mut app = AppState::default();
+        app.set_status("old status".to_string());
+
+        apply_clipboard_result(
+            &mut app,
+            Err(std::io::Error::other("denied")),
+            "Copied ok".to_string(),
+        );
+
+        assert_eq!(app.status_message(), None);
+        assert_eq!(app.error_message(), Some("Clipboard error: denied"));
     }
 
     #[test]
