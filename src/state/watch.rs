@@ -300,9 +300,9 @@ impl<T: Clone> ResourceStore<T> {
 
 // ── Watcher macro ──
 //
-// Generates `start_<name>_watch`, `process_<name>_event`, and `sort_<name>s`
-// for each watched resource type. The `scope` parameter controls whether
-// the API is namespace-scoped or cluster-scoped.
+// Generates the named watch starter, event processor, and sorter for each
+// watched resource type. The `scope` parameter controls whether the API is
+// namespace-scoped or cluster-scoped.
 
 macro_rules! define_watcher {
     (@sort $items:ident, namespaced) => {
@@ -317,26 +317,35 @@ macro_rules! define_watcher {
     };
     (
         name: $name:ident,
+        sort_fn: $sort_fn:ident,
+        start_fn: $start_fn:ident,
+        process_fn: $process_fn:ident,
         k8s_type: $K8sType:ty,
         dto_type: $DtoType:ty,
         converter: $converter:expr,
         resource_variant: $variant:ident,
         scope: namespaced $(,)?
     ) => {
-        define_watcher!(@impl $name, $K8sType, $K8sType, $DtoType, $converter, $variant, namespaced, watcher::watcher);
+        define_watcher!(@impl $name, $sort_fn, $start_fn, $process_fn, $K8sType, $K8sType, $DtoType, $converter, $variant, namespaced, watcher::watcher);
     };
     (
         name: $name:ident,
+        sort_fn: $sort_fn:ident,
+        start_fn: $start_fn:ident,
+        process_fn: $process_fn:ident,
         k8s_type: $K8sType:ty,
         dto_type: $DtoType:ty,
         converter: $converter:expr,
         resource_variant: $variant:ident,
         scope: cluster $(,)?
     ) => {
-        define_watcher!(@impl $name, $K8sType, $K8sType, $DtoType, $converter, $variant, cluster, watcher::watcher);
+        define_watcher!(@impl $name, $sort_fn, $start_fn, $process_fn, $K8sType, $K8sType, $DtoType, $converter, $variant, cluster, watcher::watcher);
     };
     (
         name: $name:ident,
+        sort_fn: $sort_fn:ident,
+        start_fn: $start_fn:ident,
+        process_fn: $process_fn:ident,
         k8s_type: $K8sType:ty,
         dto_type: $DtoType:ty,
         converter: $converter:expr,
@@ -347,6 +356,9 @@ macro_rules! define_watcher {
         define_watcher!(
             @impl
             $name,
+            $sort_fn,
+            $start_fn,
+            $process_fn,
             $K8sType,
             PartialObjectMeta<$K8sType>,
             $DtoType,
@@ -356,13 +368,12 @@ macro_rules! define_watcher {
             watcher::metadata_watcher
         );
     };
-    (@impl $name:ident, $ApiType:ty, $EventType:ty, $DtoType:ty, $converter:expr, $variant:ident, $scope:ident, $watch_fn:path) => {
-        paste::paste! {
-            pub(crate) fn [<sort_ $name s>](items: &mut [$DtoType]) {
-                define_watcher!(@sort items, $scope);
-            }
+    (@impl $name:ident, $sort_fn:ident, $start_fn:ident, $process_fn:ident, $ApiType:ty, $EventType:ty, $DtoType:ty, $converter:expr, $variant:ident, $scope:ident, $watch_fn:path) => {
+        pub(crate) fn $sort_fn(items: &mut [$DtoType]) {
+            define_watcher!(@sort items, $scope);
+        }
 
-            fn [<start_ $name _watch>](
+        fn $start_fn(
                 client: Client,
                 session: WatchSessionKey,
                 watch_tx: mpsc::Sender<WatchUpdate>,
@@ -389,7 +400,7 @@ macro_rules! define_watcher {
                             _ = publish_tick.tick(), if publish_pending => {
                                 publish_pending = false;
                                 let mut snapshot = store.publish();
-                                [<sort_ $name s>](&mut snapshot);
+                                $sort_fn(&mut snapshot);
                                 if watch_tx.send(WatchUpdate {
                                     resource: WatchedResource::$variant,
                                     context_generation: session.context_generation,
@@ -401,14 +412,14 @@ macro_rules! define_watcher {
                             item = stream.try_next() => {
                                 match item {
                                     Ok(Some(event)) => {
-                                        if [<process_ $name _event>](&mut store, event) {
+                                        if $process_fn(&mut store, event) {
                                             publish_pending = true;
                                         }
                                     }
                                     Ok(None) => {
                                         if publish_pending {
                                             let mut snapshot = store.publish();
-                                            [<sort_ $name s>](&mut snapshot);
+                                            $sort_fn(&mut snapshot);
                                             if watch_tx.send(WatchUpdate {
                                                 resource: WatchedResource::$variant,
                                                 context_generation: session.context_generation,
@@ -447,9 +458,9 @@ macro_rules! define_watcher {
                         }
                     }
                 });
-            }
+        }
 
-            fn [<process_ $name _event>](
+        fn $process_fn(
                 store: &mut ResourceStore<$DtoType>,
                 event: Event<$EventType>,
             ) -> bool {
@@ -497,7 +508,6 @@ macro_rules! define_watcher {
                         store.remove(&uid)
                     }
                 }
-            }
         }
     };
     // API construction helpers — namespace-aware vs cluster-scoped.
@@ -768,6 +778,9 @@ fn start_flux_watch(
 
 define_watcher! {
     name: pod,
+    sort_fn: sort_pods,
+    start_fn: start_pod_watch,
+    process_fn: process_pod_event,
     k8s_type: Pod,
     dto_type: PodInfo,
     converter: pod_to_info,
@@ -777,6 +790,9 @@ define_watcher! {
 
 define_watcher! {
     name: deployment,
+    sort_fn: sort_deployments,
+    start_fn: start_deployment_watch,
+    process_fn: process_deployment_event,
     k8s_type: Deployment,
     dto_type: DeploymentInfo,
     converter: deployment_to_info,
@@ -786,6 +802,9 @@ define_watcher! {
 
 define_watcher! {
     name: replicaset,
+    sort_fn: sort_replicasets,
+    start_fn: start_replicaset_watch,
+    process_fn: process_replicaset_event,
     k8s_type: ReplicaSet,
     dto_type: ReplicaSetInfo,
     converter: replicaset_to_info,
@@ -795,6 +814,9 @@ define_watcher! {
 
 define_watcher! {
     name: statefulset,
+    sort_fn: sort_statefulsets,
+    start_fn: start_statefulset_watch,
+    process_fn: process_statefulset_event,
     k8s_type: StatefulSet,
     dto_type: StatefulSetInfo,
     converter: statefulset_to_info,
@@ -804,6 +826,9 @@ define_watcher! {
 
 define_watcher! {
     name: daemonset,
+    sort_fn: sort_daemonsets,
+    start_fn: start_daemonset_watch,
+    process_fn: process_daemonset_event,
     k8s_type: DaemonSet,
     dto_type: DaemonSetInfo,
     converter: daemonset_to_info,
@@ -813,6 +838,9 @@ define_watcher! {
 
 define_watcher! {
     name: service,
+    sort_fn: sort_services,
+    start_fn: start_service_watch,
+    process_fn: process_service_event,
     k8s_type: Service,
     dto_type: ServiceInfo,
     converter: service_to_info,
@@ -822,6 +850,9 @@ define_watcher! {
 
 define_watcher! {
     name: node,
+    sort_fn: sort_nodes,
+    start_fn: start_node_watch,
+    process_fn: process_node_event,
     k8s_type: Node,
     dto_type: NodeInfo,
     converter: |item| node_to_info(&item),
@@ -831,6 +862,9 @@ define_watcher! {
 
 define_watcher! {
     name: replication_controller,
+    sort_fn: sort_replication_controllers,
+    start_fn: start_replication_controller_watch,
+    process_fn: process_replication_controller_event,
     k8s_type: ReplicationController,
     dto_type: ReplicationControllerInfo,
     converter: replication_controller_to_info,
@@ -840,6 +874,9 @@ define_watcher! {
 
 define_watcher! {
     name: job,
+    sort_fn: sort_jobs,
+    start_fn: start_job_watch,
+    process_fn: process_job_event,
     k8s_type: Job,
     dto_type: JobInfo,
     converter: job_to_info,
@@ -849,6 +886,9 @@ define_watcher! {
 
 define_watcher! {
     name: cronjob,
+    sort_fn: sort_cronjobs,
+    start_fn: start_cronjob_watch,
+    process_fn: process_cronjob_event,
     k8s_type: CronJob,
     dto_type: CronJobInfo,
     converter: cronjob_to_info,
@@ -858,6 +898,9 @@ define_watcher! {
 
 define_watcher! {
     name: namespace,
+    sort_fn: sort_namespaces,
+    start_fn: start_namespace_watch,
+    process_fn: process_namespace_event,
     k8s_type: Namespace,
     dto_type: NamespaceInfo,
     converter: |item| namespace_metadata_to_info(&item),
