@@ -72,7 +72,7 @@ pub fn export_logs(app: &mut AppState) {
 
     match kubectui::export::save_logs_to_file(&label, &content) {
         Ok(path) => {
-            app.status_message = Some(format!("Saved to {}", path.display()));
+            app.set_status(format!("Saved to {}", path.display()));
         }
         Err(e) => {
             app.set_error(format!("Export error: {e}"));
@@ -112,7 +112,7 @@ pub fn export_exec_output(app: &mut AppState) {
 
     match kubectui::export::save_text_to_file("exec", &label, &content) {
         Ok(path) => {
-            app.status_message = Some(format!("Saved to {}", path.display()));
+            app.set_status(format!("Saved to {}", path.display()));
         }
         Err(e) => {
             app.set_error(format!("Export error: {e}"));
@@ -467,6 +467,7 @@ mod tests {
     #[test]
     fn export_exec_output_uses_exec_file_prefix() {
         let mut app = AppState::default();
+        app.set_error("old error".to_string());
         let mut tab = ExecTabState::new(
             ResourceRef::Pod("pod-0".into(), "ns".into()),
             1,
@@ -479,10 +480,36 @@ mod tests {
 
         export_exec_output(&mut app);
 
+        assert_eq!(app.error_message(), None);
         let status = app.status_message.expect("status message");
         assert!(status.contains("kubectui-exec-ns-pod-0-main-"));
         let path = status.trim_start_matches("Saved to ");
         assert_eq!(std::fs::read_to_string(path).unwrap(), "ok");
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn export_logs_clears_stale_error_on_success() {
+        let mut app = AppState::default();
+        app.set_error("old error".to_string());
+        let mut viewer = LogsViewerState {
+            pod_name: "pod-0".into(),
+            container_name: "main".into(),
+            ..LogsViewerState::default()
+        };
+        viewer.lines.push(LogEntry::from_raw("ready"));
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState {
+                resource: ResourceRef::Pod("pod-0".into(), "ns".into()),
+                viewer,
+            }));
+
+        export_logs(&mut app);
+
+        assert_eq!(app.error_message(), None);
+        let status = app.status_message.expect("status message");
+        let path = status.trim_start_matches("Saved to ");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "ready");
         std::fs::remove_file(path).ok();
     }
 
