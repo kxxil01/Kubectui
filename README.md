@@ -146,7 +146,7 @@ Press `?` in-app for the full list. Summary:
 | `Esc` | Close current overlay or detail |
 | Mouse wheel | Scroll pane under pointer |
 | Left click | Focus panes, choose sidebar/workbench tabs, select rows |
-| Left click selected row | Open detail |
+| Left click row with list focused | Select and open detail |
 | Left click filter bar | Edit filter |
 | Left click Pods header | Sort by Name, Status, Restarts, or Age |
 | Drag workbench top border | Resize workbench |

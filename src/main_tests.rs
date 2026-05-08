@@ -165,7 +165,7 @@ fn mouse_selected_row_activation_is_blocked_by_palette() {
         workbench: None,
     };
 
-    assert!(!super::mouse_activates_selected_content(
+    let clicked_row = super::mouse_clicked_content_row(
         &app,
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -175,15 +175,20 @@ fn mouse_selected_row_activation_is_blocked_by_palette() {
         },
         Some(&regions),
         Some(MouseContentTarget::Selection { total: 100 }),
+    );
+    assert_eq!(clicked_row, None);
+    assert!(!super::mouse_can_activate_clicked_content(
+        &app,
+        clicked_row
     ));
 }
 
 #[test]
-fn mouse_selected_row_activation_allows_unblocked_selected_row() {
+fn mouse_content_click_activation_allows_unblocked_visible_row() {
     let app = AppState {
         focus: Focus::Content,
         view: AppView::Pods,
-        selected_idx: 2,
+        selected_idx: 10,
         ..AppState::default()
     };
     let regions = MouseRegions {
@@ -194,16 +199,52 @@ fn mouse_selected_row_activation_allows_unblocked_selected_row() {
         workbench: None,
     };
 
-    assert!(super::mouse_activates_selected_content(
+    let clicked_row = super::mouse_clicked_content_row(
         &app,
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 30,
-            row: 7,
+            row: 21,
             modifiers: KeyModifiers::NONE,
         },
         Some(&regions),
         Some(MouseContentTarget::Selection { total: 100 }),
+    );
+    assert_eq!(clicked_row, Some(18));
+    assert!(super::mouse_can_activate_clicked_content(&app, clicked_row));
+}
+
+#[test]
+fn mouse_content_click_activation_requires_content_focus() {
+    let app = AppState {
+        focus: Focus::Sidebar,
+        view: AppView::Pods,
+        selected_idx: 10,
+        ..AppState::default()
+    };
+    let regions = MouseRegions {
+        sidebar: Rect::new(0, 3, 28, 20),
+        search: None,
+        content: Rect::new(28, 3, 92, 20),
+        secondary: None,
+        workbench: None,
+    };
+
+    let clicked_row = super::mouse_clicked_content_row(
+        &app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 21,
+            modifiers: KeyModifiers::NONE,
+        },
+        Some(&regions),
+        Some(MouseContentTarget::Selection { total: 100 }),
+    );
+    assert_eq!(clicked_row, Some(18));
+    assert!(!super::mouse_can_activate_clicked_content(
+        &app,
+        clicked_row
     ));
 }
 
