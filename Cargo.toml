@@ -20,7 +20,7 @@ ratatui = { version = "0.30.0", default-features = false, features = [
     "macros",
     "underline-color",
 ] }
-tokio = { version = "1.52.2", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 kube = { version = "3.1.0", features = ["client", "ws", "runtime", "gzip"] }
 k8s-openapi = { version = "0.27.1", features = ["v1_35"] }
 anyhow = "1.0.102"
