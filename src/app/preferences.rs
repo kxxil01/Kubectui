@@ -2,7 +2,7 @@ use super::*;
 use crate::ui::move_cursor_end;
 
 impl AppState {
-    pub(super) fn set_or_toggle_pod_sort(&mut self, column: PodSortColumn) {
+    pub(crate) fn set_or_toggle_pod_sort(&mut self, column: PodSortColumn) {
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
         self.pod_sort = match self.pod_sort {
