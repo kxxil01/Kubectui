@@ -197,17 +197,26 @@ impl K8sClient {
     /// actual API call will fail immediately — use only for tests that
     /// exercise local logic.
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn dummy() -> Self {
-        let cfg = kube::Config::new("http://127.0.0.1:1".parse().expect("valid URL"));
-        let client = Client::try_from(cfg).expect("client should build for test URL");
-        Self {
+    pub fn try_dummy() -> Result<Self> {
+        let cfg = kube::Config::new(
+            "http://127.0.0.1:1"
+                .parse()
+                .context("failed parsing dummy Kubernetes client URL")?,
+        );
+        let client = build_kube_client(cfg)?;
+        Ok(Self {
             client,
             cluster_url: "http://127.0.0.1:1".to_string(),
             cluster_context: Some("test".to_string()),
             cluster_version_cache: Arc::new(tokio::sync::RwLock::new(None)),
             flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
             access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-        }
+        })
+    }
+
+    #[cfg(test)]
+    pub fn dummy() -> Self {
+        Self::try_dummy().expect("dummy Kubernetes client should build")
     }
 
     /// Returns all context names from `~/.kube/config`, sorted alphabetically.

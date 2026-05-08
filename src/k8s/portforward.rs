@@ -295,7 +295,7 @@ mod tests {
     use super::*;
 
     fn service() -> PortForwarderService {
-        let client = Arc::new(crate::k8s::client::K8sClient::dummy());
+        let client = Arc::new(crate::k8s::client::K8sClient::try_dummy().expect("dummy client"));
         PortForwarderService::new(client)
     }
 
