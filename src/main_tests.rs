@@ -292,6 +292,81 @@ fn mouse_content_click_activation_requires_content_focus() {
 }
 
 #[test]
+fn mouse_content_first_click_records_global_list_selection_without_opening() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Deployments,
+        selected_idx: 1,
+        ..AppState::default()
+    };
+
+    let action = super::finish_mouse_content_click(
+        &mut app,
+        &ClusterSnapshot::default(),
+        MouseEventKind::Down(MouseButton::Left),
+        AppAction::None,
+        Some(1),
+        false,
+    );
+
+    assert_eq!(action, AppAction::None);
+    assert_eq!(
+        app.mouse_last_content_selection,
+        Some(MouseContentSelection {
+            view: AppView::Deployments,
+            row: 1
+        })
+    );
+}
+
+#[test]
+fn mouse_content_second_click_opens_global_list_selection() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Deployments,
+        selected_idx: 1,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Deployments,
+            row: 1,
+        }),
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        deployments: vec![
+            DeploymentInfo {
+                name: "api".to_string(),
+                namespace: "default".to_string(),
+                ..DeploymentInfo::default()
+            },
+            DeploymentInfo {
+                name: "worker".to_string(),
+                namespace: "default".to_string(),
+                ..DeploymentInfo::default()
+            },
+        ],
+        ..ClusterSnapshot::default()
+    };
+
+    let can_activate = super::mouse_can_activate_clicked_content(&app, Some(1));
+    let action = super::finish_mouse_content_click(
+        &mut app,
+        &snapshot,
+        MouseEventKind::Down(MouseButton::Left),
+        AppAction::None,
+        Some(1),
+        can_activate,
+    );
+
+    assert_eq!(
+        action,
+        AppAction::OpenDetail(ResourceRef::Deployment(
+            "worker".to_string(),
+            "default".to_string()
+        ))
+    );
+}
+
+#[test]
 fn mouse_pod_name_column_selection_copies_names_only() {
     let app = AppState {
         view: AppView::Pods,
