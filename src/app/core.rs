@@ -39,6 +39,7 @@ impl Default for AppState {
             workload_sort: None,
             pod_sort: None,
             mouse_row_selection: None,
+            mouse_last_content_selection: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
             action_history: ActionHistoryState::default(),
             recent_jumps: Default::default(),

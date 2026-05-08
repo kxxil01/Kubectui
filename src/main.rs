@@ -52,8 +52,9 @@ use kubectui::{
         validate_ai_actions,
     },
     app::{
-        AppAction, AppState, AppView, DetailViewState, MouseCopyMode, MouseRowSelection,
-        ResourceRef, config_path, load_ai_config_from_path, load_config, save_config,
+        AppAction, AppState, AppView, DetailViewState, MouseContentSelection, MouseCopyMode,
+        MouseRowSelection, ResourceRef, config_path, load_ai_config_from_path, load_config,
+        save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::{
@@ -170,7 +171,18 @@ fn mouse_clicked_content_row(
 }
 
 fn mouse_can_activate_clicked_content(app: &AppState, clicked_row: Option<usize>) -> bool {
-    clicked_row.is_some() && app.focus == kubectui::app::Focus::Content && app.detail_view.is_none()
+    let Some(row) = clicked_row else {
+        return false;
+    };
+    app.focus == kubectui::app::Focus::Content
+        && app.detail_view.is_none()
+        && app
+            .mouse_last_content_selection
+            .is_some_and(|selection| selection.view == app.view() && selection.row == row)
+}
+
+fn remember_mouse_content_selection(app: &mut AppState, view: AppView, row: usize) {
+    app.mouse_last_content_selection = Some(MouseContentSelection { view, row });
 }
 
 fn start_mouse_pod_selection(
@@ -295,8 +307,15 @@ fn finish_mouse_pod_selection(
         return if selection.activate_on_release && release_row == Some(selection.start_row) {
             activate_selected_content_resource(app, snapshot)
         } else {
+            if release_row == Some(selection.start_row) {
+                remember_mouse_content_selection(app, selection.view, selection.start_row);
+            } else {
+                app.mouse_last_content_selection = None;
+            }
             AppAction::None
         };
+    } else {
+        app.mouse_last_content_selection = None;
     }
 
     let Some(text) = pod_mouse_selection_text(app, snapshot, selection) else {
@@ -5845,6 +5864,14 @@ pub(crate) async fn run_app_inner(
                         {
                             activate_selected_content_resource(&mut app, &cached_snapshot)
                         } else {
+                            if action == AppAction::None
+                                && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                                && app.mouse_row_selection.is_none()
+                                && let Some(row) = clicked_content_row
+                            {
+                                let view = app.view();
+                                remember_mouse_content_selection(&mut app, view, row);
+                            }
                             action
                         }
                     }

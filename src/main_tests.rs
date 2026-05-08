@@ -30,9 +30,9 @@ use kubectui::{
     action_history::{ActionKind, ActionStatus},
     ai_actions::{AiConfig, AiProviderConfig, AiProviderKind, AiWorkflowKind, validate_ai_actions},
     app::{
-        AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, MouseCopyMode,
-        MouseRowSelection, ResourceRef, SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem,
-        WorkloadSortColumn, WorkloadSortState,
+        AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus,
+        MouseContentSelection, MouseCopyMode, MouseRowSelection, ResourceRef,
+        SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem, WorkloadSortColumn, WorkloadSortState,
     },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
@@ -185,11 +185,15 @@ fn mouse_selected_row_activation_is_blocked_by_palette() {
 }
 
 #[test]
-fn mouse_content_click_activation_allows_unblocked_visible_row() {
+fn mouse_content_click_activation_requires_prior_mouse_selection() {
     let app = AppState {
         focus: Focus::Content,
         view: AppView::Pods,
         selected_idx: 10,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            row: 18,
+        }),
         ..AppState::default()
     };
     let regions = MouseRegions {
@@ -216,11 +220,49 @@ fn mouse_content_click_activation_allows_unblocked_visible_row() {
 }
 
 #[test]
+fn mouse_content_click_activation_rejects_unprimed_selected_row() {
+    let app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        selected_idx: 18,
+        ..AppState::default()
+    };
+    let regions = MouseRegions {
+        sidebar: Rect::new(0, 3, 28, 20),
+        search: None,
+        content: Rect::new(28, 3, 92, 20),
+        secondary: None,
+        workbench: None,
+    };
+
+    let clicked_row = super::mouse_clicked_content_row(
+        &app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 13,
+            modifiers: KeyModifiers::NONE,
+        },
+        Some(&regions),
+        Some(MouseContentTarget::Selection { total: 100 }),
+    );
+    assert_eq!(clicked_row, Some(18));
+    assert!(!super::mouse_can_activate_clicked_content(
+        &app,
+        clicked_row
+    ));
+}
+
+#[test]
 fn mouse_content_click_activation_requires_content_focus() {
     let app = AppState {
         focus: Focus::Sidebar,
         view: AppView::Pods,
         selected_idx: 10,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            row: 18,
+        }),
         ..AppState::default()
     };
     let regions = MouseRegions {
@@ -388,6 +430,13 @@ fn mouse_pod_click_from_sidebar_does_not_activate_on_release() {
     let action = super::finish_mouse_pod_selection(&mut app, &ClusterSnapshot::default(), Some(4));
 
     assert_eq!(action, AppAction::None);
+    assert_eq!(
+        app.mouse_last_content_selection,
+        Some(MouseContentSelection {
+            view: AppView::Pods,
+            row: 4
+        })
+    );
 }
 
 #[test]
@@ -396,6 +445,10 @@ fn mouse_pod_click_release_outside_content_does_not_activate() {
         view: AppView::Pods,
         focus: Focus::Content,
         selected_idx: 4,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            row: 0,
+        }),
         ..AppState::default()
     };
     let snapshot = ClusterSnapshot {
@@ -411,14 +464,41 @@ fn mouse_pod_click_release_outside_content_does_not_activate() {
     let action = super::finish_mouse_pod_selection(&mut app, &snapshot, None);
 
     assert_eq!(action, AppAction::None);
+    assert_eq!(app.mouse_last_content_selection, None);
 }
 
 #[test]
-fn mouse_pod_click_release_on_same_row_activates_when_list_was_focused() {
+fn mouse_pod_first_click_release_selects_without_opening() {
     let mut app = AppState {
         view: AppView::Pods,
         focus: Focus::Content,
         selected_idx: 0,
+        ..AppState::default()
+    };
+
+    super::start_mouse_pod_selection(&mut app, 0, 10, MouseCopyMode::Name, false);
+    let action = super::finish_mouse_pod_selection(&mut app, &ClusterSnapshot::default(), Some(0));
+
+    assert_eq!(action, AppAction::None);
+    assert_eq!(
+        app.mouse_last_content_selection,
+        Some(MouseContentSelection {
+            view: AppView::Pods,
+            row: 0
+        })
+    );
+}
+
+#[test]
+fn mouse_pod_second_click_release_on_same_row_activates() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        focus: Focus::Content,
+        selected_idx: 0,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            row: 0,
+        }),
         ..AppState::default()
     };
     let snapshot = ClusterSnapshot {
