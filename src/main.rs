@@ -173,23 +173,53 @@ fn mouse_can_activate_clicked_content(app: &AppState, clicked_row: Option<usize>
     clicked_row.is_some() && app.focus == kubectui::app::Focus::Content && app.detail_view.is_none()
 }
 
-fn start_mouse_pod_selection(app: &mut AppState, row: usize, mode: MouseCopyMode) {
+fn start_mouse_pod_selection(
+    app: &mut AppState,
+    row: usize,
+    pointer_row: u16,
+    mode: MouseCopyMode,
+    activate_on_release: bool,
+) {
     app.mouse_row_selection = Some(MouseRowSelection {
         view: AppView::Pods,
         start_row: row,
         end_row: row,
+        start_pointer_row: pointer_row,
         mode,
         dragged: false,
+        activate_on_release,
     });
 }
 
-fn update_mouse_pod_selection(app: &mut AppState, row: usize) {
+fn mouse_pod_selection_pointer_row(
+    selection: MouseRowSelection,
+    pointer_row: u16,
+    total: usize,
+) -> Option<usize> {
+    if total == 0 || selection.view != AppView::Pods {
+        return None;
+    }
+    let delta = i32::from(pointer_row) - i32::from(selection.start_pointer_row);
+    let row = (selection.start_row as i64 + i64::from(delta))
+        .clamp(0, total.saturating_sub(1) as i64) as usize;
+    Some(row)
+}
+
+fn update_mouse_pod_selection(app: &mut AppState, row: usize, dragged: bool) {
     if let Some(selection) = &mut app.mouse_row_selection
         && selection.view == AppView::Pods
     {
         selection.end_row = row;
-        selection.dragged = true;
+        selection.dragged |= dragged;
         app.selected_idx = row;
+    }
+}
+
+fn update_mouse_pod_selection_from_pointer(app: &mut AppState, pointer_row: u16, total: usize) {
+    if let Some(selection) = app.mouse_row_selection
+        && let Some(row) = mouse_pod_selection_pointer_row(selection, pointer_row, total)
+    {
+        update_mouse_pod_selection(app, row, true);
     }
 }
 
@@ -253,12 +283,20 @@ fn pod_mouse_selection_text(
     Some(lines.join("\n"))
 }
 
-fn finish_mouse_pod_selection(app: &mut AppState, snapshot: &ClusterSnapshot) -> AppAction {
+fn finish_mouse_pod_selection(
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+    release_row: Option<usize>,
+) -> AppAction {
     let Some(selection) = app.mouse_row_selection.take() else {
         return AppAction::None;
     };
     if !selection.dragged {
-        return activate_selected_content_resource(app, snapshot);
+        return if selection.activate_on_release && release_row == Some(selection.start_row) {
+            activate_selected_content_resource(app, snapshot)
+        } else {
+            AppAction::None
+        };
     }
 
     let Some(text) = pod_mouse_selection_text(app, snapshot, selection) else {
@@ -5762,28 +5800,46 @@ pub(crate) async fn run_app_inner(
                             regions.as_ref(),
                             content_target,
                         );
+                        let can_activate_clicked_content =
+                            matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                                && mouse_can_activate_clicked_content(&app, clicked_content_row);
                         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
                             && let (Some(regions), Some(row)) =
                                 (regions.as_ref(), clicked_content_row)
                             && let Some(mode) =
                                 mouse_pod_copy_mode_at(&app, regions.content, mouse.column, mouse.row)
                         {
-                            start_mouse_pod_selection(&mut app, row, mode);
+                            start_mouse_pod_selection(
+                                &mut app,
+                                row,
+                                mouse.row,
+                                mode,
+                                can_activate_clicked_content,
+                            );
                         } else if matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left))
-                            && let Some(row) = clicked_content_row
+                            && let Some(MouseContentTarget::Selection { total }) = content_target
                         {
-                            update_mouse_pod_selection(&mut app, row);
+                            update_mouse_pod_selection_from_pointer(&mut app, mouse.row, total);
                         }
-                        let can_activate_clicked_content =
-                            matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-                                && app.mouse_row_selection.is_none()
-                                && mouse_can_activate_clicked_content(&app, clicked_content_row);
                         let action = route_mouse_input(mouse, &mut app, regions.as_ref(), content_target);
                         if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
                             && app.mouse_row_selection.is_some()
                         {
-                            finish_mouse_pod_selection(&mut app, &cached_snapshot)
+                            let release_row = app
+                                .mouse_row_selection
+                                .and_then(|selection| {
+                                    if let Some(MouseContentTarget::Selection { total }) =
+                                        content_target
+                                    {
+                                        mouse_pod_selection_pointer_row(selection, mouse.row, total)
+                                    } else {
+                                        clicked_content_row
+                                    }
+                                })
+                                .or(clicked_content_row);
+                            finish_mouse_pod_selection(&mut app, &cached_snapshot, release_row)
                         } else if action == AppAction::None
+                            && app.mouse_row_selection.is_none()
                             && can_activate_clicked_content
                             && clicked_content_row.is_some_and(|row| row == app.selected_idx())
                         {

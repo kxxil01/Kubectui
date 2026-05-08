@@ -283,8 +283,10 @@ fn mouse_pod_name_column_selection_copies_names_only() {
             view: AppView::Pods,
             start_row: 0,
             end_row: 1,
+            start_pointer_row: 5,
             mode: MouseCopyMode::Name,
             dragged: true,
+            activate_on_release: false,
         },
     )
     .expect("selection text");
@@ -317,8 +319,10 @@ fn mouse_pod_row_selection_copies_tab_separated_rows() {
             view: AppView::Pods,
             start_row: 0,
             end_row: 0,
+            start_pointer_row: 5,
             mode: MouseCopyMode::Row,
             dragged: true,
+            activate_on_release: false,
         },
     )
     .expect("selection text");
@@ -335,15 +339,104 @@ fn mouse_pod_drag_marks_same_row_selection_for_copy() {
             view: AppView::Pods,
             start_row: 3,
             end_row: 3,
+            start_pointer_row: 10,
             mode: MouseCopyMode::Name,
             dragged: false,
+            activate_on_release: true,
         }),
         ..AppState::default()
     };
 
-    super::update_mouse_pod_selection(&mut app, 3);
+    super::update_mouse_pod_selection(&mut app, 3, true);
 
     assert!(app.mouse_row_selection.expect("selection").dragged);
+}
+
+#[test]
+fn mouse_pod_selection_pointer_mapping_stays_anchored_after_recenter() {
+    let selection = MouseRowSelection {
+        view: AppView::Pods,
+        start_row: 18,
+        end_row: 18,
+        start_pointer_row: 21,
+        mode: MouseCopyMode::Name,
+        dragged: false,
+        activate_on_release: true,
+    };
+
+    assert_eq!(
+        super::mouse_pod_selection_pointer_row(selection, 21, 100),
+        Some(18)
+    );
+    assert_eq!(
+        super::mouse_pod_selection_pointer_row(selection, 22, 100),
+        Some(19)
+    );
+}
+
+#[test]
+fn mouse_pod_click_from_sidebar_does_not_activate_on_release() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        focus: Focus::Sidebar,
+        selected_idx: 4,
+        ..AppState::default()
+    };
+
+    super::start_mouse_pod_selection(&mut app, 4, 10, MouseCopyMode::Name, false);
+    app.focus = Focus::Content;
+    let action = super::finish_mouse_pod_selection(&mut app, &ClusterSnapshot::default(), Some(4));
+
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
+fn mouse_pod_click_release_outside_content_does_not_activate() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        focus: Focus::Content,
+        selected_idx: 4,
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        pods: vec![PodInfo {
+            name: "api-0".to_string(),
+            namespace: "default".to_string(),
+            ..PodInfo::default()
+        }],
+        ..ClusterSnapshot::default()
+    };
+
+    super::start_mouse_pod_selection(&mut app, 0, 10, MouseCopyMode::Name, true);
+    let action = super::finish_mouse_pod_selection(&mut app, &snapshot, None);
+
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
+fn mouse_pod_click_release_on_same_row_activates_when_list_was_focused() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        focus: Focus::Content,
+        selected_idx: 0,
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        pods: vec![PodInfo {
+            name: "api-0".to_string(),
+            namespace: "default".to_string(),
+            ..PodInfo::default()
+        }],
+        ..ClusterSnapshot::default()
+    };
+
+    super::start_mouse_pod_selection(&mut app, 0, 10, MouseCopyMode::Name, true);
+    let action = super::finish_mouse_pod_selection(&mut app, &snapshot, Some(0));
+
+    assert_eq!(
+        action,
+        AppAction::OpenDetail(ResourceRef::Pod("api-0".to_string(), "default".to_string()))
+    );
 }
 
 #[test]

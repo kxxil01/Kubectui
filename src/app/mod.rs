@@ -265,8 +265,10 @@ pub struct MouseRowSelection {
     pub view: AppView,
     pub start_row: usize,
     pub end_row: usize,
+    pub start_pointer_row: u16,
     pub mode: MouseCopyMode,
     pub dragged: bool,
+    pub activate_on_release: bool,
 }
 
 /// Runtime state for UI interaction and navigation.

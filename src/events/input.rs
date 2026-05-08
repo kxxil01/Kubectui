@@ -1659,6 +1659,23 @@ mod tests {
     }
 
     #[test]
+    fn mouse_pod_copy_mode_at_maps_name_column_and_rows() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        let content = Rect::new(28, 3, 120, 12);
+
+        assert_eq!(
+            mouse_pod_copy_mode_at(&app, content, 30, 5),
+            Some(MouseCopyMode::Name)
+        );
+        assert_eq!(
+            mouse_pod_copy_mode_at(&app, content, 90, 5),
+            Some(MouseCopyMode::Row)
+        );
+        assert_eq!(mouse_pod_copy_mode_at(&app, content, 30, 4), None);
+    }
+
+    #[test]
     fn mouse_left_click_selects_workbench_tab() {
         let regions = MouseRegions {
             sidebar: Rect::new(0, 3, 28, 20),
