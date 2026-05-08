@@ -271,6 +271,12 @@ pub struct MouseRowSelection {
     pub activate_on_release: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseContentSelection {
+    pub view: AppView,
+    pub row: usize,
+}
+
 /// Runtime state for UI interaction and navigation.
 ///
 /// # Navigation model
@@ -362,6 +368,8 @@ pub struct AppState {
     pub pod_sort: Option<PodSortState>,
     /// Active mouse drag selection in the content list.
     pub mouse_row_selection: Option<MouseRowSelection>,
+    /// Last content row selected by mouse; a repeated click activates it.
+    pub mouse_last_content_selection: Option<MouseContentSelection>,
     /// Active port-forward tunnels displayed in the PortForwarding view.
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
     /// Canonical mutation/action history.

@@ -66,7 +66,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Enter", "Open detail / activate"),
             ("Mouse wheel", "Scroll pane under pointer"),
             ("Left click", "Focus panes / select rows / tabs"),
-            ("Click selected row", "Open detail"),
+            ("Second click selected row", "Open detail"),
             ("Click filter bar", "Edit filter"),
             ("Drag Pods names", "Copy selected pod names"),
             ("Drag Pods rows", "Copy selected rows"),
@@ -840,7 +840,7 @@ mod tests {
         assert!(
             global
                 .iter()
-                .any(|(key, desc)| *key == "Click selected row" && *desc == "Open detail")
+                .any(|(key, desc)| *key == "Second click selected row" && *desc == "Open detail")
         );
         assert!(global.iter().any(|(key, desc)| {
             *key == "Drag Pods names" && *desc == "Copy selected pod names"
