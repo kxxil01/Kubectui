@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::{AppView, PodSortState, ResourceRef, WorkloadSortState},
-    state::ClusterSnapshot,
+    state::{
+        ClusterSnapshot,
+        issues::{ClusterIssueSource, filtered_issue_indices, filtered_issue_indices_by_source},
+    },
     time::now_unix_seconds,
     ui::contains_ci,
 };
@@ -609,17 +612,13 @@ fn computed_view_resource_selected_index(
             let issues = crate::state::issues::compute_issues(snapshot);
             let query = query.trim();
             let indices = if view == AppView::HealthReport {
-                issues
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, issue)| {
-                        (issue.source == crate::state::issues::ClusterIssueSource::Sanitizer
-                            && issue.matches_query(query))
-                        .then_some(idx)
-                    })
-                    .collect()
+                filtered_issue_indices_by_source(
+                    &issues,
+                    query,
+                    Some(ClusterIssueSource::Sanitizer),
+                )
             } else {
-                crate::state::issues::filtered_issue_indices(&issues, query)
+                filtered_issue_indices(&issues, query)
             };
             indices
                 .iter()
