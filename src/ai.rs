@@ -411,6 +411,7 @@ fn run_ai_cli_process_with_timeout(
     mut command: Command,
     timeout: Duration,
 ) -> Result<CapturedAiCliOutput> {
+    crate::process::configure_process_group(&mut command);
     let mut child = command.spawn().context("failed to launch AI CLI")?;
     let stdout = child
         .stdout
@@ -436,8 +437,7 @@ fn run_ai_cli_process_with_timeout(
             });
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            crate::process::terminate_process_group(&mut child);
             let _ = stdout.join();
             let _ = stderr.join();
             bail!("AI CLI timed out after {}s", timeout.as_secs());

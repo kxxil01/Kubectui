@@ -12,6 +12,7 @@ mod detail_fetch;
 mod event_handlers;
 mod flux_reconcile;
 mod mutation_helpers;
+mod process;
 mod runtime_helpers;
 mod selection_helpers;
 mod startup;
@@ -1291,6 +1292,7 @@ fn run_extension_command_with_timeout(
     mut command: std::process::Command,
     timeout: Duration,
 ) -> Result<BoundedCommandOutput, String> {
+    kubectui::process::configure_process_group(&mut command);
     let mut child = command
         .spawn()
         .map_err(|err| format!("failed to launch extension command: {err}"))?;
@@ -1313,8 +1315,7 @@ fn run_extension_command_with_timeout(
                 return Ok(BoundedCommandOutput { lines, status });
             }
             None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kubectui::process::terminate_process_group(&mut child);
                 for reader in readers {
                     let _ = reader.join();
                 }
