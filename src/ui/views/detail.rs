@@ -669,7 +669,7 @@ fn cronjob_history_widths(area: Rect) -> [Constraint; 6] {
             Constraint::Length(8),
             Constraint::Length(5),
             Constraint::Length(6),
-            Constraint::Length(7),
+            Constraint::Length(8),
         ]
     } else {
         [
@@ -678,7 +678,7 @@ fn cronjob_history_widths(area: Rect) -> [Constraint; 6] {
             Constraint::Length(10),
             Constraint::Length(6),
             Constraint::Length(8),
-            Constraint::Length(8),
+            Constraint::Length(9),
         ]
     }
 }
@@ -1166,7 +1166,7 @@ mod tests {
         let widths = cronjob_history_widths(Rect::new(0, 0, 80, 20));
         assert_eq!(widths[0], Constraint::Min(18));
         assert_eq!(widths[1], Constraint::Length(10));
-        assert_eq!(widths[5], Constraint::Length(7));
+        assert_eq!(widths[5], Constraint::Length(8));
     }
 
     #[test]
@@ -1174,7 +1174,7 @@ mod tests {
         let widths = cronjob_history_widths(Rect::new(0, 0, 120, 20));
         assert_eq!(widths[0], Constraint::Percentage(35));
         assert_eq!(widths[1], Constraint::Length(12));
-        assert_eq!(widths[5], Constraint::Length(8));
+        assert_eq!(widths[5], Constraint::Length(9));
     }
 
     #[test]

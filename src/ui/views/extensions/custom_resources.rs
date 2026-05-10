@@ -30,13 +30,13 @@ fn custom_resource_widths(area: Rect) -> [Constraint; 3] {
         [
             Constraint::Min(18),
             Constraint::Min(14),
-            Constraint::Length(7),
+            Constraint::Length(8),
         ]
     } else {
         [
             Constraint::Min(22),
             Constraint::Min(18),
-            Constraint::Length(8),
+            Constraint::Length(9),
         ]
     }
 }
@@ -283,7 +283,7 @@ mod tests {
         let widths = custom_resource_widths(Rect::new(0, 0, 80, 20));
         assert_eq!(widths[0], Constraint::Min(18));
         assert_eq!(widths[1], Constraint::Min(14));
-        assert_eq!(widths[2], Constraint::Length(7));
+        assert_eq!(widths[2], Constraint::Length(8));
     }
 
     #[test]
@@ -291,6 +291,6 @@ mod tests {
         let widths = custom_resource_widths(Rect::new(0, 0, 120, 20));
         assert_eq!(widths[0], Constraint::Min(22));
         assert_eq!(widths[1], Constraint::Min(18));
-        assert_eq!(widths[2], Constraint::Length(8));
+        assert_eq!(widths[2], Constraint::Length(9));
     }
 }
