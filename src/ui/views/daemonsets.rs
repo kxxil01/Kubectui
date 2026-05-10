@@ -196,7 +196,7 @@ fn cached_daemonset_derived(
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.daemonsets, cluster.snapshot_version),
         variant,
-        freshness_bucket: 0,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     cached_derived_rows(&DAEMONSET_DERIVED_CACHE, key, || {

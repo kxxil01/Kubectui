@@ -78,7 +78,7 @@ fn cached_pdb_derived(
             snapshot.snapshot_version,
         ),
         variant,
-        freshness_bucket: 0,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     cached_derived_rows(&PDB_DERIVED_CACHE, key, || {

@@ -204,7 +204,7 @@ fn cached_job_derived(
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.jobs, cluster.snapshot_version),
         variant,
-        freshness_bucket: 0,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     cached_derived_rows(&JOB_DERIVED_CACHE, key, || {

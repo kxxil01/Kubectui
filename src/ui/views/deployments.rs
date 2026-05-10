@@ -223,7 +223,7 @@ fn cached_deployment_derived(
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.deployments, snapshot.snapshot_version),
         variant,
-        freshness_bucket: 0,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     cached_derived_rows(&DEPLOYMENT_DERIVED_CACHE, key, || {

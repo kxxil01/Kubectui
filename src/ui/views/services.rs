@@ -188,7 +188,7 @@ fn cached_service_derived(
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.services, snapshot.snapshot_version),
         variant,
-        freshness_bucket: 0,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     cached_derived_rows(&SERVICE_DERIVED_CACHE, key, || {

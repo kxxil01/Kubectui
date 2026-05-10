@@ -707,6 +707,10 @@ fn widths_with_slack_absorber(wide: &[Constraint]) -> Vec<Constraint> {
     widths
 }
 
+pub(crate) fn age_freshness_bucket() -> i64 {
+    now_unix_seconds()
+}
+
 fn constraint_absorbs_slack(constraint: &Constraint) -> bool {
     matches!(
         constraint,
@@ -3545,6 +3549,46 @@ mod tests {
             ],
             "new table construction sites must use responsive_table_widths or responsive_table_widths_vec",
         );
+    }
+
+    #[test]
+    fn age_derived_row_caches_use_live_freshness_bucket() {
+        for (path, source) in [
+            ("views/daemonsets.rs", include_str!("views/daemonsets.rs")),
+            ("views/deployments.rs", include_str!("views/deployments.rs")),
+            ("views/jobs.rs", include_str!("views/jobs.rs")),
+            (
+                "views/replication_controllers.rs",
+                include_str!("views/replication_controllers.rs"),
+            ),
+            ("views/replicasets.rs", include_str!("views/replicasets.rs")),
+            ("views/services.rs", include_str!("views/services.rs")),
+            (
+                "views/statefulsets.rs",
+                include_str!("views/statefulsets.rs"),
+            ),
+            (
+                "views/governance/pdbs.rs",
+                include_str!("views/governance/pdbs.rs"),
+            ),
+            (
+                "views/security/roles.rs",
+                include_str!("views/security/roles.rs"),
+            ),
+            (
+                "views/security/service_accounts.rs",
+                include_str!("views/security/service_accounts.rs"),
+            ),
+        ] {
+            assert!(
+                !source.contains("freshness_bucket: 0"),
+                "{path} caches formatted age cells with a frozen freshness bucket",
+            );
+            assert!(
+                source.contains("freshness_bucket: crate::ui::age_freshness_bucket()"),
+                "{path} should refresh age-derived rows on the shared age freshness bucket",
+            );
+        }
     }
 
     #[test]
