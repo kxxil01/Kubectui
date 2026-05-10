@@ -43,8 +43,8 @@ fn service_account_widths(area: Rect) -> [Constraint; 6] {
             Constraint::Length(18),
             Constraint::Length(9),
             Constraint::Length(13),
-            Constraint::Length(11),
             Constraint::Fill(1),
+            Constraint::Length(9),
         ]
     }
 }
@@ -230,12 +230,14 @@ mod tests {
         let widths = service_account_widths(Rect::new(0, 0, 84, 20));
         assert_eq!(widths[0], Constraint::Min(20));
         assert_eq!(widths[4], Constraint::Length(9));
+        assert_eq!(widths[5], Constraint::Length(8));
     }
 
     #[test]
     fn service_account_widths_keep_wide_profile_on_large_area() {
         let widths = service_account_widths(Rect::new(0, 0, 120, 20));
         assert_eq!(widths[0], Constraint::Length(26));
-        assert_eq!(widths[5], Constraint::Fill(1));
+        assert_eq!(widths[4], Constraint::Fill(1));
+        assert_eq!(widths[5], Constraint::Length(9));
     }
 }

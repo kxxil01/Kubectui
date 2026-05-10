@@ -42,8 +42,8 @@ fn flux_widths(area: Rect) -> [Constraint; 7] {
             Constraint::Length(14),
             Constraint::Length(10),
             Constraint::Length(8),
-            Constraint::Length(8),
             Constraint::Min(18),
+            Constraint::Length(8),
         ]
     } else {
         [
@@ -52,8 +52,8 @@ fn flux_widths(area: Rect) -> [Constraint; 7] {
             Constraint::Length(18),
             Constraint::Length(13),
             Constraint::Length(9),
-            Constraint::Length(9),
             Constraint::Min(24),
+            Constraint::Length(9),
         ]
     }
 }
@@ -373,8 +373,8 @@ pub fn render_flux_resources(
         Cell::from(Span::styled("Kind", theme.header_style())),
         Cell::from(Span::styled("Status", theme.header_style())),
         Cell::from(Span::styled("Reconcile", theme.header_style())),
-        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
         Cell::from(Span::styled(detail_col_name, theme.header_style())),
+        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
     ])
     .height(1)
     .style(theme.header_style());
@@ -432,8 +432,8 @@ pub fn render_flux_resources(
                     resource.last_reconcile.as_str(),
                     theme.inactive_style(),
                 )),
-                Cell::from(Span::styled(resource.age.as_str(), theme.inactive_style())),
                 Cell::from(Span::styled(detail, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(resource.age.as_str(), theme.inactive_style())),
             ])
             .style(row_style)
         })
@@ -543,7 +543,8 @@ mod tests {
         let widths = flux_widths(Rect::new(0, 0, 104, 20));
         assert_eq!(widths[0], Constraint::Min(18));
         assert_eq!(widths[1], Constraint::Length(14));
-        assert_eq!(widths[6], Constraint::Min(18));
+        assert_eq!(widths[5], Constraint::Min(18));
+        assert_eq!(widths[6], Constraint::Length(8));
     }
 
     #[test]
@@ -551,7 +552,8 @@ mod tests {
         let widths = flux_widths(Rect::new(0, 0, 140, 20));
         assert_eq!(widths[0], Constraint::Min(22));
         assert_eq!(widths[1], Constraint::Length(18));
-        assert_eq!(widths[6], Constraint::Min(24));
+        assert_eq!(widths[5], Constraint::Min(24));
+        assert_eq!(widths[6], Constraint::Length(9));
     }
 
     #[test]

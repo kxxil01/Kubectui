@@ -44,7 +44,7 @@ fn cronjob_widths(area: Rect) -> [Constraint; 8] {
         ]
     } else {
         [
-            Constraint::Length(20),
+            Constraint::Min(20),
             Constraint::Length(16),
             Constraint::Length(16),
             Constraint::Length(14),
@@ -273,8 +273,15 @@ mod tests {
     #[test]
     fn cronjob_widths_keep_wide_profile() {
         let widths = cronjob_widths(Rect::new(0, 0, 132, 20));
-        assert_eq!(widths[0], Constraint::Length(20));
+        assert_eq!(widths[0], Constraint::Min(20));
         assert_eq!(widths[3], Constraint::Length(14));
+        assert_eq!(widths[7], Constraint::Length(9));
+    }
+
+    #[test]
+    fn cronjob_widths_keep_age_right_aligned() {
+        let widths = cronjob_widths(Rect::new(0, 0, 180, 20));
+        assert!(matches!(widths[0], Constraint::Min(_)));
         assert_eq!(widths[7], Constraint::Length(9));
     }
 }

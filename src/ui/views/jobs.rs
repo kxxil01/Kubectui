@@ -43,7 +43,7 @@ fn job_widths(area: Rect) -> [Constraint; 8] {
         ]
     } else {
         [
-            Constraint::Length(22),
+            Constraint::Min(22),
             Constraint::Length(16),
             Constraint::Length(11),
             Constraint::Length(13),
@@ -256,8 +256,15 @@ mod tests {
     #[test]
     fn job_widths_keep_wide_profile() {
         let widths = job_widths(Rect::new(0, 0, 132, 20));
-        assert_eq!(widths[0], Constraint::Length(22));
+        assert_eq!(widths[0], Constraint::Min(22));
         assert_eq!(widths[3], Constraint::Length(13));
+        assert_eq!(widths[7], Constraint::Length(9));
+    }
+
+    #[test]
+    fn job_widths_keep_age_right_aligned() {
+        let widths = job_widths(Rect::new(0, 0, 180, 20));
+        assert!(matches!(widths[0], Constraint::Min(_)));
         assert_eq!(widths[7], Constraint::Length(9));
     }
 }

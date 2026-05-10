@@ -151,8 +151,8 @@ pub const DEPLOYMENT_COLUMNS: &[ColumnDef] = &[
     col("ready", "Ready", Constraint::Length(9)),
     col("updated", "Updated", Constraint::Length(9)),
     col("available", "Available", Constraint::Length(11)),
-    col("age", "Age", Constraint::Length(9)),
     col("image", "Image", Constraint::Min(20)),
+    col("age", "Age", Constraint::Length(9)),
 ];
 
 pub const NODE_COLUMNS: &[ColumnDef] = &[
@@ -214,7 +214,7 @@ pub const REPLICASET_COLUMNS: &[ColumnDef] = &[
 ];
 
 pub const JOB_COLUMNS: &[ColumnDef] = &[
-    col_fixed("name", "Name", Constraint::Length(22)),
+    col_fixed("name", "Name", Constraint::Min(22)),
     col("namespace", "Namespace", Constraint::Length(16)),
     col("status", "Status", Constraint::Length(11)),
     col("completions", "Completions", Constraint::Length(13)),
@@ -225,7 +225,7 @@ pub const JOB_COLUMNS: &[ColumnDef] = &[
 ];
 
 pub const CRONJOB_COLUMNS: &[ColumnDef] = &[
-    col_fixed("name", "Name", Constraint::Length(20)),
+    col_fixed("name", "Name", Constraint::Min(20)),
     col("namespace", "Namespace", Constraint::Length(16)),
     col("schedule", "Schedule", Constraint::Length(16)),
     col("last_run", "Last Run", Constraint::Length(14)),
@@ -567,7 +567,8 @@ mod tests {
             visible_constraints_for_area(AppView::Deployments, DEPLOYMENT_COLUMNS, 96);
         assert_eq!(constraints[0], Constraint::Min(18));
         assert_eq!(constraints[1], Constraint::Length(14));
-        assert_eq!(constraints[6], Constraint::Min(16));
+        assert_eq!(constraints[5], Constraint::Min(16));
+        assert_eq!(constraints[6], Constraint::Length(8));
     }
 
     #[test]
@@ -594,7 +595,30 @@ mod tests {
             visible_constraints_for_area(AppView::Deployments, DEPLOYMENT_COLUMNS, 132);
         assert_eq!(constraints[0], Constraint::Length(24));
         assert_eq!(constraints[4], Constraint::Length(11));
-        assert_eq!(constraints[6], Constraint::Min(20));
+        assert_eq!(constraints[5], Constraint::Min(20));
+        assert_eq!(constraints[6], Constraint::Length(9));
+    }
+
+    #[test]
+    fn age_column_is_last_where_registry_has_age() {
+        for (view, columns) in [
+            (AppView::Pods, POD_COLUMNS),
+            (AppView::Deployments, DEPLOYMENT_COLUMNS),
+            (AppView::Nodes, NODE_COLUMNS),
+            (AppView::Services, SERVICE_COLUMNS),
+            (AppView::StatefulSets, STATEFULSET_COLUMNS),
+            (AppView::DaemonSets, DAEMONSET_COLUMNS),
+            (AppView::ReplicaSets, REPLICASET_COLUMNS),
+            (AppView::Jobs, JOB_COLUMNS),
+            (AppView::CronJobs, CRONJOB_COLUMNS),
+        ] {
+            let visible = resolve_columns(columns, &ViewPreferences::default());
+            assert_eq!(
+                visible.last().map(|column| column.id),
+                Some("age"),
+                "{view:?} should keep Age as the final column"
+            );
+        }
     }
 
     #[test]
