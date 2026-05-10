@@ -227,30 +227,10 @@ pub fn mouse_pod_copy_mode_at(
 }
 
 fn materialize_column_widths(area_width: u16, widths: &[Constraint]) -> Vec<u16> {
-    let mut remaining = area_width;
-    widths
+    ratatui::layout::Layout::horizontal(widths)
+        .split(ratatui::layout::Rect::new(0, 0, area_width, 1))
         .iter()
-        .enumerate()
-        .map(|(idx, width)| {
-            if idx + 1 == widths.len() {
-                return remaining;
-            }
-            let resolved = match *width {
-                Constraint::Length(value) | Constraint::Min(value) | Constraint::Max(value) => {
-                    value.min(remaining)
-                }
-                Constraint::Percentage(value) => (u32::from(area_width) * u32::from(value) / 100)
-                    .min(u32::from(remaining))
-                    as u16,
-                Constraint::Ratio(numerator, denominator) if denominator != 0 => {
-                    (u32::from(area_width) * numerator / denominator).min(u32::from(remaining))
-                        as u16
-                }
-                Constraint::Fill(_) | Constraint::Ratio(_, _) => remaining,
-            };
-            remaining = remaining.saturating_sub(resolved);
-            resolved
-        })
+        .map(|rect| rect.width)
         .collect()
 }
 
@@ -1690,6 +1670,20 @@ mod tests {
             mouse_pod_sort_column_at(&app, content, content.x.saturating_add(2), 4),
             None
         );
+    }
+
+    #[test]
+    fn materialize_column_widths_matches_ratatui_min_slack_distribution() {
+        let widths = materialize_column_widths(
+            60,
+            &[
+                Constraint::Min(20),
+                Constraint::Length(8),
+                Constraint::Length(8),
+            ],
+        );
+
+        assert_eq!(widths, vec![44, 8, 8]);
     }
 
     #[test]
