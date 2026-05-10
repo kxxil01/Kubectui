@@ -2519,13 +2519,16 @@ fn render_pods_widget(
     );
 }
 
-/// Formats a `Duration` as a human-readable age string (e.g. "3d 2h", "5h 12m", "7m").
+/// Formats a `Duration` as a human-readable age string (e.g. "3d 2h", "5h 12m", "7m", "12s").
 pub fn format_age(age: Option<std::time::Duration>) -> String {
     let Some(age) = age else {
         return "-".to_string();
     };
 
-    let secs = age.as_secs();
+    format_age_seconds(age.as_secs())
+}
+
+fn format_age_seconds(secs: u64) -> String {
     let days = secs / 86_400;
     let hours = (secs % 86_400) / 3_600;
     let mins = (secs % 3_600) / 60;
@@ -2534,8 +2537,10 @@ pub fn format_age(age: Option<std::time::Duration>) -> String {
         format!("{days}d {hours}h")
     } else if hours > 0 {
         format!("{hours}h {mins}m")
-    } else {
+    } else if mins > 0 {
         format!("{mins}m")
+    } else {
+        format!("{secs}s")
     }
 }
 
@@ -2633,16 +2638,7 @@ pub(crate) fn format_age_from_timestamp(created_at: Option<AppTimestamp>, now_un
         return "-".to_string();
     };
     let age_secs = age_seconds_since(created_at, now_unix);
-    let days = age_secs / 86_400;
-    let hours = (age_secs % 86_400) / 3_600;
-    let mins = (age_secs % 3_600) / 60;
-    if days > 0 {
-        format!("{days}d {hours}h")
-    } else if hours > 0 {
-        format!("{hours}h {mins}m")
-    } else {
-        format!("{mins}m")
-    }
+    format_age_seconds(age_secs as u64)
 }
 
 /// Truncates a string to `max_chars` characters, appending "..." when it fits.
@@ -5732,6 +5728,21 @@ mod tests {
             second[0].age,
             format_age_from_timestamp(snapshot.pods[1].created_at, now_unix)
         );
+    }
+
+    #[test]
+    fn format_age_starts_with_seconds() {
+        assert_eq!(format_age(Some(std::time::Duration::from_secs(0))), "0s");
+        assert_eq!(format_age(Some(std::time::Duration::from_secs(42))), "42s");
+        assert_eq!(format_age(Some(std::time::Duration::from_secs(60))), "1m");
+    }
+
+    #[test]
+    fn format_age_from_timestamp_starts_with_seconds() {
+        let now_unix = 1_000;
+        let created_at = AppTimestamp::from_second(958).expect("valid timestamp");
+
+        assert_eq!(format_age_from_timestamp(Some(created_at), now_unix), "42s");
     }
 
     #[test]
