@@ -3676,6 +3676,19 @@ mod tests {
     }
 
     #[test]
+    fn health_report_empty_state_does_not_wait_for_runtime_issue_scopes() {
+        let snapshot = ClusterSnapshot {
+            snapshot_version: 42,
+            loaded_scope: crate::state::RefreshScope::SANITIZER_DIAGNOSTICS,
+            ..ClusterSnapshot::default()
+        };
+
+        let text = render_to_string(&app_with_view(AppView::HealthReport), &snapshot);
+        assert!(text.contains("No sanitizer findings detected"));
+        assert!(!text.contains("diagnostic backfill still running"));
+    }
+
+    #[test]
     fn render_vulnerabilities_view_smoke() {
         let mut snapshot = ClusterSnapshot {
             snapshot_version: 11,

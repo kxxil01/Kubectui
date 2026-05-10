@@ -107,12 +107,10 @@ fn render_diagnostics(
         DiagnosticsMode::All => None,
         DiagnosticsMode::SanitizerOnly => Some(ClusterIssueSource::Sanitizer),
     };
-    let diagnostics_loaded = cluster.scope_loaded(
-        RefreshScope::CORE_OVERVIEW
-            .union(RefreshScope::LEGACY_SECONDARY)
-            .union(RefreshScope::SECURITY)
-            .union(RefreshScope::FLUX),
-    );
+    let diagnostics_loaded = cluster.scope_loaded(match mode {
+        DiagnosticsMode::All => RefreshScope::ISSUE_DIAGNOSTICS,
+        DiagnosticsMode::SanitizerOnly => RefreshScope::SANITIZER_DIAGNOSTICS,
+    });
 
     let indices = filtered_issue_indices_by_source(&all_issues, query, source_filter);
     let label = match mode {

@@ -2617,13 +2617,17 @@ async fn issues_refresh_starts_core_scope_without_empty_noop_phase() {
         .as_ref()
         .expect("issues secondary backfill should be queued");
     assert!(queued.options.skip_core);
-    assert!(
-        queued
-            .options
-            .scope
-            .contains(RefreshScope::LEGACY_SECONDARY)
+    assert_eq!(
+        queued.options.scope,
+        RefreshScope::ISSUE_DIAGNOSTICS.without(RefreshScope::CORE_OVERVIEW)
     );
+    assert!(queued.options.scope.contains(RefreshScope::NETWORK));
+    assert!(queued.options.scope.contains(RefreshScope::CONFIG));
+    assert!(queued.options.scope.contains(RefreshScope::STORAGE));
+    assert!(queued.options.scope.contains(RefreshScope::SECURITY));
     assert!(queued.options.scope.contains(RefreshScope::FLUX));
+    assert!(!queued.options.scope.contains(RefreshScope::HELM));
+    assert!(!queued.options.scope.contains(RefreshScope::EXTENSIONS));
 }
 
 #[tokio::test]
@@ -4905,17 +4909,20 @@ fn services_and_issues_refresh_profiles_keep_services_scope_lightweight() {
     assert_eq!(services.primary_scope, RefreshScope::SERVICES);
     assert_eq!(services.options.scope, RefreshScope::SERVICES);
     assert_eq!(issues.primary_scope, RefreshScope::CORE_OVERVIEW);
-    assert!(issues.options.scope.contains(RefreshScope::CORE_OVERVIEW));
-    assert!(
-        issues
-            .options
-            .scope
-            .contains(RefreshScope::LEGACY_SECONDARY)
-    );
+    assert_eq!(issues.options.scope, RefreshScope::ISSUE_DIAGNOSTICS);
+    assert!(issues.options.scope.contains(RefreshScope::STORAGE));
     assert!(issues.options.scope.contains(RefreshScope::FLUX));
-    assert!(issues.options.scope.contains(RefreshScope::SECURITY));
-    assert_eq!(health_report.primary_scope, issues.primary_scope);
-    assert_eq!(health_report.options.scope, issues.options.scope);
+    assert!(!issues.options.scope.contains(RefreshScope::HELM));
+    assert!(!issues.options.scope.contains(RefreshScope::EXTENSIONS));
+    assert_eq!(health_report.primary_scope, RefreshScope::CORE_OVERVIEW);
+    assert_eq!(
+        health_report.options.scope,
+        RefreshScope::SANITIZER_DIAGNOSTICS
+    );
+    assert!(health_report.options.scope.contains(RefreshScope::CONFIG));
+    assert!(health_report.options.scope.contains(RefreshScope::SECURITY));
+    assert!(!health_report.options.scope.contains(RefreshScope::STORAGE));
+    assert!(!health_report.options.scope.contains(RefreshScope::FLUX));
 }
 
 #[test]

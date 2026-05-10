@@ -374,12 +374,12 @@ pub fn refresh_options_for_view(
             RefreshScope::LOCAL_HELM_REPOSITORIES,
         ),
         AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
-        AppView::Issues | AppView::HealthReport => RefreshDispatch::new(
+        AppView::Issues => {
+            RefreshDispatch::new(RefreshScope::CORE_OVERVIEW, RefreshScope::ISSUE_DIAGNOSTICS)
+        }
+        AppView::HealthReport => RefreshDispatch::new(
             RefreshScope::CORE_OVERVIEW,
-            RefreshScope::CORE_OVERVIEW
-                .union(RefreshScope::LEGACY_SECONDARY)
-                .union(RefreshScope::SECURITY)
-                .union(RefreshScope::FLUX),
+            RefreshScope::SANITIZER_DIAGNOSTICS,
         ),
         AppView::Vulnerabilities => {
             RefreshDispatch::new(RefreshScope::SECURITY, RefreshScope::SECURITY)
