@@ -8,7 +8,12 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ai_actions::AiWorkflowKind, app::ResourceRef, policy::DetailAction};
+use crate::{
+    ai_actions::AiWorkflowKind,
+    app::ResourceRef,
+    config_file::{RUNBOOKS_CONFIG_MAX_BYTES, read_bounded_config_file},
+    policy::DetailAction,
+};
 
 const RUNBOOKS_FILE_NAME: &str = "runbooks.yaml";
 
@@ -234,8 +239,7 @@ pub fn runbooks_config_path() -> Option<PathBuf> {
 }
 
 pub fn load_runbooks_config_from_path(path: &Path) -> Result<RunbooksConfig, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read runbooks config '{}': {err}", path.display()))?;
+    let content = read_bounded_config_file(path, "runbooks config", RUNBOOKS_CONFIG_MAX_BYTES)?;
     serde_yaml::from_str::<RunbooksConfig>(&content).map_err(|err| {
         format!(
             "failed to parse runbooks config '{}': {err}",

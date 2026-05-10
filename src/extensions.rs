@@ -9,7 +9,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::ResourceRef;
+use crate::{
+    app::ResourceRef,
+    config_file::{EXTENSIONS_CONFIG_MAX_BYTES, read_bounded_config_file},
+};
 
 const EXTENSIONS_FILE_NAME: &str = "extensions.yaml";
 const LABEL_SEPARATOR: &str = ",";
@@ -184,12 +187,7 @@ pub fn extensions_config_path() -> Option<PathBuf> {
 }
 
 pub fn load_extensions_config_from_path(path: &Path) -> Result<ExtensionsConfig, String> {
-    let content = fs::read_to_string(path).map_err(|err| {
-        format!(
-            "failed to read extensions config '{}': {err}",
-            path.display()
-        )
-    })?;
+    let content = read_bounded_config_file(path, "extensions config", EXTENSIONS_CONFIG_MAX_BYTES)?;
     serde_yaml::from_str::<ExtensionsConfig>(&content).map_err(|err| {
         format!(
             "failed to parse extensions config '{}': {err}",
