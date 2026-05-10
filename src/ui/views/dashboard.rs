@@ -24,8 +24,8 @@ use crate::{
     },
     time::format_local,
     ui::{
-        SplitPaneFocus, components::default_theme, loading_spinner_char, theme::Theme,
-        truncate_line_content, utilization_style, wrapped_line_count,
+        SplitPaneFocus, components::default_theme, loading_spinner_char, responsive_table_widths,
+        theme::Theme, truncate_line_content, utilization_style, wrapped_line_count,
     },
 };
 
@@ -1198,9 +1198,12 @@ fn render_namespace_utilization(
         })
         .collect();
 
-    let table = Table::new(rows, namespace_util_widths(area))
-        .header(header)
-        .block(block);
+    let table = Table::new(
+        rows,
+        responsive_table_widths(area.width, namespace_util_widths(area)),
+    )
+    .header(header)
+    .block(block);
 
     frame.render_widget(table, area);
 }

@@ -3512,6 +3512,42 @@ mod tests {
     }
 
     #[test]
+    fn table_construction_sites_route_through_responsive_widths() {
+        let ui_mod_source = include_str!("mod.rs")
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .expect("ui module source should contain production section");
+        let table_counts = [
+            (
+                "src/ui/mod.rs",
+                ui_mod_source.matches("Table::new(").count(),
+            ),
+            (
+                "src/ui/views/dashboard.rs",
+                include_str!("views/dashboard.rs")
+                    .matches("Table::new(")
+                    .count(),
+            ),
+            (
+                "src/ui/views/detail.rs",
+                include_str!("views/detail.rs")
+                    .matches("Table::new(")
+                    .count(),
+            ),
+        ];
+
+        assert_eq!(
+            table_counts,
+            [
+                ("src/ui/mod.rs", 2),
+                ("src/ui/views/dashboard.rs", 1),
+                ("src/ui/views/detail.rs", 1),
+            ],
+            "new table construction sites must use responsive_table_widths or responsive_table_widths_vec",
+        );
+    }
+
+    #[test]
     fn vertical_primary_detail_chunks_compact_on_short_height() {
         let (primary, detail) = vertical_primary_detail_chunks(Rect::new(0, 0, 90, 18), 60, 8, 24);
         assert_eq!(primary.height, 10);

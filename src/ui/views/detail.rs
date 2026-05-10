@@ -17,8 +17,8 @@ use crate::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
             render_node_debug_dialog, render_vertical_scrollbar, scale_dialog::render_scale_dialog,
         },
-        format_age, loading_spinner_char, table_window, truncate_line_content, wrap_span_groups,
-        wrapped_line_count,
+        format_age, loading_spinner_char, responsive_table_widths, table_window,
+        truncate_line_content, wrap_span_groups, wrapped_line_count,
     },
 };
 
@@ -647,7 +647,7 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
         })
         .collect::<Vec<_>>();
 
-    let widths = cronjob_history_widths(rows[1]);
+    let widths = responsive_table_widths(rows[1].width, cronjob_history_widths(rows[1]));
     let mut table_state = TableState::default().with_selected(Some(window.selected));
     let table = Table::new(table_rows, widths)
         .header(header)
