@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 
 const LAST_APPLIED_ANNOTATION: &str = "kubectl.kubernetes.io/last-applied-configuration";
 const ROLLOUT_RESTART_ANNOTATION: &str = "kubectl.kubernetes.io/restartedAt";
+const MAX_DIFF_INPUT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_SAFE_DIFF_MATRIX_CELLS: usize = 4_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +64,7 @@ struct SsaApplyEntry {
 }
 
 pub fn build_resource_diff(live_yaml: &str) -> Result<ResourceDiffResult> {
+    ensure_diff_input_size(live_yaml, "live manifest")?;
     let mut live = parse_manifest(
         live_yaml,
         "live manifest YAML is unavailable or is not a Kubernetes object manifest",
@@ -82,6 +84,7 @@ pub fn build_resource_diff(live_yaml: &str) -> Result<ResourceDiffResult> {
         });
     };
 
+    ensure_diff_input_size(&baseline_yaml, "last-applied annotation")?;
     let mut applied = parse_manifest(
         &baseline_yaml,
         "last-applied annotation does not contain a Kubernetes object manifest",
@@ -122,6 +125,8 @@ pub fn build_yaml_document_diff(
     old_label: &str,
     new_label: &str,
 ) -> Result<YamlDocumentDiffResult> {
+    ensure_diff_input_size(old_yaml, old_label)?;
+    ensure_diff_input_size(new_yaml, new_label)?;
     let old = sort_value(parse_yaml_document(
         old_yaml,
         &format!("{old_label} values are not valid YAML"),
@@ -153,6 +158,15 @@ pub fn build_yaml_document_diff(
         summary: format!("Values diff: {added} added, {removed} removed."),
         lines,
     })
+}
+
+fn ensure_diff_input_size(yaml: &str, label: &str) -> Result<()> {
+    if yaml.len() > MAX_DIFF_INPUT_BYTES {
+        return Err(anyhow!(
+            "{label} YAML is larger than {MAX_DIFF_INPUT_BYTES} bytes"
+        ));
+    }
+    Ok(())
 }
 
 fn parse_manifest(yaml: &str, invalid_message: &str) -> Result<Value> {
@@ -508,9 +522,9 @@ fn diff_operations<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        LAST_APPLIED_ANNOTATION, ROLLOUT_RESTART_ANNOTATION, ResourceDiffBaselineKind,
-        ResourceDiffLineKind, build_resource_diff, build_yaml_document_diff,
-        normalize_resource_value,
+        LAST_APPLIED_ANNOTATION, MAX_DIFF_INPUT_BYTES, ROLLOUT_RESTART_ANNOTATION,
+        ResourceDiffBaselineKind, ResourceDiffLineKind, build_resource_diff,
+        build_yaml_document_diff, normalize_resource_value,
     };
     use serde_json::json;
 
@@ -894,6 +908,32 @@ data:
         );
         assert!(result.lines.is_empty());
         assert!(result.summary.contains("too large for safe inline diff"));
+    }
+
+    #[test]
+    fn rejects_oversized_live_diff_input_before_parse() {
+        let live_yaml = format!(
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: giant\n{}\n",
+            "x".repeat(MAX_DIFF_INPUT_BYTES + 1)
+        );
+
+        let err = build_resource_diff(&live_yaml).expect_err("oversized live YAML should fail");
+
+        assert!(
+            err.to_string()
+                .contains("live manifest YAML is larger than"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_yaml_document_diff_input_before_parse() {
+        let oversized = "x".repeat(MAX_DIFF_INPUT_BYTES + 1);
+
+        let err = build_yaml_document_diff("", &oversized, "old", "new")
+            .expect_err("oversized values YAML should fail");
+
+        assert!(err.to_string().contains("new YAML is larger than"), "{err}");
     }
 
     #[test]
