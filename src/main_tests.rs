@@ -31,8 +31,9 @@ use kubectui::{
     ai_actions::{AiConfig, AiProviderConfig, AiProviderKind, AiWorkflowKind, validate_ai_actions},
     app::{
         AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus,
-        MouseContentSelection, MouseCopyMode, MouseRowSelection, ResourceRef,
-        SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem, WorkloadSortColumn, WorkloadSortState,
+        MouseContentSelection, MouseContentSelectionScope, MouseCopyMode, MouseRowSelection,
+        ResourceRef, SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem, WorkloadSortColumn,
+        WorkloadSortState,
     },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
@@ -180,7 +181,8 @@ fn mouse_selected_row_activation_is_blocked_by_palette() {
     assert_eq!(clicked_row, None);
     assert!(!super::mouse_can_activate_clicked_content(
         &app,
-        clicked_row
+        Some(MouseContentTarget::Selection { total: 100 }),
+        clicked_row,
     ));
 }
 
@@ -192,6 +194,7 @@ fn mouse_content_click_activation_requires_prior_mouse_selection() {
         selected_idx: 10,
         mouse_last_content_selection: Some(MouseContentSelection {
             view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
             row: 18,
         }),
         ..AppState::default()
@@ -216,7 +219,11 @@ fn mouse_content_click_activation_requires_prior_mouse_selection() {
         Some(MouseContentTarget::Selection { total: 100 }),
     );
     assert_eq!(clicked_row, Some(18));
-    assert!(super::mouse_can_activate_clicked_content(&app, clicked_row));
+    assert!(super::mouse_can_activate_clicked_content(
+        &app,
+        Some(MouseContentTarget::Selection { total: 100 }),
+        clicked_row,
+    ));
 }
 
 #[test]
@@ -249,7 +256,8 @@ fn mouse_content_click_activation_rejects_unprimed_selected_row() {
     assert_eq!(clicked_row, Some(18));
     assert!(!super::mouse_can_activate_clicked_content(
         &app,
-        clicked_row
+        Some(MouseContentTarget::Selection { total: 100 }),
+        clicked_row,
     ));
 }
 
@@ -261,6 +269,7 @@ fn mouse_content_click_activation_requires_content_focus() {
         selected_idx: 10,
         mouse_last_content_selection: Some(MouseContentSelection {
             view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
             row: 18,
         }),
         ..AppState::default()
@@ -287,7 +296,8 @@ fn mouse_content_click_activation_requires_content_focus() {
     assert_eq!(clicked_row, Some(18));
     assert!(!super::mouse_can_activate_clicked_content(
         &app,
-        clicked_row
+        Some(MouseContentTarget::Selection { total: 100 }),
+        clicked_row,
     ));
 }
 
@@ -315,6 +325,7 @@ fn mouse_content_first_click_records_global_list_selection_without_opening() {
         app.mouse_last_content_selection,
         Some(MouseContentSelection {
             view: AppView::Deployments,
+            scope: MouseContentSelectionScope::Primary,
             row: 1
         })
     );
@@ -328,6 +339,7 @@ fn mouse_content_second_click_opens_global_list_selection() {
         selected_idx: 1,
         mouse_last_content_selection: Some(MouseContentSelection {
             view: AppView::Deployments,
+            scope: MouseContentSelectionScope::Primary,
             row: 1,
         }),
         ..AppState::default()
@@ -348,7 +360,11 @@ fn mouse_content_second_click_opens_global_list_selection() {
         ..ClusterSnapshot::default()
     };
 
-    let can_activate = super::mouse_can_activate_clicked_content(&app, Some(1));
+    let can_activate = super::mouse_can_activate_clicked_content(
+        &app,
+        Some(MouseContentTarget::Selection { total: 2 }),
+        Some(1),
+    );
     let action = super::finish_mouse_content_click(
         &mut app,
         &snapshot,
@@ -379,6 +395,7 @@ fn mouse_content_second_click_opens_extension_instance_selection() {
         extension_instance_cursor: 1,
         mouse_last_content_selection: Some(MouseContentSelection {
             view: AppView::Extensions,
+            scope: MouseContentSelectionScope::ExtensionInstances,
             row: 1,
         }),
         ..AppState::default()
@@ -408,7 +425,11 @@ fn mouse_content_second_click_opens_extension_instance_selection() {
         },
     ];
 
-    let can_activate = super::mouse_can_activate_clicked_content(&app, Some(1));
+    let can_activate = super::mouse_can_activate_clicked_content(
+        &app,
+        Some(MouseContentTarget::ExtensionInstances { total: 2 }),
+        Some(1),
+    );
     let action = super::finish_mouse_content_click(
         &mut app,
         &snapshot,
@@ -430,6 +451,29 @@ fn mouse_content_second_click_opens_extension_instance_selection() {
             plural: "widgets".to_string(),
         })
     );
+}
+
+#[test]
+fn mouse_content_second_click_rejects_prior_extension_crd_selection_in_instances() {
+    let app = AppState {
+        focus: Focus::Content,
+        view: AppView::Extensions,
+        selected_idx: 0,
+        extension_in_instances: true,
+        extension_instance_cursor: 0,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Extensions,
+            scope: MouseContentSelectionScope::Primary,
+            row: 0,
+        }),
+        ..AppState::default()
+    };
+
+    assert!(!super::mouse_can_activate_clicked_content(
+        &app,
+        Some(MouseContentTarget::ExtensionInstances { total: 2 }),
+        Some(0),
+    ));
 }
 
 #[test]
@@ -575,6 +619,7 @@ fn mouse_pod_click_from_sidebar_does_not_activate_on_release() {
         app.mouse_last_content_selection,
         Some(MouseContentSelection {
             view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
             row: 4
         })
     );
@@ -588,6 +633,7 @@ fn mouse_pod_click_release_outside_content_does_not_activate() {
         selected_idx: 4,
         mouse_last_content_selection: Some(MouseContentSelection {
             view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
             row: 0,
         }),
         ..AppState::default()
@@ -625,6 +671,7 @@ fn mouse_pod_first_click_release_selects_without_opening() {
         app.mouse_last_content_selection,
         Some(MouseContentSelection {
             view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
             row: 0
         })
     );
@@ -638,6 +685,7 @@ fn mouse_pod_second_click_release_on_same_row_activates() {
         selected_idx: 0,
         mouse_last_content_selection: Some(MouseContentSelection {
             view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
             row: 0,
         }),
         ..AppState::default()
