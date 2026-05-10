@@ -9,9 +9,9 @@ use super::{
     apply_extension_fetch_result, auto_refresh_interval_secs, clear_port_forward_registries,
     close_resource_tabs_and_refresh_palette_activity, create_editor_temp_file,
     detail_debug_launch_owned, detail_node_debug_launch_owned, fail_context_switch,
-    map_palette_detail_action, mutation_refresh_options, normalize_recent_events,
-    palette_action_requires_loaded_detail, parse_editor_command, prepare_bookmark_target,
-    prepare_resource_target, preserve_detail_selection_identity,
+    map_palette_detail_action, mark_node_debug_launch_context_changed, mutation_refresh_options,
+    normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
+    prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
     preserve_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
     refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
     run_extension_command, selected_extension_crd, selected_flux_reconcile_resource,
@@ -2889,6 +2889,54 @@ fn detail_node_debug_launch_owned_requires_matching_resource_and_action_id() {
         &ResourceRef::Node("node-b".to_string()),
         77
     ));
+}
+
+#[test]
+fn stale_node_debug_launch_clears_pending_dialog_without_launch_error() {
+    let mut app = AppState {
+        view: AppView::Nodes,
+        ..AppState::default()
+    };
+    let resource = ResourceRef::Node("node-a".to_string());
+    let action_history_id = app.record_action_pending(
+        ActionKind::NodeDebug,
+        AppView::Nodes,
+        Some(resource.clone()),
+        "Node debug shell for Node 'node-a'",
+        "Launching node debug shell for Node 'node-a'...",
+    );
+    let mut dialog =
+        NodeDebugDialogState::new("node-a", "default".to_string(), vec!["default".to_string()]);
+    dialog.begin_launch(action_history_id);
+    app.detail_view = Some(DetailViewState {
+        resource: Some(resource.clone()),
+        node_debug_dialog: Some(dialog),
+        ..DetailViewState::default()
+    });
+
+    mark_node_debug_launch_context_changed(&mut app, &resource, action_history_id);
+
+    let detail = app.detail_view.as_ref().expect("detail remains open");
+    let dialog = detail
+        .node_debug_dialog
+        .as_ref()
+        .expect("node debug dialog remains open");
+    assert!(!dialog.pending_launch);
+    assert_eq!(
+        dialog.error_message.as_deref(),
+        Some("Node debug shell launch was cancelled because the active context changed.")
+    );
+    assert_eq!(app.error_message(), None);
+
+    let entry = app
+        .action_history()
+        .find_by_id(action_history_id)
+        .expect("history entry exists");
+    assert_eq!(entry.status, ActionStatus::Failed);
+    assert_eq!(
+        entry.message,
+        "Node debug shell launch was cancelled because the active context changed."
+    );
 }
 
 #[test]

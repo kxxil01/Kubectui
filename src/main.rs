@@ -683,6 +683,28 @@ fn detail_node_debug_launch_owned(
     })
 }
 
+fn mark_node_debug_launch_context_changed(
+    app: &mut AppState,
+    resource: &ResourceRef,
+    action_history_id: u64,
+) {
+    if let Some(detail) = app.detail_view.as_mut()
+        && detail.resource.as_ref() == Some(resource)
+        && let Some(dialog) = detail.node_debug_dialog.as_mut()
+    {
+        dialog.clear_launch_if_matches(action_history_id);
+        dialog.error_message = Some(
+            "Node debug shell launch was cancelled because the active context changed.".to_string(),
+        );
+    }
+    app.complete_action_history(
+        action_history_id,
+        ActionStatus::Failed,
+        "Node debug shell launch was cancelled because the active context changed.",
+        true,
+    );
+}
+
 fn preserve_detail_selection_identity(
     current: Option<&DetailViewState>,
     next: &mut DetailViewState,
@@ -5281,6 +5303,27 @@ pub(crate) async fn run_app_inner(
             result = node_debug_launch_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
+                    if result.context_generation != refresh_state.context_generation {
+                        mark_node_debug_launch_context_changed(
+                            &mut app,
+                            &result.resource,
+                            result.action_history_id,
+                        );
+                        if let Ok(launch) = result.result {
+                            spawn_node_debug_cleanup(
+                                NodeDebugSessionRuntime {
+                                    client: result.cleanup_client,
+                                    context_generation: result.context_generation,
+                                    node_name: launch.node_name,
+                                    pod_name: launch.pod_name,
+                                    namespace: launch.namespace,
+                                },
+                                node_debug_cleanup_tx.clone(),
+                            )
+                            .await;
+                        }
+                        continue;
+                    }
                     match result.result {
                         Ok(launch) => {
                             let launch_owned = detail_node_debug_launch_owned(
@@ -5288,36 +5331,6 @@ pub(crate) async fn run_app_inner(
                                 &result.resource,
                                 result.action_history_id,
                             );
-                            if result.context_generation != refresh_state.context_generation {
-                                if let Some(detail) = app.detail_view.as_mut()
-                                    && detail.resource.as_ref() == Some(&result.resource)
-                                    && let Some(dialog) = detail.node_debug_dialog.as_mut()
-                                {
-                                    dialog.clear_launch_if_matches(result.action_history_id);
-                                    dialog.error_message = Some(
-                                        "Node debug shell launch was cancelled because the active context changed."
-                                            .to_string(),
-                                    );
-                                }
-                                app.complete_action_history(
-                                    result.action_history_id,
-                                    ActionStatus::Failed,
-                                    "Node debug shell launch was cancelled because the active context changed.",
-                                    true,
-                                );
-                                spawn_node_debug_cleanup(
-                                    NodeDebugSessionRuntime {
-                                        client: result.cleanup_client,
-                                        context_generation: result.context_generation,
-                                        node_name: launch.node_name,
-                                        pod_name: launch.pod_name,
-                                        namespace: launch.namespace,
-                                    },
-                                    node_debug_cleanup_tx.clone(),
-                                )
-                                .await;
-                                continue;
-                            }
                             if !launch_owned {
                                 spawn_node_debug_cleanup(
                                     NodeDebugSessionRuntime {
