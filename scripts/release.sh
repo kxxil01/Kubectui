@@ -277,7 +277,7 @@ open_and_merge_release_pr() {
 - Release ${tag}.
 
 **How**
-- Bump Cargo package version for ${tag}.
+- Bump Cargo package version and README current release for ${tag}.
 
 **Tests**
 - \`cargo fmt --all -- --check\`
