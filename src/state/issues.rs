@@ -1007,6 +1007,10 @@ fn service_matches_pod_selector(service: &ServiceInfo, pod: &PodInfo) -> bool {
 }
 
 fn detect_unused_config_maps(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    if !snapshot.loaded_scope.contains(RefreshScope::CORE_OVERVIEW) {
+        return;
+    }
+
     let used = collect_used_config_map_refs(snapshot);
 
     for config_map in &snapshot.config_maps {
@@ -1036,6 +1040,10 @@ fn detect_unused_config_maps(snapshot: &ClusterSnapshot, issues: &mut Vec<Cluste
 }
 
 fn detect_unused_secrets(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    if !snapshot.loaded_scope.contains(RefreshScope::CORE_OVERVIEW) {
+        return;
+    }
+
     let used = collect_used_secret_refs(snapshot);
 
     for secret in &snapshot.secrets {
@@ -1921,6 +1929,7 @@ mod tests {
     #[test]
     fn sanitizer_detects_unused_config_map_and_secret() {
         let mut snap = empty_snapshot();
+        snap.loaded_scope = RefreshScope::CORE_OVERVIEW;
         snap.config_maps.push(ConfigMapInfo {
             name: "unused-config".into(),
             namespace: "default".into(),
@@ -1946,6 +1955,31 @@ mod tests {
                 .iter()
                 .any(|issue| issue.category == IssueCategory::UnusedSecret)
         );
+    }
+
+    #[test]
+    fn sanitizer_skips_unused_refs_without_workload_reference_scope() {
+        let mut snap = empty_snapshot();
+        snap.loaded_scope = RefreshScope::CONFIG.union(RefreshScope::SECURITY);
+        snap.config_maps.push(ConfigMapInfo {
+            name: "possibly-used-config".into(),
+            namespace: "default".into(),
+            ..Default::default()
+        });
+        snap.secrets.push(SecretInfo {
+            name: "possibly-used-secret".into(),
+            namespace: "default".into(),
+            type_: "Opaque".into(),
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(!sanitizer_issues(&issues).iter().any(|issue| {
+            matches!(
+                issue.category,
+                IssueCategory::UnusedConfigMap | IssueCategory::UnusedSecret
+            )
+        }));
     }
 
     #[test]
@@ -1985,6 +2019,7 @@ mod tests {
     #[test]
     fn sanitizer_skips_unused_refs_when_workload_template_uses_them() {
         let mut snap = empty_snapshot();
+        snap.loaded_scope = RefreshScope::CORE_OVERVIEW;
         snap.config_maps.push(ConfigMapInfo {
             name: "used-config".into(),
             namespace: "default".into(),
