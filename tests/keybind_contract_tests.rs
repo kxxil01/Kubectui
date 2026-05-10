@@ -883,3 +883,22 @@ fn workspace_hotkeys_do_not_fire_when_detail_is_open() {
     );
     assert_eq!(action, AppAction::None);
 }
+
+#[test]
+fn readme_current_release_matches_cargo_package_version() {
+    let readme = include_str!("../README.md");
+    let manifest = include_str!("../Cargo.toml");
+    let version_line = manifest
+        .lines()
+        .find(|line| line.starts_with("version = "))
+        .expect("Cargo.toml package version exists");
+    let version = version_line
+        .split('"')
+        .nth(1)
+        .expect("Cargo.toml package version is quoted");
+
+    assert!(
+        readme.contains(&format!("Current release: `{version}`.")),
+        "README current release must match Cargo.toml version {version}"
+    );
+}
