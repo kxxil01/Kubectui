@@ -1659,6 +1659,40 @@ mod tests {
     }
 
     #[test]
+    fn mouse_pod_sort_column_at_tracks_age_after_shown_metric_columns() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        app.preferences = Some(crate::preferences::UserPreferences::default());
+        app.preferences
+            .as_mut()
+            .expect("preferences should exist")
+            .views
+            .insert(
+                "pods".into(),
+                crate::preferences::ViewPreferences {
+                    shown_columns: vec!["cpu_usage".into(), "mem_usage".into()],
+                    column_order: Some(vec![
+                        "age".into(),
+                        "cpu_usage".into(),
+                        "mem_usage".into(),
+                        "name".into(),
+                    ]),
+                    ..Default::default()
+                },
+            );
+        let content = Rect::new(28, 3, 160, 12);
+
+        assert_eq!(
+            mouse_pod_sort_column_at(&app, content, content.right().saturating_sub(8), 4),
+            Some(PodSortColumn::Age)
+        );
+        assert_eq!(
+            mouse_pod_sort_column_at(&app, content, content.x.saturating_add(2), 4),
+            None
+        );
+    }
+
+    #[test]
     fn mouse_pod_copy_mode_at_maps_name_column_and_rows() {
         let mut app = AppState::default();
         app.view = AppView::Pods;
