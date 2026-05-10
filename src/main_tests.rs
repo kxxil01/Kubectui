@@ -2716,10 +2716,10 @@ async fn disjoint_refresh_dispatch_starts_requested_scope_without_noop_phase() {
 }
 
 #[test]
-fn periodic_redraw_triggers_on_minute_bucket_change() {
+fn periodic_redraw_triggers_on_second_bucket_change() {
     let app = AppState::default();
     let snapshot = ClusterSnapshot::default();
-    let mut last_age_bucket = 10;
+    let mut last_age_bucket = 659;
     let mut last_staleness_second = 600;
 
     assert!(should_request_periodic_redraw(
@@ -2729,7 +2729,7 @@ fn periodic_redraw_triggers_on_minute_bucket_change() {
         &mut last_age_bucket,
         &mut last_staleness_second,
     ));
-    assert_eq!(last_age_bucket, 11);
+    assert_eq!(last_age_bucket, 660);
 }
 
 #[test]
