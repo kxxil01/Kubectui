@@ -25,7 +25,7 @@ use mutation_helpers::*;
 use runtime_helpers::{next_request_id, run_app, start_watch_manager, watch_scope_for_view};
 use selection_helpers::*;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs::OpenOptions,
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -1136,8 +1136,16 @@ struct BoundedCommandOutput {
 
 #[derive(Debug, Default)]
 struct BoundedExtensionOutput {
-    lines: Vec<String>,
+    lines: VecDeque<String>,
     omitted_lines: usize,
+}
+
+fn push_bounded_extension_output_line(output: &mut BoundedExtensionOutput, line: String) {
+    if output.lines.len() >= MAX_EXTENSION_OUTPUT_LINES {
+        output.lines.pop_front();
+        output.omitted_lines = output.omitted_lines.saturating_add(1);
+    }
+    output.lines.push_back(line);
 }
 
 fn record_extension_output_line(
@@ -1146,28 +1154,29 @@ fn record_extension_output_line(
     bytes: &[u8],
     truncated: bool,
 ) {
-    if output.lines.len() >= MAX_EXTENSION_OUTPUT_LINES {
-        output.omitted_lines = output.omitted_lines.saturating_add(1);
-        return;
-    }
-
     let mut line = prefix.unwrap_or_default().to_string();
     line.push_str(&String::from_utf8_lossy(bytes));
     if truncated {
         line.push_str(" ... [line truncated]");
     }
-    output.lines.push(line);
+    push_bounded_extension_output_line(output, line);
 }
 
 fn bounded_extension_output_lines(output: BoundedExtensionOutput) -> Vec<String> {
-    let mut lines = output.lines;
+    let mut lines = output.lines.into_iter().collect::<Vec<_>>();
     if output.omitted_lines > 0 {
-        lines.push(format!(
-            "... truncated {} additional lines",
-            output.omitted_lines
-        ));
+        lines.insert(
+            0,
+            format!("... truncated {} earlier lines", output.omitted_lines),
+        );
     }
     lines
+}
+
+fn append_bounded_extension_output(output: &mut BoundedExtensionOutput, lines: VecDeque<String>) {
+    for line in lines {
+        push_bounded_extension_output_line(output, line);
+    }
 }
 
 fn spawn_extension_output_reader<R: Read + Send + 'static>(
@@ -1215,13 +1224,7 @@ fn collect_extension_reader_output(
         let stream_output = reader
             .join()
             .map_err(|_| "failed to collect extension output".to_string())?;
-        for line in stream_output.lines {
-            if combined.lines.len() >= MAX_EXTENSION_OUTPUT_LINES {
-                combined.omitted_lines = combined.omitted_lines.saturating_add(1);
-            } else {
-                combined.lines.push(line);
-            }
-        }
+        append_bounded_extension_output(&mut combined, stream_output.lines);
         combined.omitted_lines = combined
             .omitted_lines
             .saturating_add(stream_output.omitted_lines);
