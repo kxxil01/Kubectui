@@ -18,6 +18,8 @@ use crate::time::format_rfc3339;
 /// Maximum rendered YAML length in bytes (10 KiB).
 pub const MAX_YAML_BYTES: usize = 10 * 1024;
 
+const MAX_APPLY_YAML_DOCUMENTS: usize = 64;
+
 #[derive(Debug, Deserialize)]
 struct ManifestMeta {
     name: String,
@@ -151,12 +153,7 @@ pub async fn apply_resource_yaml(
 pub async fn apply_yaml_documents(client: &Client, yaml_str: &str) -> Result<usize> {
     let mut applied = 0usize;
     let mut discovered_resources: HashMap<(String, String), (ApiResource, bool)> = HashMap::new();
-    for document in serde_yaml::Deserializer::from_str(yaml_str) {
-        let value = serde_yaml::Value::deserialize(document).context("invalid YAML document")?;
-        if value.is_null() {
-            continue;
-        }
-
+    for value in parse_manifest_document_values(yaml_str)? {
         let header: ManifestHeader =
             serde_yaml::from_value(value.clone()).context("manifest is missing required fields")?;
         let object: DynamicObject =
@@ -236,14 +233,27 @@ pub async fn manifest_access_checks_for_transition(
 
 fn parse_manifest_headers(yaml_str: &str) -> Result<Vec<ManifestHeader>> {
     let mut headers = Vec::new();
+    for value in parse_manifest_document_values(yaml_str)? {
+        headers.push(serde_yaml::from_value(value).context("manifest is missing required fields")?);
+    }
+    Ok(headers)
+}
+
+fn parse_manifest_document_values(yaml_str: &str) -> Result<Vec<serde_yaml::Value>> {
+    let mut documents = Vec::new();
     for document in serde_yaml::Deserializer::from_str(yaml_str) {
         let value = serde_yaml::Value::deserialize(document).context("invalid YAML document")?;
         if value.is_null() {
             continue;
         }
-        headers.push(serde_yaml::from_value(value).context("manifest is missing required fields")?);
+        if documents.len() >= MAX_APPLY_YAML_DOCUMENTS {
+            return Err(anyhow!(
+                "manifest apply is limited to {MAX_APPLY_YAML_DOCUMENTS} documents"
+            ));
+        }
+        documents.push(value);
     }
-    Ok(headers)
+    Ok(documents)
 }
 
 fn collect_manifest_access_targets(
@@ -1078,5 +1088,45 @@ metadata:
                 && check.resource == "configmaps"
                 && check.name.as_deref() == Some("stale")
         }));
+    }
+
+    #[test]
+    fn manifest_document_parser_rejects_too_many_documents() {
+        let mut yaml = String::new();
+        for index in 0..=MAX_APPLY_YAML_DOCUMENTS {
+            yaml.push_str(&format!(
+                r#"apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-{index}
+  namespace: default
+---
+"#
+            ));
+        }
+
+        let err = parse_manifest_document_values(&yaml).expect_err("document cap");
+
+        assert!(
+            err.to_string()
+                .contains("manifest apply is limited to 64 documents")
+        );
+    }
+
+    #[test]
+    fn manifest_document_parser_ignores_empty_documents_for_limit() {
+        let mut yaml = "---\n".repeat(MAX_APPLY_YAML_DOCUMENTS);
+        yaml.push_str(
+            r#"apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config
+  namespace: default
+"#,
+        );
+
+        let documents = parse_manifest_document_values(&yaml).expect("documents");
+
+        assert_eq!(documents.len(), 1);
     }
 }
