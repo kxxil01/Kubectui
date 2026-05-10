@@ -20,6 +20,9 @@ on:
       - 'src/**'
       - 'tests/performance.rs'
 
+permissions:
+  contents: read
+
 jobs:
   perf-gate:
     runs-on: ubuntu-latest
