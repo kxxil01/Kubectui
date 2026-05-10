@@ -78,6 +78,7 @@ pub use crate::k8s::{
 };
 
 const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
+const MAX_EVENTS_LIST_PAGES: usize = 10;
 const MAX_RECENT_EVENTS_ITEMS: usize = 250;
 const CLIENT_RETRY_BUFFER_SIZE: usize = 1024;
 const CREDENTIAL_EXPIRY_WARNING_SECS: i64 = 30 * 60;
@@ -652,26 +653,38 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let lp = ListParams::default().limit(MAX_EVENTS_LIST_LIMIT);
-        let list = match api.list(&lp).await {
-            Ok(list) => list.items,
-            Err(err) if is_forbidden_error(&err) => {
-                return Ok(vec![events_unavailable_info(
-                    namespace,
-                    "Events unavailable (RBAC)",
-                )]);
+        let mut items = Vec::new();
+        let mut continue_token: Option<String> = None;
+        for _ in 0..MAX_EVENTS_LIST_PAGES {
+            let mut lp = ListParams::default().limit(MAX_EVENTS_LIST_LIMIT);
+            if let Some(token) = &continue_token {
+                lp = lp.continue_token(token);
             }
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    if let Some(ns) = namespace {
-                        format!("failed fetching events in namespace '{ns}'")
-                    } else {
-                        "failed fetching events across all namespaces".to_string()
-                    }
-                });
+            let list = match api.list(&lp).await {
+                Ok(list) => list,
+                Err(err) if is_forbidden_error(&err) => {
+                    return Ok(vec![events_unavailable_info(
+                        namespace,
+                        "Events unavailable (RBAC)",
+                    )]);
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        if let Some(ns) = namespace {
+                            format!("failed fetching events in namespace '{ns}'")
+                        } else {
+                            "failed fetching events across all namespaces".to_string()
+                        }
+                    });
+                }
+            };
+            continue_token = non_empty_continue_token(list.metadata.continue_);
+            items.extend(list.items);
+            if continue_token.is_none() {
+                break;
             }
-        };
-        let mut events: Vec<K8sEventInfo> = list
+        }
+        let mut events: Vec<K8sEventInfo> = items
             .into_iter()
             .map(crate::k8s::conversions::event_to_info)
             .collect();
@@ -1879,6 +1892,10 @@ fn events_unavailable_info(namespace: Option<&str>, message: &str) -> K8sEventIn
         last_seen: Some(now()),
         age: None,
     }
+}
+
+fn non_empty_continue_token(token: Option<String>) -> Option<String> {
+    token.filter(|value| !value.is_empty())
 }
 
 async fn list_items_or_empty<K, C>(api: &Api<K>, params: &ListParams, context: C) -> Result<Vec<K>>
@@ -3149,6 +3166,16 @@ mod tests {
         assert_eq!(event.message, "Events unavailable (RBAC)");
         assert!(event.involved_object.is_empty());
         assert!(event.last_seen.is_some());
+    }
+
+    #[test]
+    fn non_empty_continue_token_drops_empty_page_token() {
+        assert_eq!(non_empty_continue_token(None), None);
+        assert_eq!(non_empty_continue_token(Some(String::new())), None);
+        assert_eq!(
+            non_empty_continue_token(Some("next-page".to_string())).as_deref(),
+            Some("next-page")
+        );
     }
 
     #[test]
