@@ -1,7 +1,8 @@
 //! Provider-backed AI analysis for selected resources.
 
 use std::{
-    process::{Command, Stdio},
+    io::Read,
+    process::{Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -23,6 +24,7 @@ const PROVIDER_ERROR_SCAN_MAX_CHARS: usize = 8_000;
 const AI_OUTPUT_MAX_ITEMS: usize = 8;
 const AI_OUTPUT_MAX_LINES: usize = 8;
 const AI_OUTPUT_MAX_CHARS_PER_LINE: usize = 320;
+const AI_CLI_OUTPUT_MAX_BYTES: usize = 1024 * 1024;
 const DEFAULT_SYSTEM_PROMPT: &str = "You are an expert Kubernetes SRE assistant embedded in KubecTUI. \
 Analyze the provided resource context conservatively. Do not invent facts. Use only the supplied context. \
 Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty. \
@@ -340,42 +342,105 @@ fn call_ai_cli(
 ) -> Result<String> {
     let command = ai_cli_command(provider);
     let args = ai_cli_args(provider, system_prompt, user_prompt);
-    let mut child = Command::new(&command)
+    let mut process = Command::new(&command);
+    process
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("failed to launch AI CLI '{command}'"))?;
+        .stderr(Stdio::piped());
+    let output =
+        run_ai_cli_process_with_timeout(process, Duration::from_secs(provider.timeout_secs))
+            .with_context(|| format!("failed to run AI CLI '{command}'"))?;
+    if output.stdout.truncated {
+        bail!("AI CLI '{command}' returned more than {AI_CLI_OUTPUT_MAX_BYTES} bytes on stdout");
+    }
+    if output.status.success() {
+        return String::from_utf8(output.stdout.bytes).context("AI CLI returned non-UTF-8 stdout");
+    }
+    let mut stderr = String::from_utf8_lossy(&output.stderr.bytes).into_owned();
+    if output.stderr.truncated {
+        stderr = format!("[truncated]\n{stderr}");
+    }
+    let message = sanitize_provider_error_message(stderr.trim());
+    if message.is_empty() {
+        bail!("AI CLI '{command}' failed with status {}", output.status);
+    }
+    bail!("AI CLI '{command}' failed: {message}");
+}
+
+#[derive(Debug)]
+struct CapturedAiCliOutput {
+    stdout: CapturedAiCliStream,
+    stderr: CapturedAiCliStream,
+    status: ExitStatus,
+}
+
+#[derive(Debug, Default)]
+struct CapturedAiCliStream {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+fn spawn_ai_cli_reader<R: Read + Send + 'static>(
+    mut reader: R,
+) -> thread::JoinHandle<CapturedAiCliStream> {
+    thread::spawn(move || {
+        let mut captured = CapturedAiCliStream::default();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(_) => break,
+            };
+            let remaining = AI_CLI_OUTPUT_MAX_BYTES.saturating_sub(captured.bytes.len());
+            if remaining > 0 {
+                captured
+                    .bytes
+                    .extend_from_slice(&buffer[..read.min(remaining)]);
+            }
+            if read > remaining {
+                captured.truncated = true;
+            }
+        }
+        captured
+    })
+}
+
+fn run_ai_cli_process_with_timeout(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<CapturedAiCliOutput> {
+    let mut child = command.spawn().context("failed to launch AI CLI")?;
+    let stdout = child
+        .stdout
+        .take()
+        .map(spawn_ai_cli_reader)
+        .context("AI CLI stdout was not captured")?;
+    let stderr = child
+        .stderr
+        .take()
+        .map(spawn_ai_cli_reader)
+        .context("AI CLI stderr was not captured")?;
     let started = Instant::now();
     loop {
-        if child
-            .try_wait()
-            .with_context(|| format!("failed to poll AI CLI '{command}'"))?
-            .is_some()
-        {
-            let output = child
-                .wait_with_output()
-                .with_context(|| format!("failed to read AI CLI '{command}' output"))?;
-            if output.status.success() {
-                return String::from_utf8(output.stdout)
-                    .context("AI CLI returned non-UTF-8 stdout");
-            }
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let message = sanitize_provider_error_message(stderr.trim());
-            if message.is_empty() {
-                bail!("AI CLI '{command}' failed with status {}", output.status);
-            }
-            bail!("AI CLI '{command}' failed: {message}");
+        if let Some(status) = child.try_wait().context("failed to poll AI CLI")? {
+            return Ok(CapturedAiCliOutput {
+                stdout: stdout
+                    .join()
+                    .map_err(|_| anyhow!("failed to read AI CLI stdout"))?,
+                stderr: stderr
+                    .join()
+                    .map_err(|_| anyhow!("failed to read AI CLI stderr"))?,
+                status,
+            });
         }
-        if started.elapsed() >= Duration::from_secs(provider.timeout_secs) {
+        if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            bail!(
-                "AI CLI '{}' timed out after {}s",
-                command,
-                provider.timeout_secs
-            );
+            let _ = stdout.join();
+            let _ = stderr.join();
+            bail!("AI CLI timed out after {}s", timeout.as_secs());
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -1420,6 +1485,62 @@ trailing note {also ignored}"#,
         assert!(args[3].contains("system mentions $PROMPT literally"));
         assert!(args[3].contains("user mentions $SYSTEM_PROMPT literally"));
         assert_eq!(args[5], "$UNKNOWN");
+    }
+
+    #[test]
+    fn ai_cli_stdout_is_bounded_before_response_parsing() {
+        let provider = AiProviderConfig {
+            provider: AiProviderKind::CodexCli,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 5,
+            max_output_tokens: 128,
+            temperature: Some(0.1),
+            command: Some("sh".into()),
+            args: vec![
+                "-c".into(),
+                format!(
+                    "head -c {} /dev/zero | tr '\\0' x",
+                    AI_CLI_OUTPUT_MAX_BYTES + 1024
+                ),
+            ],
+            action: None,
+        };
+
+        let err = call_ai_cli(&provider, "system", "user").expect_err("oversized stdout fails");
+
+        assert!(
+            err.to_string()
+                .contains("returned more than 1048576 bytes on stdout"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ai_cli_stderr_is_bounded_before_error_sanitizing() {
+        let provider = AiProviderConfig {
+            provider: AiProviderKind::CodexCli,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 5,
+            max_output_tokens: 128,
+            temperature: Some(0.1),
+            command: Some("sh".into()),
+            args: vec![
+                "-c".into(),
+                format!(
+                    "head -c {} /dev/zero | tr '\\0' x >&2; exit 7",
+                    AI_CLI_OUTPUT_MAX_BYTES + 1024
+                ),
+            ],
+            action: None,
+        };
+
+        let err = call_ai_cli(&provider, "system", "user").expect_err("oversized stderr fails");
+
+        assert!(err.to_string().contains("[truncated]"), "{err}");
     }
 
     #[test]
