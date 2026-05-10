@@ -3613,6 +3613,27 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_age_caches_do_not_use_minute_buckets() {
+        for (path, source) in [
+            ("views/flux.rs", include_str!("views/flux.rs")),
+            ("views/nodes.rs", include_str!("views/nodes.rs")),
+        ] {
+            assert!(
+                !source.contains("minute_bucket"),
+                "{path} should not cache second-level Age text behind minute buckets",
+            );
+            assert!(
+                !source.contains("div_euclid(60)"),
+                "{path} should use second-level freshness for Age text",
+            );
+            assert!(
+                source.contains("freshness_bucket: now_unix"),
+                "{path} should key timestamp-derived Age text by current second",
+            );
+        }
+    }
+
+    #[test]
     fn unsorted_age_tables_keep_age_width_consistent() {
         for (path, source) in [
             ("views/detail.rs", include_str!("views/detail.rs")),
