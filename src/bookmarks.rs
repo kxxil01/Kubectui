@@ -222,25 +222,25 @@ pub fn resource_exists(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> bo
             }),
             "Gateway" => snapshot.gateways.iter().any(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
                     && plural == "gateways"
             }),
             "HTTPRoute" => snapshot.http_routes.iter().any(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
                     && plural == "httproutes"
             }),
             "GRPCRoute" => snapshot.grpc_routes.iter().any(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
                     && plural == "grpcroutes"
             }),
             "ReferenceGrant" => snapshot.reference_grants.iter().any(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
                     && plural == "referencegrants"
             }),
@@ -273,6 +273,10 @@ pub fn resource_exists(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> bo
             })
         }
     }
+}
+
+fn resource_namespace_matches(resource_namespace: &Option<String>, item_namespace: &str) -> bool {
+    resource_namespace.as_deref().unwrap_or_default() == item_namespace
 }
 
 pub fn selected_bookmark_resource(
@@ -398,7 +402,7 @@ pub fn resource_selected_index(
         ) if kind == "Gateway" && plural == "gateways" => {
             snapshot.gateways.iter().position(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
             })?
         }
@@ -415,7 +419,7 @@ pub fn resource_selected_index(
         ) if kind == "HTTPRoute" && plural == "httproutes" => {
             snapshot.http_routes.iter().position(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
             })?
         }
@@ -432,7 +436,7 @@ pub fn resource_selected_index(
         ) if kind == "GRPCRoute" && plural == "grpcroutes" => {
             snapshot.grpc_routes.iter().position(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
             })?
         }
@@ -449,7 +453,7 @@ pub fn resource_selected_index(
         ) if kind == "ReferenceGrant" && plural == "referencegrants" => {
             snapshot.reference_grants.iter().position(|item| {
                 item.name == *name
-                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && resource_namespace_matches(namespace, &item.namespace)
                     && item.version == *version
             })?
         }
