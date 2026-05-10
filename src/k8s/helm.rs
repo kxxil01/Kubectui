@@ -13,6 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
 use crate::{
+    config_file::{HELM_REPOSITORY_CONFIG_MAX_BYTES, read_bounded_config_file},
     k8s::dtos::{HelmReleaseRevisionInfo, HelmRepoInfo},
     resource_diff::YamlDocumentDiffResult,
 };
@@ -48,8 +49,11 @@ const HELM_STATUS_MESSAGE_MAX_CHARS: usize = 600;
 pub fn read_helm_repositories() -> Vec<HelmRepoInfo> {
     let candidates = helm_repo_paths();
     for path in candidates {
-        if let Ok(content) = std::fs::read_to_string(&path)
-            && let Some(repos) = parse_helm_repositories(&content)
+        if let Ok(content) = read_bounded_config_file(
+            &path,
+            "Helm repository config",
+            HELM_REPOSITORY_CONFIG_MAX_BYTES,
+        ) && let Some(repos) = parse_helm_repositories(&content)
         {
             return repos;
         }
