@@ -2724,24 +2724,31 @@ impl ConnectivityTabState {
     }
 
     pub fn apply_analysis(&mut self, target: ResourceRef, analysis: ConnectivityAnalysis) {
+        let preserve_tree_state = self.current_target.as_ref() == Some(&target);
+        let expanded = if preserve_tree_state {
+            preserved_expanded_relation_tree(&self.tree, &self.expanded, &analysis.tree)
+        } else {
+            default_expanded_relation_tree(&analysis.tree)
+        };
+        let tree_cursor = if preserve_tree_state {
+            preserved_relation_cursor(
+                &self.tree,
+                &self.expanded,
+                self.tree_cursor,
+                &analysis.tree,
+                &expanded,
+            )
+        } else {
+            0
+        };
+
         self.current_target = Some(target);
         self.summary_lines = analysis.summary_lines;
         self.tree = analysis.tree;
         self.focus = ConnectivityTabFocus::Result;
-        self.tree_cursor = 0;
+        self.tree_cursor = tree_cursor;
         self.error = None;
-        self.expanded.clear();
-
-        let mut counter = 0usize;
-        for section in &self.tree {
-            self.expanded.insert(counter);
-            counter += 1;
-            for child in &section.children {
-                self.expanded.insert(counter);
-                counter += 1;
-                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
-            }
-        }
+        self.expanded = expanded;
     }
 
     pub fn set_error(&mut self, error: String) {
@@ -5501,6 +5508,115 @@ mod tests {
             tab.selected_target_option()
                 .map(|target| target.resource.clone()),
             Some(ResourceRef::Pod("api-1".into(), "default".into()))
+        );
+    }
+
+    #[test]
+    fn connectivity_apply_analysis_preserves_tree_state_for_same_target() {
+        let source = ResourceRef::Pod("source".into(), "default".into());
+        let target = ResourceRef::Pod("api-0".into(), "default".into());
+        let mut tab = ConnectivityTabState::new(
+            source,
+            vec![ConnectivityTargetOption {
+                resource: target.clone(),
+                display: "api-0".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.2".into()),
+            }],
+        );
+        tab.apply_analysis(
+            target.clone(),
+            ConnectivityAnalysis {
+                summary_lines: vec!["initial".into()],
+                tree: vec![relation_node(
+                    None,
+                    "Policy result",
+                    crate::k8s::relationships::RelationKind::SectionHeader,
+                    vec![
+                        relation_node(
+                            Some(ResourceRef::NetworkPolicy(
+                                "allow-api".to_string(),
+                                "ns".to_string(),
+                            )),
+                            "NetworkPolicy allow-api",
+                            crate::k8s::relationships::RelationKind::SelectedBy,
+                            vec![relation_node(
+                                Some(target.clone()),
+                                "Pod api-0",
+                                crate::k8s::relationships::RelationKind::Backend,
+                                Vec::new(),
+                            )],
+                        ),
+                        relation_node(
+                            Some(ResourceRef::NetworkPolicy(
+                                "allow-metrics".to_string(),
+                                "ns".to_string(),
+                            )),
+                            "NetworkPolicy allow-metrics",
+                            crate::k8s::relationships::RelationKind::SelectedBy,
+                            Vec::new(),
+                        ),
+                    ],
+                )],
+            },
+        );
+        tab.expanded.remove(&1);
+        tab.tree_cursor = 1;
+
+        tab.apply_analysis(
+            target,
+            ConnectivityAnalysis {
+                summary_lines: vec!["refreshed".into()],
+                tree: vec![relation_node(
+                    None,
+                    "Policy result",
+                    crate::k8s::relationships::RelationKind::SectionHeader,
+                    vec![
+                        relation_node(
+                            Some(ResourceRef::NetworkPolicy(
+                                "allow-new".to_string(),
+                                "ns".to_string(),
+                            )),
+                            "NetworkPolicy allow-new",
+                            crate::k8s::relationships::RelationKind::SelectedBy,
+                            vec![relation_node(
+                                Some(ResourceRef::Pod("api-new".into(), "ns".into())),
+                                "Pod api-new",
+                                crate::k8s::relationships::RelationKind::Backend,
+                                Vec::new(),
+                            )],
+                        ),
+                        relation_node(
+                            Some(ResourceRef::NetworkPolicy(
+                                "allow-api".to_string(),
+                                "ns".to_string(),
+                            )),
+                            "NetworkPolicy allow-api",
+                            crate::k8s::relationships::RelationKind::SelectedBy,
+                            vec![relation_node(
+                                Some(ResourceRef::Pod("api-0".into(), "default".into())),
+                                "Pod api-0",
+                                crate::k8s::relationships::RelationKind::Backend,
+                                Vec::new(),
+                            )],
+                        ),
+                    ],
+                )],
+            },
+        );
+
+        assert!(tab.expanded.contains(&1));
+        assert!(!tab.expanded.contains(&3));
+
+        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+        assert!(flat.iter().any(|node| node.label == "Pod api-new"));
+        assert!(!flat.iter().any(|node| node.label == "Pod api-0"));
+        assert_eq!(
+            flat[tab.tree_cursor].resource,
+            Some(ResourceRef::NetworkPolicy(
+                "allow-api".to_string(),
+                "ns".to_string()
+            ))
         );
     }
 
