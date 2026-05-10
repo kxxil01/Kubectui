@@ -3613,6 +3613,27 @@ mod tests {
     }
 
     #[test]
+    fn unsorted_age_tables_keep_age_width_consistent() {
+        for (path, source) in [
+            ("views/detail.rs", include_str!("views/detail.rs")),
+            (
+                "views/extensions/custom_resources.rs",
+                include_str!("views/extensions/custom_resources.rs"),
+            ),
+        ] {
+            assert!(
+                !source.contains("Constraint::Length(7),\n        ]"),
+                "{path} should not render Age narrower than compact resource-table Age",
+            );
+            assert!(
+                source.contains("Constraint::Length(8),")
+                    && source.contains("Constraint::Length(9),"),
+                "{path} should keep compact/wide Age widths aligned with resource tables",
+            );
+        }
+    }
+
+    #[test]
     fn vertical_primary_detail_chunks_compact_on_short_height() {
         let (primary, detail) = vertical_primary_detail_chunks(Rect::new(0, 0, 90, 18), 60, 8, 24);
         assert_eq!(primary.height, 10);
