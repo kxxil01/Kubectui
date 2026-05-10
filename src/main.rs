@@ -342,13 +342,18 @@ fn finish_mouse_content_click(
     snapshot: &ClusterSnapshot,
     mouse_kind: MouseEventKind,
     routed_action: AppAction,
+    content_target: Option<MouseContentTarget>,
     clicked_row: Option<usize>,
     can_activate_clicked_content: bool,
 ) -> AppAction {
+    let selected_row = match content_target {
+        Some(MouseContentTarget::ExtensionInstances { .. }) => app.extension_instance_cursor,
+        Some(MouseContentTarget::Selection { .. }) | None => app.selected_idx(),
+    };
     if routed_action == AppAction::None
         && app.mouse_row_selection.is_none()
         && can_activate_clicked_content
-        && clicked_row.is_some_and(|row| row == app.selected_idx())
+        && clicked_row.is_some_and(|row| row == selected_row)
     {
         activate_selected_content_resource(app, snapshot)
     } else {
@@ -5890,6 +5895,7 @@ pub(crate) async fn run_app_inner(
                                 &cached_snapshot,
                                 mouse.kind,
                                 action,
+                                content_target,
                                 clicked_content_row,
                                 can_activate_clicked_content,
                             )
