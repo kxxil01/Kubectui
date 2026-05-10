@@ -313,6 +313,9 @@ sync_merged_main_and_verify() {
   [[ "$remote_version" == "$expected_version" ]] || {
     die "remote main version mismatch after push: expected $expected_version, found $remote_version"
   }
+  git show origin/main:"$README" | grep -qx "Current release: \`${expected_version}\`." || {
+    die "remote main README release mismatch after push: expected $expected_version"
+  }
 }
 
 publish_tag() {
