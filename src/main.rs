@@ -56,6 +56,7 @@ use kubectui::{
         MouseContentSelectionScope, MouseCopyMode, MouseRowSelection, ResourceRef, config_path,
         load_ai_config_from_path, load_config, save_config,
     },
+    config_file::{EDITED_YAML_MAX_BYTES, read_bounded_config_file},
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::{
         MouseContentTarget, apply_action, mouse_background_blocked, mouse_content_row_at,
@@ -972,8 +973,8 @@ fn edit_yaml_in_external_editor(
         return Ok(None);
     }
 
-    let edited_yaml = std::fs::read_to_string(&tmp_path)
-        .with_context(|| format!("failed to read edited file '{}'", tmp_path.display()))?;
+    let edited_yaml = read_bounded_config_file(&tmp_path, "edited YAML", EDITED_YAML_MAX_BYTES)
+        .map_err(anyhow::Error::msg)?;
     if skip_unchanged && edited_yaml.trim() == yaml_content.trim() {
         return Ok(None);
     }

@@ -9,7 +9,7 @@ pub mod authorization;
 pub mod bookmarks;
 pub mod clipboard;
 pub mod columns;
-mod config_file;
+pub mod config_file;
 pub mod coordinator;
 pub mod cronjob;
 pub mod detail_sections;
