@@ -952,10 +952,10 @@ fn extension_command_output_is_bounded_before_reaching_ui_tab() {
 
     assert!(result.success);
     assert_eq!(result.lines.len(), MAX_EXTENSION_OUTPUT_LINES + 1);
-    assert_eq!(result.lines[0], "line-0");
+    assert_eq!(result.lines[0], "... truncated 3 earlier lines");
     assert_eq!(
         result.lines.last().map(String::as_str),
-        Some("... truncated 3 additional lines")
+        Some(format!("line-{}", MAX_EXTENSION_OUTPUT_LINES + 2).as_str())
     );
 }
 

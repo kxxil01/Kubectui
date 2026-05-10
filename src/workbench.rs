@@ -2381,13 +2381,21 @@ fn parse_ansi_count(params: &str) -> usize {
         .min(256)
 }
 
-fn truncate_extension_lines(mut lines: Vec<String>) -> Vec<String> {
-    if lines.len() > MAX_EXTENSION_OUTPUT_LINES {
-        let omitted = lines.len() - MAX_EXTENSION_OUTPUT_LINES;
-        lines.truncate(MAX_EXTENSION_OUTPUT_LINES);
-        lines.push(format!("... truncated {omitted} additional lines"));
+fn truncate_extension_lines(lines: Vec<String>) -> Vec<String> {
+    if lines.len() <= MAX_EXTENSION_OUTPUT_LINES {
+        return lines;
     }
-    lines
+
+    let omitted = lines.len() - MAX_EXTENSION_OUTPUT_LINES;
+    let mut retained = Vec::with_capacity(MAX_EXTENSION_OUTPUT_LINES + 1);
+    retained.push(format!("... truncated {omitted} earlier lines"));
+    retained.extend(
+        lines
+            .into_iter()
+            .skip(omitted)
+            .take(MAX_EXTENSION_OUTPUT_LINES),
+    );
+    retained
 }
 
 #[derive(Debug, Clone)]
@@ -3610,8 +3618,12 @@ mod tests {
 
         assert_eq!(tab.lines.len(), MAX_EXTENSION_OUTPUT_LINES + 1);
         assert_eq!(
+            tab.lines.first().map(String::as_str),
+            Some("... truncated 2 earlier lines")
+        );
+        assert_eq!(
             tab.lines.last().map(String::as_str),
-            Some("... truncated 2 additional lines")
+            Some(format!("line-{}", MAX_EXTENSION_OUTPUT_LINES + 1).as_str())
         );
     }
 
