@@ -4971,6 +4971,7 @@ fn health_report_selected_resource_uses_sanitizer_only_rows() {
 
     let mut snapshot = ClusterSnapshot::default();
     snapshot.snapshot_version = 41;
+    snapshot.loaded_scope = RefreshScope::CORE_OVERVIEW;
     snapshot.nodes.push(NodeInfo {
         name: "node-a".to_string(),
         ready: false,

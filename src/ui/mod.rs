@@ -3656,6 +3656,7 @@ mod tests {
     fn health_report_view_filters_out_runtime_issues() {
         let snapshot = ClusterSnapshot {
             snapshot_version: 42,
+            loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW,
             nodes: vec![NodeInfo {
                 name: "node-a".to_string(),
                 ready: false,
