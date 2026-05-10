@@ -809,6 +809,20 @@ async fn stop_context_bound_background_activity(
     clear_port_forward_registries(app);
 }
 
+async fn stop_workload_log_session(
+    session_id: u64,
+    workload_log_sessions: &mut HashMap<u64, Vec<(String, String, String)>>,
+    coordinator: &mut UpdateCoordinator,
+) {
+    if let Some(streams) = workload_log_sessions.remove(&session_id) {
+        for (pod_name, namespace, container_name) in streams {
+            let _ = coordinator
+                .stop_log_streaming(&pod_name, &namespace, &container_name)
+                .await;
+        }
+    }
+}
+
 async fn apply_workspace_snapshot_and_refresh(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::workspaces::WorkspaceSnapshot,
@@ -7261,6 +7275,16 @@ pub(crate) async fn run_app_inner(
                         let session_id = next_workload_logs_session_id;
                         next_workload_logs_session_id =
                             next_workload_logs_session_id.wrapping_add(1).max(1);
+                        if let Some(existing_session_id) =
+                            app.workbench().workload_logs_session_id(&resource)
+                        {
+                            stop_workload_log_session(
+                                existing_session_id,
+                                &mut workload_log_sessions,
+                                &mut coordinator,
+                            )
+                            .await;
+                        }
                         app.detail_view = None;
                         app.open_workload_logs_tab(resource.clone(), session_id);
                         let context_generation = refresh_state.context_generation;
@@ -7787,6 +7811,16 @@ pub(crate) async fn run_app_inner(
                         let session_id = next_workload_logs_session_id;
                         next_workload_logs_session_id =
                             next_workload_logs_session_id.wrapping_add(1).max(1);
+                        if let Some(existing_session_id) =
+                            app.workbench().workload_logs_session_id(&resource)
+                        {
+                            stop_workload_log_session(
+                                existing_session_id,
+                                &mut workload_log_sessions,
+                                &mut coordinator,
+                            )
+                            .await;
+                        }
                         app.open_workload_logs_tab(resource, session_id);
 
                         // Build sources: all containers from this single pod
