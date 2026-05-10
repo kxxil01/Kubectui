@@ -272,8 +272,15 @@ pub struct MouseRowSelection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseContentSelectionScope {
+    Primary,
+    ExtensionInstances,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MouseContentSelection {
     pub view: AppView,
+    pub scope: MouseContentSelectionScope,
     pub row: usize,
 }
 
