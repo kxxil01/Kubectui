@@ -144,8 +144,7 @@ pub fn collect_extension_resource_search_entries(
                 "{crd_kind_lower} {namespace_lower}/{item_name_lower}"
             ));
         }
-        aliases.sort_unstable();
-        aliases.dedup();
+        dedup_aliases(&mut aliases);
 
         let subtitle = match item.namespace.as_deref() {
             Some(namespace) => format!("{} · {} · {}", crd.kind, namespace, crd.group),
@@ -667,6 +666,7 @@ fn push_flux_entry(
     if let Some(namespace_lower) = namespace_lower.as_deref() {
         aliases.push(format!("{kind_lower} {namespace_lower}/{name_lower}"));
     }
+    dedup_aliases(&mut aliases);
     let subtitle = match namespace {
         Some(namespace) => format!("{kind} · {namespace}"),
         None => kind.to_string(),
@@ -691,6 +691,7 @@ fn push_cluster_entry(
     if let Some(qualifier) = qualifier {
         aliases.push(qualifier.to_ascii_lowercase());
     }
+    dedup_aliases(&mut aliases);
     entries.push(GlobalResourceSearchEntry {
         title: resource.name().to_string(),
         subtitle: format!(
@@ -714,6 +715,7 @@ fn push_namespaced_entry(
     mut aliases: Vec<String>,
 ) {
     aliases.extend(base_aliases(&resource, view));
+    dedup_aliases(&mut aliases);
     entries.push(GlobalResourceSearchEntry {
         title: resource.name().to_string(),
         subtitle: format!("{} · {namespace}", resource.kind()),
@@ -725,6 +727,11 @@ fn push_namespaced_entry(
 
 fn base_aliases(resource: &ResourceRef, view: AppView) -> Vec<String> {
     normalized_base_aliases(resource.kind(), resource.name(), resource.namespace(), view).0
+}
+
+fn dedup_aliases(aliases: &mut Vec<String>) {
+    aliases.sort_unstable();
+    aliases.dedup();
 }
 
 fn normalized_base_aliases(
@@ -797,7 +804,10 @@ mod tests {
         },
         state::ClusterSnapshot,
     };
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::{
+        collections::{BTreeMap, HashSet},
+        sync::Arc,
+    };
 
     #[test]
     fn global_search_indexes_namespaced_resources_and_labels() {
@@ -851,6 +861,27 @@ mod tests {
             entry.resource == ResourceRef::Deployment("api".into(), "platform".into())
                 && entry.aliases.iter().any(|alias| alias == "app=api")
         }));
+    }
+
+    #[test]
+    fn global_search_entries_deduplicate_aliases() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.snapshot_version = 11;
+        snapshot.deployments.push(DeploymentInfo {
+            name: "api".into(),
+            namespace: "api".into(),
+            pod_template_labels: BTreeMap::from([("app".into(), "api".into())]),
+            ..DeploymentInfo::default()
+        });
+
+        let entries = collect_global_resource_search_entries(&snapshot);
+        let entry = entries
+            .iter()
+            .find(|entry| entry.resource == ResourceRef::Deployment("api".into(), "api".into()))
+            .expect("deployment entry");
+        let unique_aliases = entry.aliases.iter().collect::<HashSet<_>>();
+
+        assert_eq!(entry.aliases.len(), unique_aliases.len());
     }
 
     #[test]
