@@ -37,6 +37,7 @@ struct ClusterRoleBindingDerivedCacheKey {
     snapshot_version: u64,
     data_fingerprint: u64,
     variant: u64,
+    freshness_bucket: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +93,7 @@ fn cached_cluster_role_binding_derived(
             snapshot.snapshot_version,
         ),
         variant,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     if let Ok(cache) = CLUSTER_ROLE_BINDING_DERIVED_CACHE.lock()

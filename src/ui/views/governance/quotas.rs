@@ -34,6 +34,7 @@ struct ResourceQuotaDerivedCacheKey {
     snapshot_version: u64,
     data_fingerprint: u64,
     variant: u64,
+    freshness_bucket: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,7 @@ fn cached_resource_quota_derived(
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.resource_quotas, snapshot.snapshot_version),
         variant,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     if let Ok(cache) = RESOURCE_QUOTA_DERIVED_CACHE.lock()

@@ -62,6 +62,7 @@ struct CronJobDerivedCacheKey {
     snapshot_version: u64,
     data_fingerprint: u64,
     variant: u64,
+    freshness_bucket: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +210,7 @@ fn cached_cronjob_derived(
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.cronjobs, cluster.snapshot_version),
         variant,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     if let Ok(cache) = CRONJOB_DERIVED_CACHE.lock()
