@@ -991,14 +991,17 @@ pub fn apply_extension_fetch_result(app: &mut AppState, result: ExtensionFetchRe
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::{
         prepare_resource_target, prepare_resource_target_for_view,
-        resolve_detail_action_authorization, selected_resource, should_skip_extension_fetch,
+        preserve_selection_identity_after_snapshot_change, resolve_detail_action_authorization,
+        selected_resource, should_skip_extension_fetch,
     };
     use kubectui::{
         app::{AppState, AppView, ResourceRef},
         authorization::DetailActionAuthorization,
-        k8s::dtos::{FluxResourceInfo, PodInfo},
+        k8s::dtos::{DeploymentInfo, FluxResourceInfo, PodInfo},
         state::ClusterSnapshot,
     };
 
@@ -1031,6 +1034,63 @@ mod tests {
         app.set_extension_instances("widgets.demo.io".to_string(), Vec::new(), None);
 
         assert!(!should_skip_extension_fetch(&app, "widgets.demo.io"));
+    }
+
+    #[test]
+    fn preserve_selection_identity_keeps_project_representative_after_snapshot_change() {
+        let target = ResourceRef::Deployment("billing-api".to_string(), "payments".to_string());
+        let previous = project_snapshot(
+            1,
+            &[
+                ("alpha-api", "platform", "alpha"),
+                ("billing-api", "payments", "billing"),
+            ],
+        );
+        let current = project_snapshot(
+            2,
+            &[
+                ("alpha-api", "platform", "alpha"),
+                ("archive-api", "ops", "archive"),
+                ("billing-api", "payments", "billing"),
+            ],
+        );
+        let previous_projects = kubectui::projects::compute_projects(&previous);
+        let mut app = AppState {
+            view: AppView::Projects,
+            selected_idx: previous_projects
+                .iter()
+                .position(|project| project.representative.as_ref() == Some(&target))
+                .expect("target project should exist"),
+            ..AppState::default()
+        };
+
+        let changed =
+            preserve_selection_identity_after_snapshot_change(&mut app, &previous, &current);
+
+        assert!(changed);
+        assert_eq!(selected_resource(&app, &current), Some(target));
+    }
+
+    fn project_snapshot(
+        snapshot_version: u64,
+        deployments: &[(&str, &str, &str)],
+    ) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version,
+            deployments: deployments
+                .iter()
+                .map(|(name, namespace, project)| DeploymentInfo {
+                    name: (*name).to_string(),
+                    namespace: (*namespace).to_string(),
+                    pod_template_labels: BTreeMap::from([(
+                        "app.kubernetes.io/part-of".to_string(),
+                        (*project).to_string(),
+                    )]),
+                    ..DeploymentInfo::default()
+                })
+                .collect(),
+            ..ClusterSnapshot::default()
+        }
     }
 
     #[test]
