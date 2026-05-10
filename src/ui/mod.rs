@@ -662,7 +662,7 @@ pub(crate) fn responsive_table_widths_vec(area_width: u16, wide: &[Constraint]) 
     let ideal_total: u16 = wide.iter().map(|c| constraint_ideal_width(*c)).sum();
 
     if usable_width >= ideal_total {
-        return wide.to_vec();
+        return widths_with_slack_absorber(wide);
     }
 
     let total_weight = ideal_total.max(1) as u32;
@@ -690,6 +690,31 @@ pub(crate) fn responsive_table_widths_vec(area_width: u16, wide: &[Constraint]) 
         .into_iter()
         .map(Constraint::Percentage)
         .collect()
+}
+
+fn widths_with_slack_absorber(wide: &[Constraint]) -> Vec<Constraint> {
+    if wide.iter().any(constraint_absorbs_slack) {
+        return wide.to_vec();
+    }
+
+    let mut widths = wide.to_vec();
+    if let Some(first) = widths.first_mut() {
+        *first = match *first {
+            Constraint::Length(value) | Constraint::Max(value) => Constraint::Min(value.max(1)),
+            constraint => constraint,
+        };
+    }
+    widths
+}
+
+fn constraint_absorbs_slack(constraint: &Constraint) -> bool {
+    matches!(
+        constraint,
+        Constraint::Percentage(_)
+            | Constraint::Ratio(_, _)
+            | Constraint::Min(_)
+            | Constraint::Fill(_)
+    )
 }
 
 fn constraint_ideal_width(constraint: Constraint) -> u16 {
@@ -3424,6 +3449,39 @@ mod tests {
         ];
 
         assert_eq!(responsive_table_widths(96, wide), wide);
+    }
+
+    #[test]
+    fn responsive_table_widths_promotes_fixed_only_wide_layouts_to_fill_area() {
+        let widths = responsive_table_widths(
+            160,
+            [
+                Constraint::Length(24),
+                Constraint::Length(16),
+                Constraint::Length(9),
+                Constraint::Length(9),
+            ],
+        );
+
+        assert_eq!(widths[0], Constraint::Min(24));
+        assert_eq!(widths[1], Constraint::Length(16));
+        assert_eq!(widths[3], Constraint::Length(9));
+    }
+
+    #[test]
+    fn responsive_table_widths_keeps_right_edge_age_fixed_when_promoting() {
+        let widths = responsive_table_widths(
+            160,
+            [
+                Constraint::Length(22),
+                Constraint::Length(16),
+                Constraint::Length(12),
+                Constraint::Length(9),
+            ],
+        );
+
+        assert!(matches!(widths[0], Constraint::Min(22)));
+        assert_eq!(widths[3], Constraint::Length(9));
     }
 
     #[test]
