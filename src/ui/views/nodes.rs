@@ -264,7 +264,7 @@ fn cached_node_derived(
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.nodes, snapshot.snapshot_version),
         variant,
-        freshness_bucket: now_unix / 60,
+        freshness_bucket: now_unix,
     };
 
     cached_derived_rows(&NODE_DERIVED_CACHE, key, || {

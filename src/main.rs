@@ -621,7 +621,7 @@ fn should_request_periodic_redraw(
     last_staleness_second: &mut i64,
 ) -> bool {
     let mut needs_redraw = false;
-    let age_bucket = now_unix / 60;
+    let age_bucket = now_unix;
     if age_bucket != *last_age_bucket {
         *last_age_bucket = age_bucket;
         needs_redraw = true;
@@ -3535,7 +3535,7 @@ pub(crate) async fn run_app_inner(
     let mut pending_context_switch: Option<(String, tokio::task::JoinHandle<Result<K8sClient>>)> =
         None;
     let startup_now_unix = kubectui::time::now_unix_seconds();
-    let mut last_age_bucket = startup_now_unix / 60;
+    let mut last_age_bucket = startup_now_unix;
     let mut last_staleness_second = startup_now_unix;
 
     let mut event_stream = EventStream::new();

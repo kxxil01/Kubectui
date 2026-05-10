@@ -971,7 +971,7 @@ fn cached_pod_derived(
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.pods, cluster.snapshot_version),
         variant,
-        freshness_bucket: now_unix / 60,
+        freshness_bucket: now_unix,
     };
 
     cached_derived_rows(&POD_DERIVED_CACHE, key, || {
@@ -1604,7 +1604,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         loading_spinner_tick,
         transient_hash: active_view_transient_hash(app.view(), cluster),
         // Keep age-sensitive cells advancing without disabling stable-frame skipping.
-        freshness_bucket: now_unix_seconds() / 60,
+        freshness_bucket: now_unix_seconds(),
     };
     let frame_count = frame.count();
     let view_skipped = {
