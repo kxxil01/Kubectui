@@ -1101,6 +1101,20 @@ fn sanitize_ai_yaml_excerpt_omits_secret_manifests() {
 }
 
 #[test]
+fn sanitize_ai_yaml_excerpt_rejects_oversized_yaml_before_parse() {
+    let mut yaml = String::from("apiVersion: v1\nkind: Pod\nmetadata:\n  name: api\n");
+    yaml.push_str(&"x".repeat(super::AI_YAML_PARSE_MAX_BYTES));
+
+    let excerpt = super::sanitize_ai_yaml_excerpt(
+        &ResourceRef::Deployment("api".to_string(), "prod".to_string()),
+        &yaml,
+    )
+    .expect("oversized excerpt");
+
+    assert!(excerpt.contains("YAML exceeds 65536 byte AI parse limit"));
+}
+
+#[test]
 fn ai_context_redacts_sensitive_pod_log_values() {
     let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
     let mut app = AppState::default();
