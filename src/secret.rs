@@ -5,6 +5,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde_yaml::{Mapping, Value};
 
 const HEX_PREVIEW_BYTES: usize = 12;
+const MAX_SECRET_YAML_BYTES: usize = 1024 * 1024;
+const MAX_SECRET_DATA_KEYS: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodedSecretValue {
@@ -92,6 +94,7 @@ impl DecodedSecretEntry {
 }
 
 pub fn decode_secret_yaml(yaml: &str) -> Result<Vec<DecodedSecretEntry>> {
+    ensure_secret_yaml_budget(yaml)?;
     let parsed: Value = serde_yaml::from_str(yaml).context("invalid Secret YAML")?;
     let mapping = parsed
         .as_mapping()
@@ -102,6 +105,7 @@ pub fn decode_secret_yaml(yaml: &str) -> Result<Vec<DecodedSecretEntry>> {
     let data_mapping = data
         .as_mapping()
         .ok_or_else(|| anyhow!("Secret data must be a mapping"))?;
+    ensure_secret_data_key_budget(data_mapping)?;
 
     data_mapping
         .iter()
@@ -146,6 +150,12 @@ pub fn decode_secret_yaml(yaml: &str) -> Result<Vec<DecodedSecretEntry>> {
 }
 
 pub fn encode_secret_yaml(yaml: &str, entries: &[DecodedSecretEntry]) -> Result<String> {
+    ensure_secret_yaml_budget(yaml)?;
+    if entries.len() > MAX_SECRET_DATA_KEYS {
+        return Err(anyhow!(
+            "Secret data is limited to {MAX_SECRET_DATA_KEYS} keys"
+        ));
+    }
     let mut parsed: Value = serde_yaml::from_str(yaml).context("invalid Secret YAML")?;
     let root = parsed
         .as_mapping_mut()
@@ -163,6 +173,24 @@ pub fn encode_secret_yaml(yaml: &str, entries: &[DecodedSecretEntry]) -> Result<
     root.remove(Value::String("stringData".to_string()));
 
     serde_yaml::to_string(&parsed).context("failed to serialize Secret YAML")
+}
+
+fn ensure_secret_yaml_budget(yaml: &str) -> Result<()> {
+    if yaml.len() > MAX_SECRET_YAML_BYTES {
+        return Err(anyhow!(
+            "Secret YAML is limited to {MAX_SECRET_YAML_BYTES} bytes"
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_secret_data_key_budget(data: &Mapping) -> Result<()> {
+    if data.len() > MAX_SECRET_DATA_KEYS {
+        return Err(anyhow!(
+            "Secret data is limited to {MAX_SECRET_DATA_KEYS} keys"
+        ));
+    }
+    Ok(())
 }
 
 fn hex_preview(bytes: &[u8]) -> String {
@@ -224,6 +252,55 @@ mod tests {
 
         let encoded = encode_secret_yaml(yaml, &entries).expect("encoded yaml");
         assert!(encoded.contains("dXBkYXRlZA=="));
+    }
+
+    #[test]
+    fn decode_secret_yaml_rejects_oversized_yaml_before_parse() {
+        let mut yaml = String::from("apiVersion: v1\nkind: Secret\ndata:\n  token: ");
+        yaml.push_str(&"a".repeat(MAX_SECRET_YAML_BYTES));
+
+        let err = decode_secret_yaml(&yaml).expect_err("oversized secret yaml");
+
+        assert!(
+            err.to_string()
+                .contains("Secret YAML is limited to 1048576 bytes")
+        );
+    }
+
+    #[test]
+    fn decode_secret_yaml_rejects_too_many_data_keys() {
+        let mut yaml = String::from("apiVersion: v1\nkind: Secret\ndata:\n");
+        for index in 0..=MAX_SECRET_DATA_KEYS {
+            yaml.push_str(&format!("  key-{index}: dmFsdWU=\n"));
+        }
+
+        let err = decode_secret_yaml(&yaml).expect_err("too many keys");
+
+        assert!(
+            err.to_string()
+                .contains("Secret data is limited to 1024 keys")
+        );
+    }
+
+    #[test]
+    fn encode_secret_yaml_rejects_too_many_entries_before_parse() {
+        let entries = (0..=MAX_SECRET_DATA_KEYS)
+            .map(|index| DecodedSecretEntry {
+                key: format!("key-{index}"),
+                value: DecodedSecretValue::Text {
+                    original: "value".to_string(),
+                    current: "value".to_string(),
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let err = encode_secret_yaml("apiVersion: v1\nkind: Secret\ndata: {}\n", &entries)
+            .expect_err("too many entries");
+
+        assert!(
+            err.to_string()
+                .contains("Secret data is limited to 1024 keys")
+        );
     }
 
     #[test]
