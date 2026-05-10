@@ -25,8 +25,8 @@ fn crd_widths(area: Rect) -> [Constraint; 4] {
         ]
     } else {
         [
-            Constraint::Length(22),
-            Constraint::Length(24),
+            Constraint::Min(22),
+            Constraint::Min(24),
             Constraint::Length(12),
             Constraint::Length(10),
         ]
@@ -291,8 +291,8 @@ mod tests {
     #[test]
     fn crd_widths_keep_wide_profile() {
         let widths = crd_widths(Rect::new(0, 0, 120, 20));
-        assert_eq!(widths[0], Constraint::Length(22));
-        assert_eq!(widths[1], Constraint::Length(24));
+        assert_eq!(widths[0], Constraint::Min(22));
+        assert_eq!(widths[1], Constraint::Min(24));
         assert_eq!(widths[2], Constraint::Length(12));
         assert_eq!(widths[3], Constraint::Length(10));
     }
