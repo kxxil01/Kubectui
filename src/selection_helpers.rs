@@ -64,20 +64,8 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
         }
         AppView::Issues | AppView::HealthReport => {
             let issues = kubectui::state::issues::compute_issues(snapshot);
-            let query = app.search_query().trim();
-            let indices = if app.view() == AppView::HealthReport {
-                issues
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, issue)| {
-                        (issue.source == kubectui::state::issues::ClusterIssueSource::Sanitizer
-                            && issue.matches_query(query))
-                        .then_some(idx)
-                    })
-                    .collect()
-            } else {
-                kubectui::state::issues::filtered_issue_indices(&issues, query)
-            };
+            let indices =
+                filtered_issue_indices_for_view(app.view(), &issues, app.search_query().trim());
             filtered_index(&indices, idx).map(|i| issues[i].resource_ref.clone())
         }
         AppView::HelmCharts => None,
@@ -573,19 +561,9 @@ fn filtered_issue_indices_for_view(
     query: &str,
 ) -> Vec<usize> {
     let query = query.trim();
-    if view == AppView::HealthReport {
-        issues
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, issue)| {
-                (issue.source == kubectui::state::issues::ClusterIssueSource::Sanitizer
-                    && issue.matches_query(query))
-                .then_some(idx)
-            })
-            .collect()
-    } else {
-        kubectui::state::issues::filtered_issue_indices(issues, query)
-    }
+    let source_filter = (view == AppView::HealthReport)
+        .then_some(kubectui::state::issues::ClusterIssueSource::Sanitizer);
+    kubectui::state::issues::filtered_issue_indices_by_source(issues, query, source_filter)
 }
 
 fn cluster_issue_matches(
