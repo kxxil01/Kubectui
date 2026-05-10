@@ -32,6 +32,10 @@ jobs:
             echo "Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
             exit 1
           fi
+          if ! grep -qx "Current release: \`${TAG_VERSION}\`." README.md; then
+            echo "README current release does not match tag version ($TAG_VERSION)"
+            exit 1
+          fi
           echo "Version verified: $TAG_VERSION"
 
   build:
