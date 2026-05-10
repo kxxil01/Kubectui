@@ -3246,6 +3246,15 @@ impl WorkbenchState {
         })
     }
 
+    pub fn workload_logs_session_id(&self, resource: &ResourceRef) -> Option<u64> {
+        self.tabs.iter().find_map(|tab| match &tab.state {
+            WorkbenchTabState::WorkloadLogs(logs_tab) if &logs_tab.resource == resource => {
+                Some(logs_tab.session_id)
+            }
+            _ => None,
+        })
+    }
+
     pub fn has_tab(&self, key: &WorkbenchTabKey) -> bool {
         self.tabs.iter().any(|tab| tab.state.key() == *key)
     }
@@ -4936,6 +4945,23 @@ mod tests {
 
         assert_eq!(state.exec_session_id(&pod("pod-0")), Some(41));
         assert_eq!(state.exec_session_id(&pod("pod-1")), None);
+    }
+
+    #[test]
+    fn workload_logs_session_id_returns_matching_tab_session() {
+        let mut state = WorkbenchState::default();
+        let resource = ResourceRef::Deployment("api".into(), "prod".into());
+        state.open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            resource.clone(),
+            42,
+        )));
+
+        assert_eq!(state.workload_logs_session_id(&resource), Some(42));
+        assert_eq!(
+            state
+                .workload_logs_session_id(&ResourceRef::Deployment("worker".into(), "prod".into())),
+            None
+        );
     }
 
     #[test]
