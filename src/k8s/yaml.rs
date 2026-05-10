@@ -19,6 +19,7 @@ use crate::time::format_rfc3339;
 pub const MAX_YAML_BYTES: usize = 10 * 1024;
 
 const MAX_APPLY_YAML_DOCUMENTS: usize = 64;
+const MAX_APPLY_YAML_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct ManifestMeta {
@@ -240,6 +241,12 @@ fn parse_manifest_headers(yaml_str: &str) -> Result<Vec<ManifestHeader>> {
 }
 
 fn parse_manifest_document_values(yaml_str: &str) -> Result<Vec<serde_yaml::Value>> {
+    if yaml_str.len() > MAX_APPLY_YAML_BYTES {
+        return Err(anyhow!(
+            "manifest apply is limited to {MAX_APPLY_YAML_BYTES} bytes"
+        ));
+    }
+
     let mut documents = Vec::new();
     for document in serde_yaml::Deserializer::from_str(yaml_str) {
         let value = serde_yaml::Value::deserialize(document).context("invalid YAML document")?;
@@ -1110,6 +1117,21 @@ metadata:
         assert!(
             err.to_string()
                 .contains("manifest apply is limited to 64 documents")
+        );
+    }
+
+    #[test]
+    fn manifest_document_parser_rejects_oversized_payload_before_parse() {
+        let yaml = format!(
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: huge\n  namespace: default\ndata:\n  payload: {}\n",
+            "x".repeat(MAX_APPLY_YAML_BYTES)
+        );
+
+        let err = parse_manifest_document_values(&yaml).expect_err("byte cap");
+
+        assert!(
+            err.to_string()
+                .contains("manifest apply is limited to 1048576 bytes")
         );
     }
 
