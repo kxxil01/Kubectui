@@ -17,7 +17,7 @@ use crate::{
     projects::{compute_projects, filtered_project_indices},
     state::{
         ClusterSnapshot,
-        issues::{compute_issues, filtered_issue_indices},
+        issues::{ClusterIssueSource, compute_issues, filtered_issue_indices_by_source},
         vulnerabilities::{compute_vulnerability_findings, filtered_vulnerability_indices},
     },
     time::{AppTimestamp, age_seconds_since, now_unix_seconds},
@@ -597,19 +597,9 @@ pub fn filtered_indices_for_view(
         AppView::Issues | AppView::HealthReport => {
             let issues = compute_issues(snapshot);
             let trimmed = query.trim();
-            if view == AppView::HealthReport {
-                issues
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, issue)| {
-                        (issue.source == crate::state::issues::ClusterIssueSource::Sanitizer
-                            && issue.matches_query(trimmed))
-                        .then_some(idx)
-                    })
-                    .collect()
-            } else {
-                filtered_issue_indices(&issues, trimmed)
-            }
+            let source_filter =
+                (view == AppView::HealthReport).then_some(ClusterIssueSource::Sanitizer);
+            filtered_issue_indices_by_source(&issues, trimmed, source_filter)
         }
         AppView::Nodes => filtered_node_indices(&snapshot.nodes, query, workload_sort),
         AppView::Pods => filtered_pod_indices(&snapshot.pods, query, pod_sort),
