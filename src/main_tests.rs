@@ -14,8 +14,8 @@ use super::{
     prepare_resource_target, preserve_detail_selection_identity,
     preserve_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
     refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
-    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
-    should_animate_loading_spinner, should_include_flux_in_auto_refresh,
+    run_extension_command, selected_extension_crd, selected_flux_reconcile_resource,
+    selected_resource, should_animate_loading_spinner, should_include_flux_in_auto_refresh,
     should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
     should_request_periodic_redraw, stop_port_forward_sessions,
     strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
@@ -61,8 +61,8 @@ use kubectui::{
         node_debug_dialog::NodeDebugDialogState,
     },
     workbench::{
-        DecodedSecretTabState, PodLogsTabState, ResourceYamlTabState, RolloutTabState,
-        WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
+        DecodedSecretTabState, MAX_EXTENSION_OUTPUT_LINES, PodLogsTabState, ResourceYamlTabState,
+        RolloutTabState, WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
     },
 };
 use ratatui::layout::Rect;
@@ -898,7 +898,7 @@ fn truncate_ai_block_respects_character_limit() {
 
 #[test]
 fn extension_command_timeout_kills_hung_background_command() {
-    let result = super::run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
+    let result = run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
         program: "sh".into(),
         args: vec!["-c".into(), "sleep 5".into()],
         cwd: None,
@@ -918,7 +918,7 @@ fn extension_command_timeout_kills_hung_background_command() {
 
 #[test]
 fn extension_command_timeout_preserves_completed_output() {
-    let result = super::run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
+    let result = run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
         program: "sh".into(),
         args: vec!["-c".into(), "printf ready; printf warn >&2".into()],
         cwd: Some(PathBuf::from(".")),
@@ -931,6 +931,49 @@ fn extension_command_timeout_preserves_completed_output() {
     assert_eq!(result.exit_code, Some(0));
     assert_eq!(result.lines, vec!["ready", "stderr: warn"]);
     assert_eq!(result.error, None);
+}
+
+#[test]
+fn extension_command_output_is_bounded_before_reaching_ui_tab() {
+    let result = run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
+        program: "sh".into(),
+        args: vec![
+            "-c".into(),
+            format!(
+                "i=0; while [ $i -lt {} ]; do echo line-$i; i=$((i + 1)); done",
+                MAX_EXTENSION_OUTPUT_LINES + 3
+            ),
+        ],
+        cwd: Some(PathBuf::from(".")),
+        env: BTreeMap::new(),
+        timeout: Duration::from_secs(5),
+        preview: "sh -c many-lines".into(),
+    });
+
+    assert!(result.success);
+    assert_eq!(result.lines.len(), MAX_EXTENSION_OUTPUT_LINES + 1);
+    assert_eq!(result.lines[0], "line-0");
+    assert_eq!(
+        result.lines.last().map(String::as_str),
+        Some("... truncated 3 additional lines")
+    );
+}
+
+#[test]
+fn extension_command_output_truncates_single_huge_line() {
+    let result = run_extension_command(&kubectui::extensions::PreparedExtensionCommand {
+        program: "sh".into(),
+        args: vec!["-c".into(), "head -c 8192 /dev/zero | tr '\\0' x".into()],
+        cwd: Some(PathBuf::from(".")),
+        env: BTreeMap::new(),
+        timeout: Duration::from_secs(5),
+        preview: "sh -c huge-line".into(),
+    });
+
+    assert!(result.success);
+    assert_eq!(result.lines.len(), 1);
+    assert!(result.lines[0].ends_with(" ... [line truncated]"));
+    assert!(result.lines[0].len() < 4200);
 }
 
 #[test]

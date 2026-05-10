@@ -27,7 +27,7 @@ use selection_helpers::*;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::OpenOptions,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
     thread,
@@ -85,7 +85,7 @@ use kubectui::{
         watch::{WatchPayload, WatchUpdate, WatchedResource},
     },
     ui,
-    workbench::{RunbookTabState, WorkbenchTabKey, WorkbenchTabState},
+    workbench::{MAX_EXTENSION_OUTPUT_LINES, RunbookTabState, WorkbenchTabKey, WorkbenchTabState},
 };
 
 use terminal::{pick_context_at_startup, restore_terminal, setup_terminal};
@@ -1111,17 +1111,107 @@ fn extension_context_for_resource(
     )
 }
 
-fn build_extension_output_lines(output: &std::process::Output) -> Vec<String> {
-    let mut lines = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>();
-    lines.extend(
-        String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .map(|line| format!("stderr: {line}")),
-    );
+const MAX_EXTENSION_OUTPUT_LINE_BYTES: usize = 4 * 1024;
+
+#[derive(Debug)]
+struct BoundedCommandOutput {
+    lines: Vec<String>,
+    status: std::process::ExitStatus,
+}
+
+#[derive(Debug, Default)]
+struct BoundedExtensionOutput {
+    lines: Vec<String>,
+    omitted_lines: usize,
+}
+
+fn record_extension_output_line(
+    output: &mut BoundedExtensionOutput,
+    prefix: Option<&str>,
+    bytes: &[u8],
+    truncated: bool,
+) {
+    if output.lines.len() >= MAX_EXTENSION_OUTPUT_LINES {
+        output.omitted_lines = output.omitted_lines.saturating_add(1);
+        return;
+    }
+
+    let mut line = prefix.unwrap_or_default().to_string();
+    line.push_str(&String::from_utf8_lossy(bytes));
+    if truncated {
+        line.push_str(" ... [line truncated]");
+    }
+    output.lines.push(line);
+}
+
+fn bounded_extension_output_lines(output: BoundedExtensionOutput) -> Vec<String> {
+    let mut lines = output.lines;
+    if output.omitted_lines > 0 {
+        lines.push(format!(
+            "... truncated {} additional lines",
+            output.omitted_lines
+        ));
+    }
     lines
+}
+
+fn spawn_extension_output_reader<R: Read + Send + 'static>(
+    mut reader: R,
+    prefix: Option<&'static str>,
+) -> thread::JoinHandle<BoundedExtensionOutput> {
+    thread::spawn(move || {
+        let mut output = BoundedExtensionOutput::default();
+        let mut buffer = [0u8; 8192];
+        let mut line = Vec::new();
+        let mut line_truncated = false;
+
+        loop {
+            let read = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(_) => break,
+            };
+
+            for byte in &buffer[..read] {
+                if *byte == b'\n' {
+                    record_extension_output_line(&mut output, prefix, &line, line_truncated);
+                    line.clear();
+                    line_truncated = false;
+                } else if line.len() < MAX_EXTENSION_OUTPUT_LINE_BYTES {
+                    line.push(*byte);
+                } else {
+                    line_truncated = true;
+                }
+            }
+        }
+
+        if !line.is_empty() || line_truncated {
+            record_extension_output_line(&mut output, prefix, &line, line_truncated);
+        }
+        output
+    })
+}
+
+fn collect_extension_reader_output(
+    readers: Vec<thread::JoinHandle<BoundedExtensionOutput>>,
+) -> Result<Vec<String>, String> {
+    let mut combined = BoundedExtensionOutput::default();
+    for reader in readers {
+        let stream_output = reader
+            .join()
+            .map_err(|_| "failed to collect extension output".to_string())?;
+        for line in stream_output.lines {
+            if combined.lines.len() >= MAX_EXTENSION_OUTPUT_LINES {
+                combined.omitted_lines = combined.omitted_lines.saturating_add(1);
+            } else {
+                combined.lines.push(line);
+            }
+        }
+        combined.omitted_lines = combined
+            .omitted_lines
+            .saturating_add(stream_output.omitted_lines);
+    }
+    Ok(bounded_extension_output_lines(combined))
 }
 
 fn run_extension_command(prepared: &PreparedExtensionCommand) -> ExtensionCommandRunResult {
@@ -1137,7 +1227,7 @@ fn run_extension_command(prepared: &PreparedExtensionCommand) -> ExtensionComman
 
     match run_extension_command_with_timeout(command, prepared.timeout) {
         Ok(output) => ExtensionCommandRunResult {
-            lines: build_extension_output_lines(&output),
+            lines: output.lines,
             success: output.status.success(),
             exit_code: output.status.code(),
             error: (!output.status.success()).then(|| {
@@ -1160,10 +1250,17 @@ fn run_extension_command(prepared: &PreparedExtensionCommand) -> ExtensionComman
 fn run_extension_command_with_timeout(
     mut command: std::process::Command,
     timeout: Duration,
-) -> Result<std::process::Output, String> {
+) -> Result<BoundedCommandOutput, String> {
     let mut child = command
         .spawn()
         .map_err(|err| format!("failed to launch extension command: {err}"))?;
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        readers.push(spawn_extension_output_reader(stdout, None));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        readers.push(spawn_extension_output_reader(stderr, Some("stderr: ")));
+    }
     let deadline = Instant::now() + timeout;
 
     loop {
@@ -1171,14 +1268,16 @@ fn run_extension_command_with_timeout(
             .try_wait()
             .map_err(|err| format!("failed to poll extension command: {err}"))?
         {
-            Some(_) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|err| format!("failed to collect extension output: {err}"));
+            Some(status) => {
+                let lines = collect_extension_reader_output(readers)?;
+                return Ok(BoundedCommandOutput { lines, status });
             }
             None if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
+                for reader in readers {
+                    let _ = reader.join();
+                }
                 return Err(format!("extension timed out after {}s", timeout.as_secs()));
             }
             None => thread::sleep(Duration::from_millis(50)),
