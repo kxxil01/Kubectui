@@ -1545,6 +1545,7 @@ const AI_LIVE_LOG_STREAM_LIMIT: usize = 3;
 const AI_LIVE_LOG_TAIL_LINES: i64 = 20;
 const AI_LIVE_LOG_TIMEOUT_SECS: u64 = 6;
 const AI_YAML_MAX_CHARS: usize = 2_000;
+const AI_YAML_PARSE_MAX_BYTES: usize = 64 * 1024;
 
 fn cap_ai_lines(lines: Vec<String>, max_items: usize, max_total_chars: usize) -> Vec<String> {
     let mut result = Vec::new();
@@ -1897,6 +1898,11 @@ fn sanitize_ai_annotation(key: &str, value: &str) -> String {
 fn sanitize_ai_yaml_excerpt(resource: &ResourceRef, yaml: &str) -> Option<String> {
     if resource.kind().eq_ignore_ascii_case("secret") {
         return Some("# redacted: Secret manifests are not sent to AI".to_string());
+    }
+    if yaml.len() > AI_YAML_PARSE_MAX_BYTES {
+        return Some(format!(
+            "# unavailable: YAML exceeds {AI_YAML_PARSE_MAX_BYTES} byte AI parse limit"
+        ));
     }
 
     let mut value = serde_yaml::from_str::<serde_yaml::Value>(yaml).ok()?;
