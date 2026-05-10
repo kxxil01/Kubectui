@@ -896,6 +896,16 @@ impl RefreshScope {
             | Self::HELM.0
             | Self::EXTENSIONS.0,
     );
+    pub const ISSUE_DIAGNOSTICS: Self = Self(
+        Self::CORE_OVERVIEW.0
+            | Self::NETWORK.0
+            | Self::CONFIG.0
+            | Self::STORAGE.0
+            | Self::SECURITY.0
+            | Self::FLUX.0,
+    );
+    pub const SANITIZER_DIAGNOSTICS: Self =
+        Self(Self::CORE_OVERVIEW.0 | Self::CONFIG.0 | Self::SECURITY.0);
     pub const DEFAULT: Self = Self(
         Self::CORE_OVERVIEW.0
             | Self::METRICS.0
@@ -1008,10 +1018,8 @@ impl GlobalState {
                 .union(RefreshScope::NETWORK)
                 .union(RefreshScope::SECURITY),
             AppView::Bookmarks | AppView::PortForwarding => RefreshScope::NONE,
-            AppView::Issues | AppView::HealthReport => RefreshScope::CORE_OVERVIEW
-                .union(RefreshScope::LEGACY_SECONDARY)
-                .union(RefreshScope::SECURITY)
-                .union(RefreshScope::FLUX),
+            AppView::Issues => RefreshScope::ISSUE_DIAGNOSTICS,
+            AppView::HealthReport => RefreshScope::SANITIZER_DIAGNOSTICS,
             AppView::Vulnerabilities => RefreshScope::SECURITY,
             AppView::Nodes => RefreshScope::NODES,
             AppView::Namespaces => RefreshScope::NAMESPACES,
