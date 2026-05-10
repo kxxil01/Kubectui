@@ -427,6 +427,20 @@ pub fn preserve_selection_identity_after_snapshot_change(
     previous: &ClusterSnapshot,
     current: &ClusterSnapshot,
 ) -> bool {
+    if let Some(next_idx) = computed_view_row_selected_index(
+        app.view(),
+        previous,
+        current,
+        app.selected_idx(),
+        app.search_query(),
+    ) {
+        let selection_changed = app.selected_idx != next_idx;
+        app.selected_idx = next_idx;
+        let status_cleared = clear_selection_search_fallback_status(app);
+        let detail_changed = close_stale_detail_after_selection_change(app, current);
+        return selection_changed || detail_changed || status_cleared;
+    }
+
     let Some(selected) = selected_resource(app, previous) else {
         return clear_selection_search_fallback_status_if_results_visible(app, current);
     };
@@ -470,6 +484,86 @@ pub fn preserve_selection_identity_after_snapshot_change(
     let status_cleared = clear_selection_search_fallback_status(app);
     let detail_changed = close_stale_detail_after_selection_change(app, current);
     selection_changed || detail_changed || status_cleared
+}
+
+fn computed_view_row_selected_index(
+    view: AppView,
+    previous: &ClusterSnapshot,
+    current: &ClusterSnapshot,
+    selected_idx: usize,
+    query: &str,
+) -> Option<usize> {
+    match view {
+        AppView::Vulnerabilities => {
+            let previous_findings =
+                kubectui::state::vulnerabilities::compute_vulnerability_findings(previous);
+            let previous_indices = kubectui::state::vulnerabilities::filtered_vulnerability_indices(
+                &previous_findings,
+                query,
+            );
+            let selected =
+                previous_findings.get(filtered_index(&previous_indices, selected_idx)?)?;
+
+            let current_findings =
+                kubectui::state::vulnerabilities::compute_vulnerability_findings(current);
+            let current_indices = kubectui::state::vulnerabilities::filtered_vulnerability_indices(
+                &current_findings,
+                query,
+            );
+            current_indices
+                .iter()
+                .position(|idx| current_findings.get(*idx) == Some(selected))
+        }
+        AppView::Issues | AppView::HealthReport => {
+            let previous_issues = kubectui::state::issues::compute_issues(previous);
+            let previous_indices = filtered_issue_indices_for_view(view, &previous_issues, query);
+            let selected = previous_issues.get(filtered_index(&previous_indices, selected_idx)?)?;
+
+            let current_issues = kubectui::state::issues::compute_issues(current);
+            let current_indices = filtered_issue_indices_for_view(view, &current_issues, query);
+            current_indices.iter().position(|idx| {
+                current_issues
+                    .get(*idx)
+                    .is_some_and(|issue| cluster_issue_matches(issue, selected))
+            })
+        }
+        _ => None,
+    }
+}
+
+fn filtered_issue_indices_for_view(
+    view: AppView,
+    issues: &[kubectui::state::issues::ClusterIssue],
+    query: &str,
+) -> Vec<usize> {
+    let query = query.trim();
+    if view == AppView::HealthReport {
+        issues
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, issue)| {
+                (issue.source == kubectui::state::issues::ClusterIssueSource::Sanitizer
+                    && issue.matches_query(query))
+                .then_some(idx)
+            })
+            .collect()
+    } else {
+        kubectui::state::issues::filtered_issue_indices(issues, query)
+    }
+}
+
+fn cluster_issue_matches(
+    left: &kubectui::state::issues::ClusterIssue,
+    right: &kubectui::state::issues::ClusterIssue,
+) -> bool {
+    left.source == right.source
+        && left.severity == right.severity
+        && left.category == right.category
+        && left.resource_kind == right.resource_kind
+        && left.resource_name == right.resource_name
+        && left.namespace == right.namespace
+        && left.message == right.message
+        && left.resource_ref == right.resource_ref
 }
 
 fn close_command_palette_if_selection_changed(
@@ -1001,8 +1095,8 @@ mod tests {
     use kubectui::{
         app::{AppState, AppView, ResourceRef},
         authorization::DetailActionAuthorization,
-        k8s::dtos::{DeploymentInfo, FluxResourceInfo, PodInfo},
-        state::ClusterSnapshot,
+        k8s::dtos::{DeploymentInfo, FluxResourceInfo, OwnerRefInfo, PodInfo},
+        state::{ClusterSnapshot, issues::IssueCategory},
     };
 
     #[test]
@@ -1071,6 +1165,31 @@ mod tests {
         assert_eq!(selected_resource(&app, &current), Some(target));
     }
 
+    #[test]
+    fn preserve_selection_identity_keeps_issue_row_for_same_resource_after_snapshot_change() {
+        let previous = sanitizer_issue_snapshot(1);
+        let current = sanitizer_issue_snapshot(2);
+        let previous_issues = kubectui::state::issues::compute_issues(&previous);
+        let mut app = AppState {
+            view: AppView::HealthReport,
+            selected_idx: previous_issues
+                .iter()
+                .position(|issue| issue.category == IssueCategory::MissingProbes)
+                .expect("missing probes issue should exist"),
+            ..AppState::default()
+        };
+
+        let changed =
+            preserve_selection_identity_after_snapshot_change(&mut app, &previous, &current);
+        let current_issues = kubectui::state::issues::compute_issues(&current);
+
+        assert!(!changed);
+        assert_eq!(
+            current_issues[app.selected_idx()].category,
+            IssueCategory::MissingProbes
+        );
+    }
+
     fn project_snapshot(
         snapshot_version: u64,
         deployments: &[(&str, &str, &str)],
@@ -1089,6 +1208,27 @@ mod tests {
                     ..DeploymentInfo::default()
                 })
                 .collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn sanitizer_issue_snapshot(snapshot_version: u64) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version,
+            pods: vec![PodInfo {
+                name: "lint-me".to_string(),
+                namespace: "default".to_string(),
+                status: "Running".to_string(),
+                container_images: vec!["repo/app:1.0.0".to_string()],
+                missing_liveness_probes: 1,
+                missing_readiness_probes: 1,
+                owner_references: vec![OwnerRefInfo {
+                    kind: "ReplicaSet".to_string(),
+                    name: "lint-me-rs".to_string(),
+                    uid: "uid-2".to_string(),
+                }],
+                ..PodInfo::default()
+            }],
             ..ClusterSnapshot::default()
         }
     }
