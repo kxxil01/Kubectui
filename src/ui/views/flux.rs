@@ -139,7 +139,7 @@ impl FluxMode {
 struct FluxFormattedCacheKey {
     view: AppView,
     snapshot_version: u64,
-    minute_bucket: i64,
+    freshness_bucket: i64,
     data_fingerprint: u64,
 }
 
@@ -248,7 +248,7 @@ fn cached_formatted_rows(
     let key = FluxFormattedCacheKey {
         view,
         snapshot_version: cluster.snapshot_version,
-        minute_bucket: now_unix.div_euclid(60),
+        freshness_bucket: now_unix,
         data_fingerprint: data_fingerprint(&cluster.flux_resources, cluster.snapshot_version),
     };
 
@@ -659,5 +659,35 @@ mod tests {
         let filtered =
             filtered_flux_indices_for_view(AppView::FluxCDKustomizations, &snapshot, "", None);
         assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn flux_formatted_cache_refreshes_age_each_second() {
+        let snapshot = ClusterSnapshot {
+            snapshot_version: 42,
+            flux_resources: vec![FluxResourceInfo {
+                name: "ks-demo".to_string(),
+                namespace: Some("demo".to_string()),
+                group: "kustomize.toolkit.fluxcd.io".to_string(),
+                kind: "Kustomization".to_string(),
+                created_at: crate::time::AppTimestamp::from_second(958).ok(),
+                last_reconcile_time: crate::time::AppTimestamp::from_second(990).ok(),
+                ..FluxResourceInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        };
+
+        if let Ok(mut cache) = FLUX_FORMATTED_CACHE.lock() {
+            cache.map.clear();
+            cache.order.clear();
+        }
+
+        let first = cached_formatted_rows(AppView::FluxCDKustomizations, &snapshot, 1_000);
+        let second = cached_formatted_rows(AppView::FluxCDKustomizations, &snapshot, 1_001);
+
+        assert_eq!(first[0].age, "42s");
+        assert_eq!(first[0].last_reconcile, "10s");
+        assert_eq!(second[0].age, "43s");
+        assert_eq!(second[0].last_reconcile, "11s");
     }
 }
