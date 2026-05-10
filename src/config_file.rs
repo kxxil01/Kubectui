@@ -8,6 +8,7 @@ use std::{
 
 pub(crate) const APP_CONFIG_MAX_BYTES: u64 = 2 * 1024 * 1024;
 pub(crate) const EXTENSIONS_CONFIG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const HELM_REPOSITORY_CONFIG_MAX_BYTES: u64 = 2 * 1024 * 1024;
 pub(crate) const RUNBOOKS_CONFIG_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 pub(crate) fn read_bounded_config_file(
