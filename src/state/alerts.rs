@@ -431,7 +431,7 @@ pub(crate) fn parse_millicores(raw: &str) -> u64 {
         // Decimal cores (e.g. "0.5" → 500m, "1.25" → 1250m)
         raw.parse::<f64>().map(|v| (v * 1000.0) as u64).unwrap_or(0)
     } else {
-        raw.parse::<u64>().unwrap_or(0) * 1000
+        raw.parse::<u64>().unwrap_or(0).saturating_mul(1000)
     }
 }
 
@@ -443,10 +443,14 @@ pub(crate) fn parse_mib(raw: &str) -> u64 {
         return v.parse().unwrap_or(0);
     }
     if let Some(v) = raw.strip_suffix("Gi") {
-        return v.parse::<u64>().unwrap_or(0) * 1024;
+        return v.parse::<u64>().unwrap_or(0).saturating_mul(1024);
     }
     if let Some(v) = raw.strip_suffix("Ti") {
-        return v.parse::<u64>().unwrap_or(0) * 1024 * 1024;
+        return v
+            .parse::<u64>()
+            .unwrap_or(0)
+            .saturating_mul(1024)
+            .saturating_mul(1024);
     }
     raw.parse::<u64>().unwrap_or(0) / (1024 * 1024)
 }
@@ -523,17 +527,25 @@ pub fn compute_cluster_resource_summary(snapshot: &ClusterSnapshot) -> ClusterRe
     // Sum allocatable capacity from nodes
     for node in &snapshot.nodes {
         if let Some(ref cpu) = node.cpu_allocatable {
-            summary.total_cpu_allocatable_m += parse_millicores(cpu);
+            summary.total_cpu_allocatable_m = summary
+                .total_cpu_allocatable_m
+                .saturating_add(parse_millicores(cpu));
         }
         if let Some(ref mem) = node.memory_allocatable {
-            summary.total_mem_allocatable_mib += parse_mib(mem);
+            summary.total_mem_allocatable_mib = summary
+                .total_mem_allocatable_mib
+                .saturating_add(parse_mib(mem));
         }
     }
 
     // Sum actual usage from node metrics
     for nm in &snapshot.node_metrics {
-        summary.total_cpu_used_m += parse_millicores(&nm.cpu);
-        summary.total_mem_used_mib += parse_mib(&nm.memory);
+        summary.total_cpu_used_m = summary
+            .total_cpu_used_m
+            .saturating_add(parse_millicores(&nm.cpu));
+        summary.total_mem_used_mib = summary
+            .total_mem_used_mib
+            .saturating_add(parse_mib(&nm.memory));
     }
 
     // Utilization percentages
@@ -557,20 +569,20 @@ pub fn compute_cluster_resource_summary(snapshot: &ClusterSnapshot) -> ClusterRe
         summary.total_running_pods += 1;
 
         if let Some(ref req) = pod.cpu_request {
-            total_cpu_req += parse_millicores(req);
+            total_cpu_req = total_cpu_req.saturating_add(parse_millicores(req));
         } else {
             summary.pods_missing_cpu_request += 1;
         }
         if let Some(ref req) = pod.memory_request {
-            total_mem_req += parse_mib(req);
+            total_mem_req = total_mem_req.saturating_add(parse_mib(req));
         } else {
             summary.pods_missing_mem_request += 1;
         }
         if let Some(ref lim) = pod.cpu_limit {
-            total_cpu_lim += parse_millicores(lim);
+            total_cpu_lim = total_cpu_lim.saturating_add(parse_millicores(lim));
         }
         if let Some(ref lim) = pod.memory_limit {
-            total_mem_lim += parse_mib(lim);
+            total_mem_lim = total_mem_lim.saturating_add(parse_mib(lim));
         }
         if pod.cpu_limit.is_none() || pod.memory_limit.is_none() {
             summary.pods_missing_any_limit += 1;
@@ -611,7 +623,10 @@ pub fn compute_top_pod_consumers(
         .iter()
         .map(|pm| {
             let (cpu, mem) = pm.containers.iter().fold((0u64, 0u64), |(ac, am), c| {
-                (ac + parse_millicores(&c.cpu), am + parse_mib(&c.memory))
+                (
+                    ac.saturating_add(parse_millicores(&c.cpu)),
+                    am.saturating_add(parse_mib(&c.memory)),
+                )
             });
             PodConsumerSummary {
                 name: pm.name.clone(),
@@ -693,10 +708,10 @@ pub fn compute_namespace_utilization(
                 });
         entry.pod_count += 1;
         if let Some(ref req) = pod.cpu_request {
-            entry.cpu_request_m += parse_millicores(req);
+            entry.cpu_request_m = entry.cpu_request_m.saturating_add(parse_millicores(req));
         }
         if let Some(ref req) = pod.memory_request {
-            entry.mem_request_mib += parse_mib(req);
+            entry.mem_request_mib = entry.mem_request_mib.saturating_add(parse_mib(req));
         }
     }
 
@@ -710,8 +725,8 @@ pub fn compute_namespace_utilization(
                     ..Default::default()
                 });
         for c in &pm.containers {
-            entry.cpu_usage_m += parse_millicores(&c.cpu);
-            entry.mem_usage_mib += parse_mib(&c.memory);
+            entry.cpu_usage_m = entry.cpu_usage_m.saturating_add(parse_millicores(&c.cpu));
+            entry.mem_usage_mib = entry.mem_usage_mib.saturating_add(parse_mib(&c.memory));
         }
     }
 
@@ -1733,5 +1748,12 @@ mod tests {
         assert_eq!(parse_millicores("0m"), 0);
         assert_eq!(parse_millicores("0.0"), 0);
         assert_eq!(parse_millicores("-100m"), 0); // negative → unwrap_or(0)
+    }
+
+    #[test]
+    fn parse_resource_quantities_saturate_huge_values() {
+        assert_eq!(parse_millicores(&u64::MAX.to_string()), u64::MAX);
+        assert_eq!(parse_mib(&format!("{}Gi", u64::MAX)), u64::MAX);
+        assert_eq!(parse_mib(&format!("{}Ti", u64::MAX)), u64::MAX);
     }
 }
