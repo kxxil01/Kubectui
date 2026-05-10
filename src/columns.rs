@@ -610,17 +610,14 @@ mod tests {
 
     #[test]
     fn age_column_is_last_where_registry_has_age() {
-        for (view, columns) in [
-            (AppView::Pods, POD_COLUMNS),
-            (AppView::Deployments, DEPLOYMENT_COLUMNS),
-            (AppView::Nodes, NODE_COLUMNS),
-            (AppView::Services, SERVICE_COLUMNS),
-            (AppView::StatefulSets, STATEFULSET_COLUMNS),
-            (AppView::DaemonSets, DAEMONSET_COLUMNS),
-            (AppView::ReplicaSets, REPLICASET_COLUMNS),
-            (AppView::Jobs, JOB_COLUMNS),
-            (AppView::CronJobs, CRONJOB_COLUMNS),
-        ] {
+        for view in AppView::tabs() {
+            let Some(columns) = columns_for_view(*view) else {
+                continue;
+            };
+            if !columns.iter().any(|column| column.id == "age") {
+                continue;
+            }
+
             let visible = resolve_columns(columns, &ViewPreferences::default());
             assert_eq!(
                 visible.last().map(|column| column.id),
@@ -653,6 +650,30 @@ mod tests {
         assert!(
             ids.iter().position(|id| *id == "mem_usage") < ids.iter().position(|id| *id == "age")
         );
+    }
+
+    #[test]
+    fn registered_tables_keep_an_elastic_width() {
+        for view in AppView::tabs() {
+            let Some(columns) = columns_for_view(*view) else {
+                continue;
+            };
+
+            let visible = resolve_columns(columns, &ViewPreferences::default());
+            let constraints = visible_constraints_for_area(*view, &visible, 160);
+
+            assert!(
+                constraints.iter().any(is_elastic_constraint),
+                "{view:?} should keep at least one elastic column so tables fill the frame"
+            );
+        }
+    }
+
+    fn is_elastic_constraint(constraint: &Constraint) -> bool {
+        matches!(
+            constraint,
+            Constraint::Min(_) | Constraint::Percentage(_) | Constraint::Ratio(_, _)
+        )
     }
 
     #[test]
