@@ -305,6 +305,7 @@ fn mouse_content_first_click_records_global_list_selection_without_opening() {
         &ClusterSnapshot::default(),
         MouseEventKind::Down(MouseButton::Left),
         AppAction::None,
+        Some(MouseContentTarget::Selection { total: 2 }),
         Some(1),
         false,
     );
@@ -353,6 +354,7 @@ fn mouse_content_second_click_opens_global_list_selection() {
         &snapshot,
         MouseEventKind::Down(MouseButton::Left),
         AppAction::None,
+        Some(MouseContentTarget::Selection { total: 2 }),
         Some(1),
         can_activate,
     );
@@ -363,6 +365,70 @@ fn mouse_content_second_click_opens_global_list_selection() {
             "worker".to_string(),
             "default".to_string()
         ))
+    );
+}
+
+#[test]
+fn mouse_content_second_click_opens_extension_instance_selection() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Extensions,
+        selected_idx: 0,
+        extension_in_instances: true,
+        extension_selected_crd: Some("widgets.demo.io".to_string()),
+        extension_instance_cursor: 1,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Extensions,
+            row: 1,
+        }),
+        ..AppState::default()
+    };
+    let snapshot = ClusterSnapshot {
+        custom_resource_definitions: vec![CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".to_string(),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 2,
+        }],
+        ..ClusterSnapshot::default()
+    };
+    app.extension_instances = vec![
+        CustomResourceInfo {
+            name: "alpha".to_string(),
+            namespace: Some("default".to_string()),
+            ..CustomResourceInfo::default()
+        },
+        CustomResourceInfo {
+            name: "beta".to_string(),
+            namespace: Some("default".to_string()),
+            ..CustomResourceInfo::default()
+        },
+    ];
+
+    let can_activate = super::mouse_can_activate_clicked_content(&app, Some(1));
+    let action = super::finish_mouse_content_click(
+        &mut app,
+        &snapshot,
+        MouseEventKind::Down(MouseButton::Left),
+        AppAction::None,
+        Some(MouseContentTarget::ExtensionInstances { total: 2 }),
+        Some(1),
+        can_activate,
+    );
+
+    assert_eq!(
+        action,
+        AppAction::OpenDetail(ResourceRef::CustomResource {
+            name: "beta".to_string(),
+            namespace: Some("default".to_string()),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+        })
     );
 }
 

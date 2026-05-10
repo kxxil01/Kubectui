@@ -187,6 +187,7 @@ Press `Enter` on a resource, then:
 | `R` | Rollout restart / Flux reconcile | Workloads / FluxCD |
 | `O` | Rollout control center | Deployments, StatefulSets, DaemonSets |
 | `h` | Helm history / rollback | Helm releases |
+| `v` | Events timeline | Event-capable resources |
 | `D` | Drift / drain | Most resources / Nodes |
 | `g` | Debug shell | Pods / Nodes |
 | `C` | Reachability check | Pods |
