@@ -2,6 +2,7 @@
 set -euo pipefail
 
 CARGO_TOML="Cargo.toml"
+README="README.md"
 
 usage() {
   cat <<'USAGE'
@@ -254,9 +255,11 @@ apply_version_and_commit() {
 
   sed -i.bak "s/^version = \".*\"/version = \"${new_version}\"/" "$CARGO_TOML"
   rm -f "${CARGO_TOML}.bak"
+  sed -i.bak "s/^Current release: \`.*\`\./Current release: \`${new_version}\`\./" "$README"
+  rm -f "${README}.bak"
   cargo check --quiet
 
-  git add "$CARGO_TOML" Cargo.lock
+  git add "$CARGO_TOML" Cargo.lock "$README"
   git diff --cached --quiet && die "version update produced no commit diff"
   git commit -m "chore: release ${tag}"
 }
