@@ -375,6 +375,7 @@ fn run_process_with_timeout(
     timeout: Duration,
 ) -> std::io::Result<HelmProcessOutput> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    crate::process::configure_process_group(command);
     let mut child = command.spawn()?;
     let stdout = child
         .stdout
@@ -401,8 +402,7 @@ fn run_process_with_timeout(
             });
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            crate::process::terminate_process_group(&mut child);
             let _ = stdout.join();
             let _ = stderr.join();
             return Err(std::io::Error::new(
