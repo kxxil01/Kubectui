@@ -172,7 +172,7 @@ fn cached_replication_controller_derived(
             cluster.snapshot_version,
         ),
         variant,
-        freshness_bucket: 0,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     cached_derived_rows(&REPLICATION_CONTROLLER_DERIVED_CACHE, key, || {
