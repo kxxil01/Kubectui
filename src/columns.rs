@@ -362,6 +362,7 @@ pub fn columns_for_view(view: AppView) -> Option<&'static [ColumnDef]> {
 /// 1. Include non-hideable columns and default-visible columns unless hidden
 /// 2. Include default-hidden columns only when explicitly listed in `shown_columns`
 /// 3. Apply `column_order` if set (unknown IDs skipped, remaining appended)
+/// 4. Pin `age` last when visible so freshness stays in the same table edge slot
 pub fn resolve_columns(registry: &[ColumnDef], prefs: &ViewPreferences) -> Vec<ColumnDef> {
     let mut visible: Vec<ColumnDef> = registry
         .iter()
@@ -387,10 +388,19 @@ pub fn resolve_columns(registry: &[ColumnDef], prefs: &ViewPreferences) -> Vec<C
             }
         }
         ordered.extend(visible);
+        pin_age_column_last(&mut ordered);
         return ordered;
     }
 
+    pin_age_column_last(&mut visible);
     visible
+}
+
+fn pin_age_column_last(columns: &mut Vec<ColumnDef>) {
+    if let Some(pos) = columns.iter().position(|column| column.id == "age") {
+        let age = columns.remove(pos);
+        columns.push(age);
+    }
 }
 
 /// Builds a `Vec<Constraint>` from the resolved visible columns.
@@ -508,7 +518,7 @@ mod tests {
         };
         let visible = resolve_columns(TEST_COLS, &prefs);
         let ids: Vec<&str> = visible.iter().map(|c| c.id).collect();
-        assert_eq!(ids, vec!["age", "name", "namespace", "status"]);
+        assert_eq!(ids, vec!["name", "namespace", "status", "age"]);
     }
 
     #[test]
@@ -519,8 +529,7 @@ mod tests {
         };
         let visible = resolve_columns(TEST_COLS, &prefs);
         let ids: Vec<&str> = visible.iter().map(|c| c.id).collect();
-        // age, name from order, then namespace, status (remaining default-visible)
-        assert_eq!(ids, vec!["age", "name", "namespace", "status"]);
+        assert_eq!(ids, vec!["name", "namespace", "status", "age"]);
     }
 
     #[test]
@@ -538,7 +547,7 @@ mod tests {
         };
         let visible = resolve_columns(TEST_COLS, &prefs);
         let ids: Vec<&str> = visible.iter().map(|c| c.id).collect();
-        assert_eq!(ids, vec!["name", "namespace", "status", "age", "image"]);
+        assert_eq!(ids, vec!["name", "namespace", "status", "image", "age"]);
     }
 
     #[test]
@@ -550,7 +559,7 @@ mod tests {
         };
         let visible = resolve_columns(TEST_COLS, &prefs);
         let ids: Vec<&str> = visible.iter().map(|c| c.id).collect();
-        assert_eq!(ids, vec!["name", "status", "age", "image"]);
+        assert_eq!(ids, vec!["name", "status", "image", "age"]);
     }
 
     #[test]
@@ -619,6 +628,31 @@ mod tests {
                 "{view:?} should keep Age as the final column"
             );
         }
+    }
+
+    #[test]
+    fn age_column_stays_last_with_preferences_and_hidden_columns() {
+        let prefs = ViewPreferences {
+            shown_columns: vec!["cpu_usage".into(), "mem_usage".into()],
+            column_order: Some(vec![
+                "age".into(),
+                "cpu_usage".into(),
+                "name".into(),
+                "namespace".into(),
+            ]),
+            ..Default::default()
+        };
+
+        let visible = resolve_columns(POD_COLUMNS, &prefs);
+        let ids: Vec<&str> = visible.iter().map(|column| column.id).collect();
+
+        assert_eq!(ids.last(), Some(&"age"));
+        assert!(
+            ids.iter().position(|id| *id == "cpu_usage") < ids.iter().position(|id| *id == "age")
+        );
+        assert!(
+            ids.iter().position(|id| *id == "mem_usage") < ids.iter().position(|id| *id == "age")
+        );
     }
 
     #[test]
