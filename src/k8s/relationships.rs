@@ -32,7 +32,7 @@ pub struct RelationNode {
 }
 
 /// How a node relates to the root resource.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationKind {
     Root,
     Owner,

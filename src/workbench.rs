@@ -2391,6 +2391,94 @@ fn default_expanded_relation_tree(
     expanded
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RelationNodeIdentity {
+    Resource(ResourceRef),
+    Label {
+        relation: crate::k8s::relationships::RelationKind,
+        namespace: Option<String>,
+        label: String,
+    },
+}
+
+impl RelationNodeIdentity {
+    fn from_node(node: &crate::k8s::relationships::RelationNode) -> Self {
+        node.resource
+            .clone()
+            .map(Self::Resource)
+            .unwrap_or_else(|| Self::Label {
+                relation: node.relation,
+                namespace: node.namespace.clone(),
+                label: node.label.clone(),
+            })
+    }
+}
+
+fn collect_relation_expansion_state(
+    nodes: &[crate::k8s::relationships::RelationNode],
+    expanded: &std::collections::HashSet<usize>,
+    counter: &mut usize,
+    state: &mut std::collections::HashMap<RelationNodeIdentity, bool>,
+) {
+    for node in nodes {
+        let tree_index = *counter;
+        *counter += 1;
+        if !node.children.is_empty() {
+            state.insert(
+                RelationNodeIdentity::from_node(node),
+                expanded.contains(&tree_index),
+            );
+        }
+        collect_relation_expansion_state(&node.children, expanded, counter, state);
+    }
+}
+
+fn apply_relation_expansion_state(
+    nodes: &[crate::k8s::relationships::RelationNode],
+    previous: &std::collections::HashMap<RelationNodeIdentity, bool>,
+    expanded: &mut std::collections::HashSet<usize>,
+    counter: &mut usize,
+) {
+    for node in nodes {
+        let tree_index = *counter;
+        *counter += 1;
+        if !node.children.is_empty()
+            && let Some(was_expanded) = previous.get(&RelationNodeIdentity::from_node(node))
+        {
+            if *was_expanded {
+                expanded.insert(tree_index);
+            } else {
+                expanded.remove(&tree_index);
+            }
+        }
+        apply_relation_expansion_state(&node.children, previous, expanded, counter);
+    }
+}
+
+fn preserved_expanded_relation_tree(
+    previous_tree: &[crate::k8s::relationships::RelationNode],
+    previous_expanded: &std::collections::HashSet<usize>,
+    next_tree: &[crate::k8s::relationships::RelationNode],
+) -> std::collections::HashSet<usize> {
+    let mut expanded = default_expanded_relation_tree(next_tree);
+    if previous_tree.is_empty() {
+        return expanded;
+    }
+
+    let mut previous = std::collections::HashMap::new();
+    let mut previous_counter = 0usize;
+    collect_relation_expansion_state(
+        previous_tree,
+        previous_expanded,
+        &mut previous_counter,
+        &mut previous,
+    );
+
+    let mut next_counter = 0usize;
+    apply_relation_expansion_state(next_tree, &previous, &mut expanded, &mut next_counter);
+    expanded
+}
+
 fn preserved_relation_cursor(
     previous_tree: &[crate::k8s::relationships::RelationNode],
     previous_expanded: &std::collections::HashSet<usize>,
@@ -2434,7 +2522,7 @@ impl NetworkPolicyTabState {
     }
 
     pub fn apply_analysis(&mut self, analysis: NetworkPolicyAnalysis) {
-        let expanded = default_expanded_relation_tree(&analysis.tree);
+        let expanded = preserved_expanded_relation_tree(&self.tree, &self.expanded, &analysis.tree);
         let cursor = preserved_relation_cursor(
             &self.tree,
             &self.expanded,
@@ -2701,7 +2789,7 @@ impl TrafficDebugTabState {
     }
 
     pub fn apply_analysis(&mut self, analysis: TrafficDebugAnalysis) {
-        let expanded = default_expanded_relation_tree(&analysis.tree);
+        let expanded = preserved_expanded_relation_tree(&self.tree, &self.expanded, &analysis.tree);
         let cursor = preserved_relation_cursor(
             &self.tree,
             &self.expanded,
@@ -2741,7 +2829,7 @@ impl RelationsTabState {
     /// Populate the tree and auto-expand section headers and their immediate
     /// children so the user sees a useful overview on first open.
     pub fn set_tree(&mut self, tree: Vec<crate::k8s::relationships::RelationNode>) {
-        let expanded = default_expanded_relation_tree(&tree);
+        let expanded = preserved_expanded_relation_tree(&self.tree, &self.expanded, &tree);
         let cursor =
             preserved_relation_cursor(&self.tree, &self.expanded, self.cursor, &tree, &expanded);
         self.expanded = expanded;
@@ -3208,6 +3296,23 @@ mod tests {
 
     fn pod(name: &str) -> ResourceRef {
         ResourceRef::Pod(name.to_string(), "ns".to_string())
+    }
+
+    fn relation_node(
+        resource: Option<ResourceRef>,
+        label: &str,
+        relation: crate::k8s::relationships::RelationKind,
+        children: Vec<crate::k8s::relationships::RelationNode>,
+    ) -> crate::k8s::relationships::RelationNode {
+        crate::k8s::relationships::RelationNode {
+            resource,
+            label: label.to_string(),
+            status: None,
+            namespace: Some("ns".to_string()),
+            relation,
+            not_found: false,
+            children,
+        }
     }
 
     #[test]
@@ -4305,6 +4410,88 @@ mod tests {
 
         let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
         assert_eq!(flat[tab.cursor].resource, Some(pod("pod-b")));
+    }
+
+    #[test]
+    fn relations_tab_set_tree_preserves_collapsed_resource_identity() {
+        let mut tab = RelationsTabState::new(pod("pod-0"));
+        tab.set_tree(vec![relation_node(
+            None,
+            "Owned",
+            crate::k8s::relationships::RelationKind::SectionHeader,
+            vec![
+                relation_node(
+                    Some(pod("pod-a")),
+                    "Pod pod-a",
+                    crate::k8s::relationships::RelationKind::Owned,
+                    vec![relation_node(
+                        Some(ResourceRef::ReplicaSet(
+                            "rs-a".to_string(),
+                            "ns".to_string(),
+                        )),
+                        "ReplicaSet rs-a",
+                        crate::k8s::relationships::RelationKind::Owner,
+                        Vec::new(),
+                    )],
+                ),
+                relation_node(
+                    Some(pod("pod-b")),
+                    "Pod pod-b",
+                    crate::k8s::relationships::RelationKind::Owned,
+                    Vec::new(),
+                ),
+            ],
+        )]);
+        tab.expanded.remove(&1);
+
+        tab.set_tree(vec![relation_node(
+            None,
+            "Owned",
+            crate::k8s::relationships::RelationKind::SectionHeader,
+            vec![
+                relation_node(
+                    Some(pod("pod-new")),
+                    "Pod pod-new",
+                    crate::k8s::relationships::RelationKind::Owned,
+                    vec![relation_node(
+                        Some(ResourceRef::ReplicaSet(
+                            "rs-new".to_string(),
+                            "ns".to_string(),
+                        )),
+                        "ReplicaSet rs-new",
+                        crate::k8s::relationships::RelationKind::Owner,
+                        Vec::new(),
+                    )],
+                ),
+                relation_node(
+                    Some(pod("pod-a")),
+                    "Pod pod-a",
+                    crate::k8s::relationships::RelationKind::Owned,
+                    vec![relation_node(
+                        Some(ResourceRef::ReplicaSet(
+                            "rs-a".to_string(),
+                            "ns".to_string(),
+                        )),
+                        "ReplicaSet rs-a",
+                        crate::k8s::relationships::RelationKind::Owner,
+                        Vec::new(),
+                    )],
+                ),
+                relation_node(
+                    Some(pod("pod-b")),
+                    "Pod pod-b",
+                    crate::k8s::relationships::RelationKind::Owned,
+                    Vec::new(),
+                ),
+            ],
+        )]);
+
+        assert!(tab.expanded.contains(&1));
+        assert!(!tab.expanded.contains(&3));
+
+        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+        assert!(flat.iter().any(|node| node.label == "ReplicaSet rs-new"));
+        assert!(!flat.iter().any(|node| node.label == "ReplicaSet rs-a"));
     }
 
     #[test]
