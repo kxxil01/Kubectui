@@ -6,7 +6,7 @@ A keyboard-driven terminal UI for Kubernetes operations.
 ![License](https://img.shields.io/badge/license-MIT-blue)
 [![CI](https://github.com/kxxil01/Kubectui/actions/workflows/ci.yml/badge.svg)](https://github.com/kxxil01/Kubectui/actions/workflows/ci.yml)
 
-Current release: `1.1.22`.
+Current release: `1.1.23`.
 
 ## Install
 
