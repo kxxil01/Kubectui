@@ -37,6 +37,7 @@ pub struct HelmValuesDiffResult {
 
 static HELM_CLI_INFO: OnceLock<HelmCliInfo> = OnceLock::new();
 const HELM_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+const HELM_STATUS_MESSAGE_MAX_CHARS: usize = 600;
 
 /// Reads configured Helm repositories from the local filesystem.
 ///
@@ -153,7 +154,7 @@ pub async fn rollback_release(
         Ok(if stdout.trim().is_empty() {
             format!("Rolled back release '{release_name}' to revision {revision}.")
         } else {
-            stdout.trim().to_string()
+            truncate_helm_status_message(stdout.trim())
         })
     })
     .await
@@ -354,13 +355,24 @@ fn base_command_args(kube_context: Option<&str>, namespace: &str) -> Vec<String>
 fn stderr_or_stdout(stdout: &[u8], stderr: &[u8]) -> String {
     let stderr = String::from_utf8_lossy(stderr).trim().to_string();
     if !stderr.is_empty() {
-        return stderr;
+        return truncate_helm_status_message(&stderr);
     }
     let stdout = String::from_utf8_lossy(stdout).trim().to_string();
     if !stdout.is_empty() {
-        return stdout;
+        return truncate_helm_status_message(&stdout);
     }
     "helm command failed without output".to_string()
+}
+
+fn truncate_helm_status_message(message: &str) -> String {
+    let Some((cutoff, _)) = message.char_indices().nth(HELM_STATUS_MESSAGE_MAX_CHARS) else {
+        return message.to_string();
+    };
+    format!(
+        "{}… [truncated {} chars]",
+        &message[..cutoff],
+        message[cutoff..].chars().count()
+    )
 }
 
 fn parse_major_version(version: &str) -> Option<u64> {
@@ -529,5 +541,30 @@ repositories:
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "ready");
         assert_eq!(String::from_utf8_lossy(&output.stderr), "warn");
+    }
+
+    #[test]
+    fn helm_status_messages_are_truncated_for_ui_surfaces() {
+        let long = "x".repeat(HELM_STATUS_MESSAGE_MAX_CHARS + 3);
+        let message = truncate_helm_status_message(&long);
+
+        assert_eq!(
+            message,
+            format!(
+                "{}… [truncated 3 chars]",
+                "x".repeat(HELM_STATUS_MESSAGE_MAX_CHARS)
+            )
+        );
+    }
+
+    #[test]
+    fn helm_error_output_prefers_bounded_stderr() {
+        let stderr = "e".repeat(HELM_STATUS_MESSAGE_MAX_CHARS + 2);
+        let stdout = "stdout should not be used";
+        let message = stderr_or_stdout(stdout.as_bytes(), stderr.as_bytes());
+
+        assert!(message.starts_with(&"e".repeat(HELM_STATUS_MESSAGE_MAX_CHARS)));
+        assert!(message.ends_with("… [truncated 2 chars]"));
+        assert!(!message.contains(stdout));
     }
 }
