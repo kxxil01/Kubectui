@@ -1,8 +1,9 @@
 //! Helm client-side helpers (repositories, local config, and CLI-backed history/rollback flows).
 
 use std::{
+    io::Read,
     path::PathBuf,
-    process::{Command, Output, Stdio},
+    process::{Command, ExitStatus, Stdio},
     sync::OnceLock,
     thread,
     time::{Duration, Instant},
@@ -37,6 +38,7 @@ pub struct HelmValuesDiffResult {
 
 static HELM_CLI_INFO: OnceLock<HelmCliInfo> = OnceLock::new();
 const HELM_COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+const HELM_COMMAND_OUTPUT_MAX_BYTES: usize = 8 * 1024 * 1024;
 const HELM_STATUS_MESSAGE_MAX_CHARS: usize = 600;
 
 /// Reads configured Helm repositories from the local filesystem.
@@ -194,11 +196,13 @@ fn detect_helm_cli() -> Result<HelmCliInfo, String> {
     if !output.status.success() {
         return Err(format!(
             "Helm CLI is unavailable: {}",
-            stderr_or_stdout(&output.stdout, &output.stderr)
+            stderr_or_stdout(&output.stdout.bytes, &output.stderr.bytes)
         ));
     }
 
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let version = String::from_utf8_lossy(&output.stdout.bytes)
+        .trim()
+        .to_string();
     let major = parse_major_version(&version)
         .ok_or_else(|| format!("Could not parse Helm version '{version}'."))?;
     if major < 3 {
@@ -304,13 +308,60 @@ fn run_helm_command(args: &[String]) -> Result<String> {
     let label = format!("helm {}", args.join(" "));
     let output =
         run_helm_process(command, &label).with_context(|| format!("failed to execute {label}"))?;
-    if !output.status.success() {
-        return Err(anyhow!(stderr_or_stdout(&output.stdout, &output.stderr)));
+    if output.stdout.truncated {
+        return Err(anyhow!(
+            "{label} returned more than {HELM_COMMAND_OUTPUT_MAX_BYTES} bytes on stdout"
+        ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    if !output.status.success() {
+        return Err(anyhow!(stderr_or_stdout(
+            &output.stdout.bytes,
+            &output.stderr.bytes
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout.bytes).into_owned())
 }
 
-fn run_helm_process(mut command: Command, label: &str) -> std::io::Result<Output> {
+#[derive(Debug)]
+struct HelmProcessOutput {
+    status: ExitStatus,
+    stdout: HelmCapturedStream,
+    stderr: HelmCapturedStream,
+}
+
+#[derive(Debug, Default)]
+struct HelmCapturedStream {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+fn spawn_helm_reader<R: Read + Send + 'static>(
+    mut reader: R,
+) -> thread::JoinHandle<HelmCapturedStream> {
+    thread::spawn(move || {
+        let mut captured = HelmCapturedStream::default();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(_) => break,
+            };
+            let remaining = HELM_COMMAND_OUTPUT_MAX_BYTES.saturating_sub(captured.bytes.len());
+            if remaining > 0 {
+                captured
+                    .bytes
+                    .extend_from_slice(&buffer[..read.min(remaining)]);
+            }
+            if read > remaining {
+                captured.truncated = true;
+            }
+        }
+        captured
+    })
+}
+
+fn run_helm_process(mut command: Command, label: &str) -> std::io::Result<HelmProcessOutput> {
     run_process_with_timeout(&mut command, label, HELM_COMMAND_TIMEOUT)
 }
 
@@ -318,18 +369,38 @@ fn run_process_with_timeout(
     command: &mut Command,
     label: &str,
     timeout: Duration,
-) -> std::io::Result<Output> {
+) -> std::io::Result<HelmProcessOutput> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .map(spawn_helm_reader)
+        .ok_or_else(|| std::io::Error::other(format!("{label} stdout was not captured")))?;
+    let stderr = child
+        .stderr
+        .take()
+        .map(spawn_helm_reader)
+        .ok_or_else(|| std::io::Error::other(format!("{label} stderr was not captured")))?;
     let deadline = Instant::now() + timeout;
 
     loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output();
+        if let Some(status) = child.try_wait()? {
+            return Ok(HelmProcessOutput {
+                status,
+                stdout: stdout
+                    .join()
+                    .map_err(|_| std::io::Error::other(format!("failed to read {label} stdout")))?,
+                stderr: stderr
+                    .join()
+                    .map_err(|_| std::io::Error::other(format!("failed to read {label} stderr")))?,
+            });
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = stdout.join();
+            let _ = stderr.join();
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 format!("{label} timed out after {}s", timeout.as_secs()),
@@ -539,8 +610,29 @@ repositories:
             .expect("command should complete");
 
         assert!(output.status.success());
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "ready");
-        assert_eq!(String::from_utf8_lossy(&output.stderr), "warn");
+        assert_eq!(String::from_utf8_lossy(&output.stdout.bytes), "ready");
+        assert_eq!(String::from_utf8_lossy(&output.stderr.bytes), "warn");
+        assert!(!output.stdout.truncated);
+        assert!(!output.stderr.truncated);
+    }
+
+    #[test]
+    fn run_helm_process_bounds_stdout_before_collecting_output() {
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            &format!(
+                "head -c {} /dev/zero | tr '\\0' x",
+                HELM_COMMAND_OUTPUT_MAX_BYTES + 1024
+            ),
+        ]);
+
+        let output = run_process_with_timeout(&mut command, "test helm", Duration::from_secs(5))
+            .expect("command should complete");
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.bytes.len(), HELM_COMMAND_OUTPUT_MAX_BYTES);
+        assert!(output.stdout.truncated);
     }
 
     #[test]
