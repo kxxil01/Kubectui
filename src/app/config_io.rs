@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::{AppState, views::NavGroup};
 use crate::{
     ai_actions::AiConfig,
+    config_file::{APP_CONFIG_MAX_BYTES, read_bounded_config_file},
     k8s::exec::ExecConfig,
     preferences::{ClusterPreferences, UserPreferences},
     workbench::DEFAULT_WORKBENCH_HEIGHT,
@@ -97,7 +98,7 @@ fn nav_group_from_config(name: &str) -> Option<NavGroup> {
 pub fn load_config_from_path(path: &Path) -> AppState {
     let mut app = AppState::default();
 
-    if let Ok(content) = fs::read_to_string(path)
+    if let Ok(content) = read_bounded_config_file(path, "app config", APP_CONFIG_MAX_BYTES)
         && let Ok(cfg) = serde_json::from_str::<AppConfig>(&content)
     {
         let namespace = cfg.namespace.trim();
@@ -143,8 +144,7 @@ pub fn load_config_from_path(path: &Path) -> AppState {
 }
 
 pub fn load_ai_config_from_path(path: &Path) -> Result<Option<AiConfig>, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read app config '{}': {err}", path.display()))?;
+    let content = read_bounded_config_file(path, "app config", APP_CONFIG_MAX_BYTES)?;
     let cfg = serde_json::from_str::<AppConfig>(&content)
         .map_err(|err| format!("failed to parse app config '{}': {err}", path.display()))?;
     Ok(cfg.ai)
