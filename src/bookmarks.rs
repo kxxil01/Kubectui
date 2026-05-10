@@ -305,6 +305,10 @@ pub fn resource_selected_index(
     workload_sort: Option<WorkloadSortState>,
     pod_sort: Option<PodSortState>,
 ) -> Option<usize> {
+    if let Some(index) = computed_view_resource_selected_index(view, snapshot, resource, query) {
+        return Some(index);
+    }
+
     let indices = crate::ui::views::filtering::filtered_indices_for_view(
         view,
         snapshot,
@@ -557,6 +561,68 @@ pub fn resource_selected_index(
     };
 
     indices.iter().position(|idx| *idx == resource_idx)
+}
+
+fn computed_view_resource_selected_index(
+    view: AppView,
+    snapshot: &ClusterSnapshot,
+    resource: &ResourceRef,
+    query: &str,
+) -> Option<usize> {
+    match view {
+        AppView::Projects => {
+            let projects = crate::projects::compute_projects(snapshot);
+            let indices = crate::projects::filtered_project_indices(&projects, query);
+            indices.iter().position(|idx| {
+                projects
+                    .get(*idx)
+                    .and_then(|project| project.representative.as_ref())
+                    == Some(resource)
+            })
+        }
+        AppView::Governance => {
+            let summaries = crate::governance::compute_governance(snapshot);
+            let indices = crate::governance::filtered_governance_indices(&summaries, query);
+            indices.iter().position(|idx| {
+                summaries
+                    .get(*idx)
+                    .and_then(|summary| summary.representative.as_ref())
+                    == Some(resource)
+            })
+        }
+        AppView::Vulnerabilities => {
+            let findings = crate::state::vulnerabilities::compute_vulnerability_findings(snapshot);
+            let indices =
+                crate::state::vulnerabilities::filtered_vulnerability_indices(&findings, query);
+            indices.iter().position(|idx| {
+                findings
+                    .get(*idx)
+                    .and_then(|finding| finding.resource_ref.as_ref())
+                    == Some(resource)
+            })
+        }
+        AppView::Issues | AppView::HealthReport => {
+            let issues = crate::state::issues::compute_issues(snapshot);
+            let query = query.trim();
+            let indices = if view == AppView::HealthReport {
+                issues
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, issue)| {
+                        (issue.source == crate::state::issues::ClusterIssueSource::Sanitizer
+                            && issue.matches_query(query))
+                        .then_some(idx)
+                    })
+                    .collect()
+            } else {
+                crate::state::issues::filtered_issue_indices(&issues, query)
+            };
+            indices
+                .iter()
+                .position(|idx| issues.get(*idx).map(|issue| &issue.resource_ref) == Some(resource))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
