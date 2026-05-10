@@ -4916,6 +4916,8 @@ pub(crate) async fn run_app_inner(
             result = node_ops_rx.recv() => {
                 if let Some(result) = result {
                     if result.context_generation != refresh_state.context_generation {
+                        node_op_in_flight = false;
+                        needs_redraw = true;
                         app.complete_action_history(
                             result.action_history_id,
                             ActionStatus::Failed,
@@ -5728,6 +5730,7 @@ pub(crate) async fn run_app_inner(
                             events_state.queued_namespace = None;
                             refresh_state.queued_refresh = None;
                             delete_in_flight_id = None;
+                            node_op_in_flight = false;
                             status_message_clear_at = None;
                             app.clear_status();
                             notify_credential_expiry_if_needed(
@@ -6871,6 +6874,7 @@ pub(crate) async fn run_app_inner(
                     events_state.queued_namespace = None;
                     refresh_state.queued_refresh = None;
                     delete_in_flight_id = None;
+                    node_op_in_flight = false;
                     let follow_streams_to_stop = workbench_all_follow_streams_to_stop(&app);
                     for (_, handle) in exec_sessions.drain() {
                         let _ = handle.cancel_tx.send(());
