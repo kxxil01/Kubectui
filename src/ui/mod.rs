@@ -3556,6 +3556,7 @@ mod tests {
         for (path, source) in [
             ("views/daemonsets.rs", include_str!("views/daemonsets.rs")),
             ("views/deployments.rs", include_str!("views/deployments.rs")),
+            ("views/cronjobs.rs", include_str!("views/cronjobs.rs")),
             ("views/jobs.rs", include_str!("views/jobs.rs")),
             (
                 "views/replication_controllers.rs",
@@ -3574,6 +3575,26 @@ mod tests {
             (
                 "views/security/roles.rs",
                 include_str!("views/security/roles.rs"),
+            ),
+            (
+                "views/governance/limits.rs",
+                include_str!("views/governance/limits.rs"),
+            ),
+            (
+                "views/governance/quotas.rs",
+                include_str!("views/governance/quotas.rs"),
+            ),
+            (
+                "views/security/cluster_roles.rs",
+                include_str!("views/security/cluster_roles.rs"),
+            ),
+            (
+                "views/security/cluster_role_bindings.rs",
+                include_str!("views/security/cluster_role_bindings.rs"),
+            ),
+            (
+                "views/security/role_bindings.rs",
+                include_str!("views/security/role_bindings.rs"),
             ),
             (
                 "views/security/service_accounts.rs",

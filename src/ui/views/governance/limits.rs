@@ -34,6 +34,7 @@ struct LimitRangeDerivedCacheKey {
     snapshot_version: u64,
     data_fingerprint: u64,
     variant: u64,
+    freshness_bucket: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,7 @@ fn cached_limit_range_derived(
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.limit_ranges, snapshot.snapshot_version),
         variant,
+        freshness_bucket: crate::ui::age_freshness_bucket(),
     };
 
     if let Ok(cache) = LIMIT_RANGE_DERIVED_CACHE.lock()
