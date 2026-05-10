@@ -517,6 +517,10 @@ fn readme_scopes_cronjob_logs_to_detail_history() {
         "README must describe list-level logs shortcut and CronJob detail history separately"
     );
     assert!(
+        readme.contains("| `v` | Events timeline | Event-capable resources |"),
+        "README must document the runtime resource events shortcut"
+    );
+    assert!(
         !readme.contains("| `l` / `L` | Logs | Pods, workloads, CronJobs |"),
         "README must not imply CronJobs list rows open logs without a selected child Job"
     );
