@@ -1241,12 +1241,62 @@ impl WorkloadLogsTabState {
             let excess = self.lines.len() - MAX_WORKLOAD_LOG_LINES;
             self.lines.drain(..excess);
             self.scroll = self.scroll.saturating_sub(excess);
+            self.rebuild_filter_inventories_from_retained_state();
         }
         if self.follow_mode {
             // Set scroll past the end; the renderer's scroll_window clamps it
             // to the last visible filtered line. This avoids an O(n) filter
             // scan on every push.
             self.scroll = self.lines.len();
+        }
+    }
+
+    fn rebuild_filter_inventories_from_retained_state(&mut self) {
+        let mut pods = self.pod_labels.keys().cloned().collect::<Vec<_>>();
+        for (pod_name, _, _) in &self.sources {
+            if !pods.iter().any(|pod| pod == pod_name) {
+                pods.push(pod_name.clone());
+            }
+        }
+        for line in &self.lines {
+            if !pods.iter().any(|pod| pod == &line.pod_name) {
+                pods.push(line.pod_name.clone());
+            }
+        }
+        pods.sort();
+
+        let mut containers = self
+            .sources
+            .iter()
+            .map(|(_, _, container)| container.clone())
+            .collect::<Vec<_>>();
+        for line in &self.lines {
+            if !containers
+                .iter()
+                .any(|container| container == &line.container_name)
+            {
+                containers.push(line.container_name.clone());
+            }
+        }
+        containers.sort();
+        containers.dedup();
+
+        self.available_pods = pods;
+        self.available_containers = containers;
+        if self
+            .pod_filter
+            .as_ref()
+            .is_some_and(|pod| !self.available_pods.iter().any(|candidate| candidate == pod))
+        {
+            self.pod_filter = None;
+        }
+        if self.container_filter.as_ref().is_some_and(|container| {
+            !self
+                .available_containers
+                .iter()
+                .any(|candidate| candidate == container)
+        }) {
+            self.container_filter = None;
         }
     }
 
@@ -4900,6 +4950,35 @@ mod tests {
         });
         // follow mode sets scroll past end for renderer to clamp
         assert!(tab.scroll >= tab.lines.len());
+    }
+
+    #[test]
+    fn workload_log_cap_prunes_stale_filter_inventories() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.follow_mode = false;
+        tab.pod_filter = Some("pod-0".into());
+        tab.container_filter = Some("container-0".into());
+
+        for index in 0..=MAX_WORKLOAD_LOG_LINES {
+            tab.push_line(WorkloadLogLine {
+                pod_name: format!("pod-{index}"),
+                container_name: format!("container-{index}"),
+                entry: LogEntry::from_raw(format!("line {index}")),
+                is_stderr: false,
+            });
+        }
+
+        assert_eq!(tab.lines.len(), MAX_WORKLOAD_LOG_LINES);
+        assert!(!tab.available_pods.iter().any(|pod| pod == "pod-0"));
+        assert!(
+            !tab.available_containers
+                .iter()
+                .any(|container| container == "container-0")
+        );
+        assert_eq!(tab.available_pods.len(), MAX_WORKLOAD_LOG_LINES);
+        assert_eq!(tab.available_containers.len(), MAX_WORKLOAD_LOG_LINES);
+        assert!(tab.pod_filter.is_none());
+        assert!(tab.container_filter.is_none());
     }
 
     #[test]
