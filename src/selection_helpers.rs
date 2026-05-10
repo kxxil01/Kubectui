@@ -494,6 +494,42 @@ fn computed_view_row_selected_index(
     query: &str,
 ) -> Option<usize> {
     match view {
+        AppView::Projects => {
+            let previous_projects = kubectui::projects::compute_projects(previous);
+            let previous_indices =
+                kubectui::projects::filtered_project_indices(&previous_projects, query);
+            let selected = previous_projects
+                .get(filtered_index(&previous_indices, selected_idx)?)?
+                .key
+                .as_str();
+
+            let current_projects = kubectui::projects::compute_projects(current);
+            let current_indices =
+                kubectui::projects::filtered_project_indices(&current_projects, query);
+            current_indices.iter().position(|idx| {
+                current_projects
+                    .get(*idx)
+                    .is_some_and(|p| p.key == selected)
+            })
+        }
+        AppView::Governance => {
+            let previous_summaries = kubectui::governance::compute_governance(previous);
+            let previous_indices =
+                kubectui::governance::filtered_governance_indices(&previous_summaries, query);
+            let selected = previous_summaries
+                .get(filtered_index(&previous_indices, selected_idx)?)?
+                .namespace
+                .as_str();
+
+            let current_summaries = kubectui::governance::compute_governance(current);
+            let current_indices =
+                kubectui::governance::filtered_governance_indices(&current_summaries, query);
+            current_indices.iter().position(|idx| {
+                current_summaries
+                    .get(*idx)
+                    .is_some_and(|summary| summary.namespace == selected)
+            })
+        }
         AppView::Vulnerabilities => {
             let previous_findings =
                 kubectui::state::vulnerabilities::compute_vulnerability_findings(previous);
@@ -1095,7 +1131,9 @@ mod tests {
     use kubectui::{
         app::{AppState, AppView, ResourceRef},
         authorization::DetailActionAuthorization,
-        k8s::dtos::{DeploymentInfo, FluxResourceInfo, OwnerRefInfo, PodInfo},
+        k8s::dtos::{
+            DeploymentInfo, FluxResourceInfo, NamespaceInfo, OwnerRefInfo, PodInfo, ServiceInfo,
+        },
         state::{ClusterSnapshot, issues::IssueCategory},
     };
 
@@ -1166,6 +1204,76 @@ mod tests {
     }
 
     #[test]
+    fn preserve_selection_identity_keeps_project_key_when_representative_changes() {
+        let previous = project_service_snapshot(1, &[("billing-svc", "payments", "billing")]);
+        let current = project_snapshot(
+            2,
+            &[
+                ("archive-api", "ops", "archive"),
+                ("billing-api", "payments", "billing"),
+            ],
+        );
+        let previous_projects = kubectui::projects::compute_projects(&previous);
+        let mut app = AppState {
+            view: AppView::Projects,
+            selected_idx: previous_projects
+                .iter()
+                .position(|project| project.name == "billing")
+                .expect("billing project should exist"),
+            ..AppState::default()
+        };
+
+        let changed =
+            preserve_selection_identity_after_snapshot_change(&mut app, &previous, &current);
+        let current_projects = kubectui::projects::compute_projects(&current);
+
+        assert!(changed);
+        assert_eq!(current_projects[app.selected_idx()].name, "billing");
+    }
+
+    #[test]
+    fn preserve_selection_identity_keeps_governance_namespace_when_representative_changes() {
+        let previous = governance_namespace_snapshot(1, &["payments"]);
+        let current = ClusterSnapshot {
+            snapshot_version: 2,
+            namespace_list: vec![
+                NamespaceInfo {
+                    name: "alpha".to_string(),
+                    ..NamespaceInfo::default()
+                },
+                NamespaceInfo {
+                    name: "payments".to_string(),
+                    ..NamespaceInfo::default()
+                },
+            ],
+            deployments: vec![DeploymentInfo {
+                name: "billing-api".to_string(),
+                namespace: "payments".to_string(),
+                ..DeploymentInfo::default()
+            }],
+            pods: vec![PodInfo {
+                name: "broken".to_string(),
+                namespace: "alpha".to_string(),
+                status: "Failed".to_string(),
+                ..PodInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        };
+        let mut app = AppState {
+            view: AppView::Governance,
+            selected_idx: 0,
+            ..AppState::default()
+        };
+
+        let changed =
+            preserve_selection_identity_after_snapshot_change(&mut app, &previous, &current);
+        let current_summaries = kubectui::governance::compute_governance(&current);
+
+        assert!(changed);
+        assert_eq!(current_summaries[app.selected_idx()].namespace, "payments");
+    }
+
+    #[test]
     fn preserve_selection_identity_keeps_issue_row_for_same_resource_after_snapshot_change() {
         let previous = sanitizer_issue_snapshot(1);
         let current = sanitizer_issue_snapshot(2);
@@ -1206,6 +1314,45 @@ mod tests {
                         (*project).to_string(),
                     )]),
                     ..DeploymentInfo::default()
+                })
+                .collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn project_service_snapshot(
+        snapshot_version: u64,
+        services: &[(&str, &str, &str)],
+    ) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version,
+            services: services
+                .iter()
+                .map(|(name, namespace, project)| ServiceInfo {
+                    name: (*name).to_string(),
+                    namespace: (*namespace).to_string(),
+                    labels: BTreeMap::from([(
+                        "app.kubernetes.io/part-of".to_string(),
+                        (*project).to_string(),
+                    )]),
+                    ..ServiceInfo::default()
+                })
+                .collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn governance_namespace_snapshot(
+        snapshot_version: u64,
+        namespaces: &[&str],
+    ) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version,
+            namespace_list: namespaces
+                .iter()
+                .map(|name| NamespaceInfo {
+                    name: (*name).to_string(),
+                    ..NamespaceInfo::default()
                 })
                 .collect(),
             ..ClusterSnapshot::default()
