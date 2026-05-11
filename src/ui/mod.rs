@@ -3547,10 +3547,18 @@ mod tests {
                 .split("\n#[cfg(test)]\nmod tests")
                 .next()
                 .expect("source split should yield production section");
-            if production_source.contains("Table::new(")
-                && !production_source.contains("responsive_table_widths")
-            {
-                violations.push(path.display().to_string());
+            let lines: Vec<&str> = production_source.lines().collect();
+            for (line_idx, line) in lines.iter().enumerate() {
+                if !line.contains("Table::new(") {
+                    continue;
+                }
+
+                let start = line_idx.saturating_sub(8);
+                let end = (line_idx + 8).min(lines.len().saturating_sub(1));
+                let call_context = lines[start..=end].join("\n");
+                if !call_context.contains("responsive_table_widths") {
+                    violations.push(format!("{}:{}", path.display(), line_idx + 1));
+                }
             }
         }
     }
