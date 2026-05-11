@@ -672,7 +672,10 @@ mod tests {
     fn is_elastic_constraint(constraint: &Constraint) -> bool {
         matches!(
             constraint,
-            Constraint::Min(_) | Constraint::Percentage(_) | Constraint::Ratio(_, _)
+            Constraint::Min(_)
+                | Constraint::Percentage(_)
+                | Constraint::Ratio(_, _)
+                | Constraint::Fill(_)
         )
     }
 
