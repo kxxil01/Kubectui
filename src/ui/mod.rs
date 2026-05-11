@@ -3625,6 +3625,48 @@ mod tests {
     }
 
     #[test]
+    fn age_formatting_caches_do_not_freeze_freshness() {
+        let mut violations = Vec::new();
+        collect_age_cache_freshness_violations(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui"),
+            &mut violations,
+        );
+
+        assert!(
+            violations.is_empty(),
+            "age formatting caches must not use frozen freshness buckets: {violations:?}",
+        );
+    }
+
+    fn collect_age_cache_freshness_violations(
+        path: &std::path::Path,
+        violations: &mut Vec<String>,
+    ) {
+        for entry in std::fs::read_dir(path).expect("ui source directory should be readable") {
+            let entry = entry.expect("ui source entry should be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_age_cache_freshness_violations(&path, violations);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+
+            let source = std::fs::read_to_string(&path).expect("ui source file should be readable");
+            let production_source = source
+                .split("\n#[cfg(test)]\nmod tests")
+                .next()
+                .expect("source split should yield production section");
+            let formats_age = production_source.contains("format_age(")
+                || production_source.contains("format_age_from_timestamp(");
+            if formats_age && production_source.contains("freshness_bucket: 0") {
+                violations.push(path.display().to_string());
+            }
+        }
+    }
+
+    #[test]
     fn timestamp_age_caches_do_not_use_minute_buckets() {
         for (path, source) in [
             ("views/flux.rs", include_str!("views/flux.rs")),
