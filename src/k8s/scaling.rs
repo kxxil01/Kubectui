@@ -1,7 +1,7 @@
 //! Kubernetes deployment scaling operations with progress tracking.
 
 use crate::k8s::client::{K8sClient, is_forbidden_error};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, StatefulSet};
 use kube::{Api, api::Patch, api::PatchParams};
 use serde::{Deserialize, Serialize};
@@ -183,20 +183,38 @@ impl K8sClient {
         match kind.to_lowercase().as_str() {
             "deployment" => {
                 let api: Api<Deployment> = Api::namespaced(client, namespace);
-                api.patch(name, &pp, &patch).await.with_context(|| {
-                    format!("failed to restart deployment '{name}' in '{namespace}'")
+                api.patch(name, &pp, &patch).await.map_err(|err| {
+                    if is_forbidden_error(&err) {
+                        scale_forbidden_message("restart Deployment", name, namespace)
+                    } else {
+                        anyhow!(err).context(format!(
+                            "failed to restart deployment '{name}' in '{namespace}'"
+                        ))
+                    }
                 })?;
             }
             "statefulset" => {
                 let api: Api<StatefulSet> = Api::namespaced(client, namespace);
-                api.patch(name, &pp, &patch).await.with_context(|| {
-                    format!("failed to restart statefulset '{name}' in '{namespace}'")
+                api.patch(name, &pp, &patch).await.map_err(|err| {
+                    if is_forbidden_error(&err) {
+                        scale_forbidden_message("restart StatefulSet", name, namespace)
+                    } else {
+                        anyhow!(err).context(format!(
+                            "failed to restart statefulset '{name}' in '{namespace}'"
+                        ))
+                    }
                 })?;
             }
             "daemonset" => {
                 let api: Api<DaemonSet> = Api::namespaced(client, namespace);
-                api.patch(name, &pp, &patch).await.with_context(|| {
-                    format!("failed to restart daemonset '{name}' in '{namespace}'")
+                api.patch(name, &pp, &patch).await.map_err(|err| {
+                    if is_forbidden_error(&err) {
+                        scale_forbidden_message("restart DaemonSet", name, namespace)
+                    } else {
+                        anyhow!(err).context(format!(
+                            "failed to restart daemonset '{name}' in '{namespace}'"
+                        ))
+                    }
                 })?;
             }
             other => {

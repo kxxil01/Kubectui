@@ -90,7 +90,8 @@ pub async fn launch_node_debug_pod(
         .name
         .clone()
         .context("node debug pod missing name")?;
-    if let Err(wait_err) = wait_for_node_debug_pod_ready(&pods, &pod_name).await {
+    if let Err(wait_err) = wait_for_node_debug_pod_ready(&pods, &request.namespace, &pod_name).await
+    {
         let cleanup_err = delete_node_debug_pod(client, &request.namespace, &pod_name)
             .await
             .err();
@@ -199,13 +200,20 @@ fn build_debug_pod(request: &NodeDebugLaunchRequest) -> Result<Pod> {
     .context("failed to build node debug pod manifest")
 }
 
-async fn wait_for_node_debug_pod_ready(pods: &Api<Pod>, pod_name: &str) -> Result<()> {
+async fn wait_for_node_debug_pod_ready(
+    pods: &Api<Pod>,
+    namespace: &str,
+    pod_name: &str,
+) -> Result<()> {
     let deadline = tokio::time::Instant::now() + DEBUG_POD_READY_TIMEOUT;
     loop {
-        let pod = pods
-            .get(pod_name)
-            .await
-            .with_context(|| format!("failed to inspect node debug pod '{pod_name}'"))?;
+        let pod = pods.get(pod_name).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                node_debug_get_forbidden_message(pod_name, namespace)
+            } else {
+                anyhow!(err).context(format!("failed to inspect node debug pod '{pod_name}'"))
+            }
+        })?;
 
         if container_state_is_running(&pod) {
             return Ok(());
@@ -228,6 +236,12 @@ async fn wait_for_node_debug_pod_ready(pods: &Api<Pod>, pod_name: &str) -> Resul
 
         tokio::time::sleep(DEBUG_POD_READY_POLL_INTERVAL).await;
     }
+}
+
+fn node_debug_get_forbidden_message(pod_name: &str, namespace: &str) -> anyhow::Error {
+    anyhow!(
+        "RBAC forbidden: you are not allowed to get node debug pod '{pod_name}' in namespace '{namespace}' while waiting for readiness"
+    )
 }
 
 fn container_state_is_running(pod: &Pod) -> bool {
@@ -327,6 +341,14 @@ mod tests {
     fn sysadmin_profile_is_privileged() {
         assert!(NodeDebugProfile::Sysadmin.is_privileged());
         assert!(!NodeDebugProfile::General.is_privileged());
+    }
+
+    #[test]
+    fn node_debug_get_forbidden_message_scopes_pod() {
+        assert_eq!(
+            node_debug_get_forbidden_message("kubectui-node-debug-a", "ops").to_string(),
+            "RBAC forbidden: you are not allowed to get node debug pod 'kubectui-node-debug-a' in namespace 'ops' while waiting for readiness"
+        );
     }
 
     #[test]
