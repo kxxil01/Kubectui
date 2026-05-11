@@ -3737,6 +3737,56 @@ mod tests {
     }
 
     #[test]
+    fn explicit_age_headers_are_last() {
+        let mut violations = Vec::new();
+        collect_explicit_age_header_order_violations(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui"),
+            &mut violations,
+        );
+
+        assert!(
+            violations.is_empty(),
+            "explicit Age headers should be the final table column: {violations:?}",
+        );
+    }
+
+    fn collect_explicit_age_header_order_violations(
+        path: &std::path::Path,
+        violations: &mut Vec<String>,
+    ) {
+        for entry in std::fs::read_dir(path).expect("ui source directory should be readable") {
+            let entry = entry.expect("ui source entry should be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_explicit_age_header_order_violations(&path, violations);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+
+            let source = std::fs::read_to_string(&path).expect("ui source file should be readable");
+            let production_source = source
+                .split("\n#[cfg(test)]\nmod tests")
+                .next()
+                .expect("source split should yield production section");
+            for marker in ["sort_header_cell(\"Age\"", "Span::styled(\"Age\""] {
+                for (offset, _) in production_source.match_indices(marker) {
+                    let suffix = &production_source[offset + marker.len()..];
+                    let Some(header_end) = suffix.find("])") else {
+                        continue;
+                    };
+                    let after_age = &suffix[..header_end];
+                    if after_age.contains("Cell::from(") || after_age.contains("sort_header_cell(")
+                    {
+                        violations.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn vertical_primary_detail_chunks_compact_on_short_height() {
         let (primary, detail) = vertical_primary_detail_chunks(Rect::new(0, 0, 90, 18), 60, 8, 24);
         assert_eq!(primary.height, 10);
