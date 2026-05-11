@@ -2313,6 +2313,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn secrets_fetch_error_is_preserved_for_active_view() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource {
+            secrets_err: Some(
+                "RBAC forbidden: you are not allowed to list Secrets in namespace 'prod'"
+                    .to_string(),
+            ),
+            ..MockDataSource::success()
+        };
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("prod"),
+                refresh_options(RefreshScope::CONFIG, false),
+            )
+            .await
+            .expect("partial config refresh should preserve the fetch error and continue");
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert!(snapshot.secrets.is_empty());
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some(
+                "secrets: RBAC forbidden: you are not allowed to list Secrets in namespace 'prod'"
+            )
+        );
+        assert_eq!(snapshot.failed_resource_count, 1);
+    }
+
+    #[tokio::test]
     async fn refresh_namespaces_count_unions_pods_services_and_deployments() {
         let mut state = GlobalState::default();
         let source = MockDataSource {

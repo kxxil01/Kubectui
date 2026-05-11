@@ -107,17 +107,23 @@ macro_rules! fetch_namespaced {
                 Some(ns) => Api::namespaced(self.client.clone(), ns),
                 None => Api::all(self.client.clone()),
             };
-            let list = list_items_or_empty(&api, &ListParams::default(), || {
-                if let Some(ns) = namespace {
-                    format!(
-                        concat!("failed fetching ", $resource_name, " in namespace '{}'"),
-                        ns
-                    )
-                } else {
-                    concat!("failed fetching ", $resource_name, " across all namespaces")
-                        .to_string()
-                }
-            })
+            let list = list_items_required(
+                &api,
+                &ListParams::default(),
+                $resource_name,
+                ListFetchScope::Namespaced(namespace),
+                || {
+                    if let Some(ns) = namespace {
+                        format!(
+                            concat!("failed fetching ", $resource_name, " in namespace '{}'"),
+                            ns
+                        )
+                    } else {
+                        concat!("failed fetching ", $resource_name, " across all namespaces")
+                            .to_string()
+                    }
+                },
+            )
             .await?;
             Ok(list.into_iter().map($converter).collect())
         }
@@ -130,9 +136,13 @@ macro_rules! fetch_cluster {
         $(#[$meta])*
         pub async fn $method(&self) -> Result<Vec<$info_type>> {
             let api: Api<$k8s_type> = Api::all(self.client.clone());
-            let list = list_items_or_empty(&api, &ListParams::default(), || {
-                concat!("failed fetching ", $resource_name).to_string()
-            })
+            let list = list_items_required(
+                &api,
+                &ListParams::default(),
+                $resource_name,
+                ListFetchScope::Cluster,
+                || concat!("failed fetching ", $resource_name).to_string(),
+            )
             .await?;
             Ok(list.into_iter().map($converter).collect())
         }
@@ -446,9 +456,13 @@ impl K8sClient {
     /// Fetches available namespaces sorted alphabetically.
     pub async fn fetch_namespaces(&self) -> Result<Vec<String>> {
         let ns_api: Api<Namespace> = Api::all(self.client.clone());
-        let list = list_metadata_items_or_empty(&ns_api, &ListParams::default(), || {
-            "failed fetching namespaces".to_string()
-        })
+        let list = list_metadata_items_required(
+            &ns_api,
+            &ListParams::default(),
+            "namespaces",
+            ListFetchScope::Cluster,
+            || "failed fetching namespaces".to_string(),
+        )
         .await?;
 
         let names: Vec<String> = list
@@ -462,14 +476,17 @@ impl K8sClient {
     /// Fetches Namespaces as NamespaceInfo using metadata-only list payloads.
     pub async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
         let api: Api<Namespace> = Api::all(self.client.clone());
-        let mut items: Vec<NamespaceInfo> =
-            list_metadata_items_or_empty(&api, &ListParams::default(), || {
-                "failed fetching namespaces".to_string()
-            })
-            .await?
-            .iter()
-            .map(namespace_metadata_to_info)
-            .collect();
+        let mut items: Vec<NamespaceInfo> = list_metadata_items_required(
+            &api,
+            &ListParams::default(),
+            "namespaces",
+            ListFetchScope::Cluster,
+            || "failed fetching namespaces".to_string(),
+        )
+        .await?
+        .iter()
+        .map(namespace_metadata_to_info)
+        .collect();
         items.sort_unstable_by(|left, right| left.name.cmp(&right.name));
         Ok(items)
     }
@@ -592,7 +609,7 @@ impl K8sClient {
     fetch_namespaced!(
         /// Fetches Secrets.
         fetch_secrets, Secret, SecretInfo,
-        crate::k8s::conversions::secret_to_info, "secrets"
+        crate::k8s::conversions::secret_to_info, "Secrets"
     );
     fetch_namespaced!(
         /// Fetches HPAs.
@@ -701,9 +718,13 @@ impl K8sClient {
         &self,
     ) -> Result<Vec<CustomResourceDefinitionInfo>> {
         let crd_api: Api<CustomResourceDefinition> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&crd_api, &ListParams::default(), || {
-            "failed fetching custom resource definitions".to_string()
-        })
+        let list = list_items_required(
+            &crd_api,
+            &ListParams::default(),
+            "custom resource definitions",
+            ListFetchScope::Cluster,
+            || "failed fetching custom resource definitions".to_string(),
+        )
         .await?;
 
         let mut crds = Vec::new();
@@ -743,9 +764,17 @@ impl K8sClient {
             Api::all_with(self.client.clone(), &ar)
         };
 
-        let list = list_metadata_items_or_empty(&api, &ListParams::default(), || {
-            format!("failed fetching custom resources for CRD '{}'", crd.name)
-        })
+        let list = list_metadata_items_required(
+            &api,
+            &ListParams::default(),
+            crd.plural.as_str(),
+            if crd.scope.eq_ignore_ascii_case("Namespaced") {
+                ListFetchScope::Namespaced(namespace)
+            } else {
+                ListFetchScope::Cluster
+            },
+            || format!("failed fetching custom resources for CRD '{}'", crd.name),
+        )
         .await?;
 
         let now = now();
@@ -1898,6 +1927,33 @@ fn non_empty_continue_token(token: Option<String>) -> Option<String> {
     token.filter(|value| !value.is_empty())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListFetchScope<'a> {
+    Namespaced(Option<&'a str>),
+    Cluster,
+}
+
+async fn list_items_required<K, C>(
+    api: &Api<K>,
+    params: &ListParams,
+    resource_name: &str,
+    scope: ListFetchScope<'_>,
+    context: C,
+) -> Result<Vec<K>>
+where
+    K: Clone + std::fmt::Debug + serde::de::DeserializeOwned,
+    C: FnOnce() -> String,
+{
+    match api.list(params).await {
+        Ok(list) => Ok(list.items),
+        Err(err) if is_forbidden_error(&err) => Err(anyhow::anyhow!(list_forbidden_message(
+            resource_name,
+            scope
+        ))),
+        Err(err) => Err(err).with_context(context),
+    }
+}
+
 async fn list_items_or_empty<K, C>(api: &Api<K>, params: &ListParams, context: C) -> Result<Vec<K>>
 where
     K: Clone + std::fmt::Debug + serde::de::DeserializeOwned,
@@ -1910,9 +1966,11 @@ where
     }
 }
 
-async fn list_metadata_items_or_empty<K, C>(
+async fn list_metadata_items_required<K, C>(
     api: &Api<K>,
     params: &ListParams,
+    resource_name: &str,
+    scope: ListFetchScope<'_>,
     context: C,
 ) -> Result<Vec<PartialObjectMeta<K>>>
 where
@@ -1921,13 +1979,34 @@ where
 {
     match api.list_metadata(params).await {
         Ok(list) => Ok(list.items),
-        Err(err) if is_forbidden_error(&err) => Ok(Vec::new()),
+        Err(err) if is_forbidden_error(&err) => Err(anyhow::anyhow!(list_forbidden_message(
+            resource_name,
+            scope
+        ))),
         Err(err) => Err(err).with_context(context),
     }
 }
 
 pub(crate) fn is_forbidden_error(err: &kube::Error) -> bool {
     matches!(err, kube::Error::Api(response) if response.is_forbidden())
+}
+
+fn list_forbidden_message(resource_name: &str, scope: ListFetchScope<'_>) -> String {
+    match scope {
+        ListFetchScope::Namespaced(Some(namespace)) => {
+            format!(
+                "RBAC forbidden: you are not allowed to list {resource_name} in namespace '{namespace}'"
+            )
+        }
+        ListFetchScope::Namespaced(None) => {
+            format!(
+                "RBAC forbidden: you are not allowed to list {resource_name} across all namespaces"
+            )
+        }
+        ListFetchScope::Cluster => {
+            format!("RBAC forbidden: you are not allowed to list {resource_name} at cluster scope")
+        }
+    }
 }
 
 fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
@@ -2399,9 +2478,13 @@ impl K8sClient {
 
         // Helm v3 stores releases as secrets with label owner=helm
         let lp = ListParams::default().labels("owner=helm");
-        let list = list_items_or_empty(&secrets_api, &lp, || {
-            "failed fetching Helm release secrets".to_string()
-        })
+        let list = list_items_required(
+            &secrets_api,
+            &lp,
+            "Helm release secrets",
+            ListFetchScope::Namespaced(namespace),
+            || "failed fetching Helm release secrets".to_string(),
+        )
         .await?;
 
         let now = now();
@@ -2711,7 +2794,6 @@ impl K8sClient {
 
         let list = match api.list(&ListParams::default()).await {
             Ok(list) => list.items,
-            Err(err) if is_forbidden_error(&err) => Vec::new(),
             Err(err) => return Err(err),
         };
         let mut resources = Vec::with_capacity(list.len());
@@ -3154,6 +3236,22 @@ mod tests {
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&timeout));
+    }
+
+    #[test]
+    fn list_forbidden_message_names_scope() {
+        assert_eq!(
+            list_forbidden_message("Secrets", ListFetchScope::Namespaced(Some("prod"))),
+            "RBAC forbidden: you are not allowed to list Secrets in namespace 'prod'"
+        );
+        assert_eq!(
+            list_forbidden_message("Secrets", ListFetchScope::Namespaced(None)),
+            "RBAC forbidden: you are not allowed to list Secrets across all namespaces"
+        );
+        assert_eq!(
+            list_forbidden_message("clusterroles", ListFetchScope::Cluster),
+            "RBAC forbidden: you are not allowed to list clusterroles at cluster scope"
+        );
     }
 
     #[test]
