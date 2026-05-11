@@ -11,13 +11,13 @@ use super::{
     detail_debug_launch_owned, detail_node_debug_launch_owned, fail_context_switch,
     map_palette_detail_action, mark_node_debug_launch_context_changed, mutation_refresh_options,
     normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
-    prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
-    preserve_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
-    refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
-    run_extension_command, selected_extension_crd, selected_flux_reconcile_resource,
-    selected_resource, should_animate_loading_spinner, should_include_flux_in_auto_refresh,
-    should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
-    should_request_periodic_redraw, stop_port_forward_sessions,
+    pod_get_forbidden_status, prepare_bookmark_target, prepare_resource_target,
+    preserve_detail_selection_identity, preserve_selection_identity_after_snapshot_change,
+    queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
+    refresh_scope_pending, request_refresh, run_extension_command, selected_extension_crd,
+    selected_flux_reconcile_resource, selected_resource, should_animate_loading_spinner,
+    should_include_flux_in_auto_refresh, should_preserve_current_flux_after_refresh,
+    should_request_navigation_refresh, should_request_periodic_redraw, stop_port_forward_sessions,
     strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
     workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
@@ -5489,5 +5489,13 @@ fn process_flux_reconcile_verifications_reports_waiting_when_deadline_expires() 
             .expect("history entry")
             .message
             .contains("Waiting for controller status update")
+    );
+}
+
+#[test]
+fn pod_get_forbidden_status_scopes_action_and_pod() {
+    assert_eq!(
+        pod_get_forbidden_status("probe inspection", "api-0", "prod"),
+        "RBAC forbidden: you are not allowed to get Pod 'api-0' in namespace 'prod' for probe inspection"
     );
 }
