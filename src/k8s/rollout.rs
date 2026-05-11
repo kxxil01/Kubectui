@@ -11,7 +11,10 @@ use kube::{
 };
 use serde_json::{Value, json};
 
-use crate::{app::ResourceRef, k8s::client::K8sClient};
+use crate::{
+    app::ResourceRef,
+    k8s::client::{K8sClient, is_forbidden_error},
+};
 
 const CHANGE_CAUSE_ANNOTATION: &str = "kubernetes.io/change-cause";
 const DEPLOYMENT_REVISION_ANNOTATION: &str = "deployment.kubernetes.io/revision";
@@ -531,7 +534,17 @@ where
         &Patch::Merge(json!({ "spec": { "template": template } })),
     )
     .await
-    .with_context(|| format!("failed to patch workload '{name}' in namespace '{namespace}'"))?;
+    .map_err(|err| {
+        if is_forbidden_error(&err) {
+            anyhow!(
+                "RBAC forbidden: you are not allowed to patch workload '{name}' in namespace '{namespace}'"
+            )
+        } else {
+            anyhow!(err).context(format!(
+                "failed to patch workload '{name}' in namespace '{namespace}'"
+            ))
+        }
+    })?;
     Ok(())
 }
 

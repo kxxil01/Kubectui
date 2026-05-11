@@ -7,7 +7,10 @@ use kube::{
     api::{DeleteParams, PostParams},
 };
 
-use crate::k8s::{client::K8sClient, exec::DebugImagePreset};
+use crate::k8s::{
+    client::{K8sClient, is_forbidden_error},
+    exec::DebugImagePreset,
+};
 
 const DEBUG_POD_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 const DEBUG_POD_READY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
@@ -69,11 +72,18 @@ pub async fn launch_node_debug_pod(
     let created = pods
         .create(&PostParams::default(), &pod)
         .await
-        .with_context(|| {
-            format!(
-                "failed to create node debug pod for Node '{}' in namespace '{}'",
-                request.node_name, request.namespace
-            )
+        .map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow!(
+                    "RBAC forbidden: you are not allowed to create node debug pods in namespace '{}'",
+                    request.namespace
+                )
+            } else {
+                anyhow!(err).context(format!(
+                    "failed to create node debug pod for Node '{}' in namespace '{}'",
+                    request.node_name, request.namespace
+                ))
+            }
         })?;
     let pod_name = created
         .metadata
@@ -118,6 +128,9 @@ pub async fn delete_node_debug_pod(
     match pods.delete(pod_name, &params).await {
         Ok(_) => Ok(()),
         Err(kube::Error::Api(response)) if response.code == 404 => Ok(()),
+        Err(err) if is_forbidden_error(&err) => Err(anyhow!(
+            "RBAC forbidden: you are not allowed to delete node debug pod '{pod_name}' in namespace '{namespace}'"
+        )),
         Err(err) => Err(err).with_context(|| {
             format!(
                 "failed to delete node debug pod '{}' in namespace '{}'",

@@ -141,7 +141,16 @@ pub async fn apply_resource_yaml(
     let params = PatchParams::apply("kubectui").force();
     api.patch(name, &params, &Patch::Apply(&obj))
         .await
-        .with_context(|| format!("failed to apply {kind}/{name}"))?;
+        .map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow!(
+                    "{}",
+                    mutation_forbidden_message("apply", kind, name, namespace)
+                )
+            } else {
+                anyhow!(err).context(format!("failed to apply {kind}/{name}"))
+            }
+        })?;
 
     Ok(())
 }
@@ -182,7 +191,24 @@ pub async fn apply_yaml_documents(client: &Client, yaml_str: &str) -> Result<usi
         let params = PatchParams::apply("kubectui").force();
         api.patch(&header.metadata.name, &params, &Patch::Apply(&object))
             .await
-            .with_context(|| format!("failed to apply {}/{}", header.kind, header.metadata.name))?;
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    anyhow!(
+                        "{}",
+                        mutation_forbidden_message(
+                            "apply",
+                            &header.kind,
+                            &header.metadata.name,
+                            header.metadata.namespace.as_deref(),
+                        )
+                    )
+                } else {
+                    anyhow!(err).context(format!(
+                        "failed to apply {}/{}",
+                        header.kind, header.metadata.name
+                    ))
+                }
+            })?;
         applied += 1;
     }
 
@@ -806,11 +832,18 @@ pub async fn delete_resource(
     };
 
     let dp = kube::api::DeleteParams::default();
-    api.delete(name, &dp).await.with_context(|| {
-        format!(
-            "failed to delete {kind}/{name} in namespace '{}'",
-            namespace.unwrap_or("<cluster-scope>")
-        )
+    api.delete(name, &dp).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            anyhow!(
+                "{}",
+                mutation_forbidden_message("delete", kind, name, namespace)
+            )
+        } else {
+            anyhow!(err).context(format!(
+                "failed to delete {kind}/{name} in namespace '{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            ))
+        }
     })?;
 
     Ok(())
@@ -841,11 +874,18 @@ pub async fn force_delete_resource(
         ..Default::default()
     };
 
-    api.delete(name, &dp).await.with_context(|| {
-        format!(
-            "failed to force-delete {kind}/{name} in namespace '{}'",
-            namespace.unwrap_or("<cluster-scope>")
-        )
+    api.delete(name, &dp).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            anyhow!(
+                "{}",
+                mutation_forbidden_message("force-delete", kind, name, namespace)
+            )
+        } else {
+            anyhow!(err).context(format!(
+                "failed to force-delete {kind}/{name} in namespace '{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            ))
+        }
     })?;
 
     Ok(())
@@ -871,14 +911,19 @@ pub async fn delete_custom_resource(
     };
 
     let dp = kube::api::DeleteParams::default();
-    api.delete(name, &dp)
-        .await
-        .with_context(|| {
-            format!(
+    api.delete(name, &dp).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            anyhow!(
+                "{}",
+                mutation_forbidden_message("delete", kind, name, namespace)
+            )
+        } else {
+            anyhow!(err).context(format!(
                 "failed to delete custom resource {group}/{version}/{kind} name='{name}' namespace='{}'",
                 namespace.unwrap_or("<cluster-scope>")
-            )
-        })?;
+            ))
+        }
+    })?;
 
     Ok(())
 }
@@ -919,14 +964,41 @@ pub async fn request_flux_reconcile(
 
     api.patch(name, &PatchParams::default(), &patch)
         .await
-        .with_context(|| {
-            format!(
-                "failed to request Flux reconciliation for {group}/{version}/{kind} name='{name}' namespace='{}'",
-                namespace.unwrap_or("<cluster-scope>")
-            )
+        .map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow!(
+                    "{}",
+                    mutation_forbidden_message("patch", kind, name, namespace)
+                )
+            } else {
+                anyhow!(err).context(format!(
+                    "failed to request Flux reconciliation for {group}/{version}/{kind} name='{name}' namespace='{}'",
+                    namespace.unwrap_or("<cluster-scope>")
+                ))
+            }
         })?;
 
     Ok(())
+}
+
+fn mutation_forbidden_message(
+    verb: &str,
+    kind: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> String {
+    match namespace {
+        Some(namespace) => {
+            format!(
+                "RBAC forbidden: you are not allowed to {verb} {kind} '{name}' in namespace '{namespace}'"
+            )
+        }
+        None => {
+            format!(
+                "RBAC forbidden: you are not allowed to {verb} {kind} '{name}' at cluster scope"
+            )
+        }
+    }
 }
 
 #[cfg(test)]
@@ -986,6 +1058,18 @@ mod tests {
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&not_found));
+    }
+
+    #[test]
+    fn mutation_forbidden_message_scopes_resource() {
+        assert_eq!(
+            mutation_forbidden_message("apply", "Secret", "api-token", Some("prod")),
+            "RBAC forbidden: you are not allowed to apply Secret 'api-token' in namespace 'prod'"
+        );
+        assert_eq!(
+            mutation_forbidden_message("delete", "ClusterRole", "readonly", None),
+            "RBAC forbidden: you are not allowed to delete ClusterRole 'readonly' at cluster scope"
+        );
     }
 
     #[test]

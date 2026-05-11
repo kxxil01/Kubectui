@@ -298,7 +298,13 @@ impl K8sClient {
         nodes_api
             .patch(name, &pp, &Patch::Merge(patch))
             .await
-            .with_context(|| format!("failed to cordon node '{name}'"))?;
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    anyhow::anyhow!(mutation_forbidden_message("patch", "node", name, None))
+                } else {
+                    anyhow::anyhow!(err).context(format!("failed to cordon node '{name}'"))
+                }
+            })?;
         Ok(())
     }
 
@@ -313,7 +319,13 @@ impl K8sClient {
         nodes_api
             .patch(name, &pp, &Patch::Merge(patch))
             .await
-            .with_context(|| format!("failed to uncordon node '{name}'"))?;
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    anyhow::anyhow!(mutation_forbidden_message("patch", "node", name, None))
+                } else {
+                    anyhow::anyhow!(err).context(format!("failed to uncordon node '{name}'"))
+                }
+            })?;
         Ok(())
     }
 
@@ -332,10 +344,15 @@ impl K8sClient {
 
         let pods_api: Api<k8s_openapi::api::core::v1::Pod> = Api::all(self.client.clone());
         let lp = ListParams::default().fields(&format!("spec.nodeName={name}"));
-        let pod_list = pods_api
-            .list(&lp)
-            .await
-            .with_context(|| format!("failed to list pods on node '{name}'"))?;
+        let pod_list = pods_api.list(&lp).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow::anyhow!(
+                    "RBAC forbidden: you are not allowed to list pods while draining node '{name}'"
+                )
+            } else {
+                anyhow::anyhow!(err).context(format!("failed to list pods on node '{name}'"))
+            }
+        })?;
 
         let mut to_evict = Vec::new();
         for pod in pod_list {
@@ -394,8 +411,19 @@ impl K8sClient {
                             grace_period_seconds: Some(0),
                             ..Default::default()
                         };
-                        ns_pods.delete(pod_name, &dp).await.with_context(|| {
-                            format!("failed to force-delete pod '{pod_name}' in '{pod_ns}'")
+                        ns_pods.delete(pod_name, &dp).await.map_err(|err| {
+                            if is_forbidden_error(&err) {
+                                anyhow::anyhow!(mutation_forbidden_message(
+                                    "force-delete",
+                                    "pod",
+                                    pod_name,
+                                    Some(pod_ns),
+                                ))
+                            } else {
+                                anyhow::anyhow!(err).context(format!(
+                                    "failed to force-delete pod '{pod_name}' in '{pod_ns}'"
+                                ))
+                            }
                         })?;
                         break;
                     }
@@ -406,8 +434,16 @@ impl K8sClient {
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     }
                     Err(kube::Error::Api(ref status)) if status.code == 404 => break,
-                    Err(e) => {
-                        return Err(e).with_context(|| {
+                    Err(err) => {
+                        if is_forbidden_error(&err) {
+                            return Err(anyhow::anyhow!(mutation_forbidden_message(
+                                "evict",
+                                "pod",
+                                pod_name,
+                                Some(pod_ns),
+                            )));
+                        }
+                        return Err(err).with_context(|| {
                             format!("failed to evict pod '{pod_name}' in '{pod_ns}'")
                         });
                     }
@@ -1413,7 +1449,17 @@ impl K8sClient {
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), namespace);
         jobs.create(&PostParams::default(), &job)
             .await
-            .with_context(|| format!("failed to create Job from CronJob '{name}'"))?;
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    anyhow::anyhow!(
+                        "RBAC forbidden: you are not allowed to create jobs from CronJob '{name}' in namespace '{namespace}'"
+                    )
+                } else {
+                    anyhow::anyhow!(err).context(format!(
+                        "failed to create Job from CronJob '{name}'"
+                    ))
+                }
+            })?;
 
         Ok(job_name)
     }
@@ -1439,11 +1485,17 @@ impl K8sClient {
         cronjobs
             .patch(name, &pp, &Patch::Merge(&patch))
             .await
-            .with_context(|| {
-                format!(
-                    "failed to {} CronJob '{name}' in namespace '{namespace}'",
-                    if suspend { "suspend" } else { "resume" }
-                )
+            .map_err(|err| {
+                let action = if suspend { "suspend" } else { "resume" };
+                if is_forbidden_error(&err) {
+                    anyhow::anyhow!(
+                        "RBAC forbidden: you are not allowed to {action} CronJob '{name}' in namespace '{namespace}'"
+                    )
+                } else {
+                    anyhow::anyhow!(err).context(format!(
+                        "failed to {action} CronJob '{name}' in namespace '{namespace}'"
+                    ))
+                }
             })?;
 
         Ok(())
@@ -2039,6 +2091,26 @@ fn list_forbidden_message(resource_name: &str, scope: ListFetchScope<'_>) -> Str
         }
         ListFetchScope::Cluster => {
             format!("RBAC forbidden: you are not allowed to list {resource_name} at cluster scope")
+        }
+    }
+}
+
+fn mutation_forbidden_message(
+    verb: &str,
+    resource_name: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> String {
+    match namespace {
+        Some(namespace) => {
+            format!(
+                "RBAC forbidden: you are not allowed to {verb} {resource_name} '{name}' in namespace '{namespace}'"
+            )
+        }
+        None => {
+            format!(
+                "RBAC forbidden: you are not allowed to {verb} {resource_name} '{name}' at cluster scope"
+            )
         }
     }
 }
@@ -3285,6 +3357,18 @@ mod tests {
         assert_eq!(
             list_forbidden_message("clusterroles", ListFetchScope::Cluster),
             "RBAC forbidden: you are not allowed to list clusterroles at cluster scope"
+        );
+    }
+
+    #[test]
+    fn mutation_forbidden_message_names_scope() {
+        assert_eq!(
+            mutation_forbidden_message("evict", "pod", "api-0", Some("prod")),
+            "RBAC forbidden: you are not allowed to evict pod 'api-0' in namespace 'prod'"
+        );
+        assert_eq!(
+            mutation_forbidden_message("patch", "node", "node-a", None),
+            "RBAC forbidden: you are not allowed to patch node 'node-a' at cluster scope"
         );
     }
 
