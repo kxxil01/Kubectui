@@ -651,8 +651,9 @@ pub(crate) fn responsive_table_widths<const N: usize>(
 
 /// Proportionally scales column constraints to fit the available width.
 ///
-/// If the ideal total fits, returns the input unchanged. Otherwise converts
-/// to percentage-based constraints using largest-remainder allocation.
+/// If the ideal total fits, preserves the input unless no column can absorb
+/// slack, in which case the first fixed column becomes `Min`. Otherwise
+/// converts to percentage-based constraints using largest-remainder allocation.
 pub(crate) fn responsive_table_widths_vec(area_width: u16, wide: &[Constraint]) -> Vec<Constraint> {
     let n = wide.len();
     if n == 0 {
