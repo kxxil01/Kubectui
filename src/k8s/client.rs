@@ -1061,10 +1061,13 @@ impl K8sClient {
             }
             ResourceRef::Service(name, namespace) => {
                 let api: Api<Service> = Api::namespaced(self.client.clone(), namespace);
-                let service = api
-                    .get(name)
-                    .await
-                    .with_context(|| format!("failed fetching Service '{}'", name))?;
+                let service = api.get(name).await.map_err(|err| {
+                    if is_forbidden_error(&err) {
+                        anyhow::anyhow!(readiness_get_forbidden_message("Service", name, namespace))
+                    } else {
+                        anyhow::anyhow!(err).context(format!("failed fetching Service '{name}'"))
+                    }
+                })?;
                 if !service_requires_load_balancer_readiness(&service) {
                     return Ok(());
                 }
@@ -1410,10 +1413,14 @@ impl K8sClient {
         use kube::api::PostParams;
 
         let cronjobs: Api<CronJob> = Api::namespaced(self.client.clone(), namespace);
-        let cronjob = cronjobs
-            .get(name)
-            .await
-            .with_context(|| format!("failed to get CronJob '{name}' in '{namespace}'"))?;
+        let cronjob = cronjobs.get(name).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow::anyhow!(cronjob_trigger_get_forbidden_message(name, namespace))
+            } else {
+                anyhow::anyhow!(err)
+                    .context(format!("failed to get CronJob '{name}' in '{namespace}'"))
+            }
+        })?;
 
         let job_template = cronjob
             .spec
@@ -1608,11 +1615,15 @@ impl K8sClient {
     /// Gets the current and desired replica counts for a deployment.
     pub async fn get_deployment_replicas(&self, name: &str, namespace: &str) -> Result<(i32, i32)> {
         let deployments_api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
-        let deployment = deployments_api.get(name).await.with_context(|| {
-            format!(
-                "deployment '{}' not found in namespace '{}'",
-                name, namespace
-            )
+        let deployment = deployments_api.get(name).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow::anyhow!(replica_check_get_forbidden_message(name, namespace))
+            } else {
+                anyhow::anyhow!(err).context(format!(
+                    "deployment '{}' not found in namespace '{}'",
+                    name, namespace
+                ))
+            }
         })?;
 
         let desired_replicas = deployment
@@ -2122,6 +2133,33 @@ fn mutation_forbidden_message(
                 "RBAC forbidden: you are not allowed to {verb} {resource_name} '{name}' at cluster scope"
             )
         }
+    }
+}
+
+fn readiness_get_forbidden_message(kind: &str, name: &str, namespace: &str) -> String {
+    format!(
+        "RBAC forbidden: you are not allowed to get {kind} '{name}' in namespace '{namespace}' before waiting for readiness"
+    )
+}
+
+fn cronjob_trigger_get_forbidden_message(name: &str, namespace: &str) -> String {
+    format!(
+        "RBAC forbidden: you are not allowed to get CronJob '{name}' in namespace '{namespace}' before creating a Job"
+    )
+}
+
+fn replica_check_get_forbidden_message(name: &str, namespace: &str) -> String {
+    format!(
+        "RBAC forbidden: you are not allowed to get Deployment '{name}' in namespace '{namespace}' while checking replicas"
+    )
+}
+
+fn flux_list_forbidden_message(kind: &str, namespace: Option<&str>) -> String {
+    match namespace {
+        Some(namespace) => format!(
+            "RBAC forbidden: you are not allowed to list Flux {kind} resources in namespace '{namespace}'"
+        ),
+        None => format!("RBAC forbidden: you are not allowed to list Flux {kind} resources"),
     }
 }
 
@@ -2688,6 +2726,12 @@ impl K8sClient {
                 Err(err) if is_missing_api_error(&err) => {
                     // Flux CRDs changed while running: invalidate and rediscover next refresh.
                     needs_rediscovery = true;
+                }
+                Err(err) if is_forbidden_error(&err) => {
+                    return Err(anyhow::anyhow!(flux_list_forbidden_message(
+                        target.spec.kind,
+                        namespace
+                    )));
                 }
                 Err(err) => {
                     return Err(err).with_context(|| {
@@ -3379,6 +3423,26 @@ mod tests {
         assert_eq!(
             mutation_forbidden_message("patch", "node", "node-a", None),
             "RBAC forbidden: you are not allowed to patch node 'node-a' at cluster scope"
+        );
+    }
+
+    #[test]
+    fn action_read_forbidden_messages_name_scope_and_reason() {
+        assert_eq!(
+            readiness_get_forbidden_message("Service", "api", "prod"),
+            "RBAC forbidden: you are not allowed to get Service 'api' in namespace 'prod' before waiting for readiness"
+        );
+        assert_eq!(
+            cronjob_trigger_get_forbidden_message("backup", "ops"),
+            "RBAC forbidden: you are not allowed to get CronJob 'backup' in namespace 'ops' before creating a Job"
+        );
+        assert_eq!(
+            replica_check_get_forbidden_message("web", "prod"),
+            "RBAC forbidden: you are not allowed to get Deployment 'web' in namespace 'prod' while checking replicas"
+        );
+        assert_eq!(
+            flux_list_forbidden_message("Kustomization", Some("flux-system")),
+            "RBAC forbidden: you are not allowed to list Flux Kustomization resources in namespace 'flux-system'"
         );
     }
 
