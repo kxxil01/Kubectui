@@ -1120,9 +1120,13 @@ impl K8sClient {
     /// Fetches the cluster-wide pod count regardless of the active namespace scope.
     pub async fn fetch_cluster_pod_count(&self) -> Result<usize> {
         let pods: Api<Pod> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&pods, &ListParams::default(), || {
-            "failed fetching pod count".to_string()
-        })
+        let list = list_items_required(
+            &pods,
+            &ListParams::default(),
+            "pods",
+            ListFetchScope::Namespaced(None),
+            || "failed fetching pod count".to_string(),
+        )
         .await?;
         Ok(list.len())
     }
@@ -1552,9 +1556,10 @@ impl K8sClient {
             match secrets_api.list(&lp).await {
                 Ok(list) => list.items,
                 Err(err) if is_forbidden_error(&err) => {
-                    return Err(anyhow::anyhow!(
-                        "RBAC denied reading Helm release secrets for '{release_name}' in namespace '{namespace}'"
-                    ));
+                    return Err(anyhow::anyhow!(helm_release_secret_forbidden_message(
+                        release_name,
+                        namespace
+                    )));
                 }
                 Err(err) => {
                     return Err(err).with_context(|| {
@@ -2161,6 +2166,12 @@ fn flux_list_forbidden_message(kind: &str, namespace: Option<&str>) -> String {
         ),
         None => format!("RBAC forbidden: you are not allowed to list Flux {kind} resources"),
     }
+}
+
+fn helm_release_secret_forbidden_message(release_name: &str, namespace: &str) -> String {
+    format!(
+        "RBAC forbidden: you are not allowed to list Helm release secrets for '{release_name}' in namespace '{namespace}'"
+    )
 }
 
 fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
@@ -3443,6 +3454,10 @@ mod tests {
         assert_eq!(
             flux_list_forbidden_message("Kustomization", Some("flux-system")),
             "RBAC forbidden: you are not allowed to list Flux Kustomization resources in namespace 'flux-system'"
+        );
+        assert_eq!(
+            helm_release_secret_forbidden_message("api", "prod"),
+            "RBAC forbidden: you are not allowed to list Helm release secrets for 'api' in namespace 'prod'"
         );
     }
 

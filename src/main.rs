@@ -102,6 +102,16 @@ type AllContainerLogsInfo = (
     ResourceRef,
 );
 
+fn pod_get_forbidden_status(action: &str, pod_name: &str, namespace: &str) -> String {
+    format!(
+        "RBAC forbidden: you are not allowed to get Pod '{pod_name}' in namespace '{namespace}' for {action}"
+    )
+}
+
+fn is_forbidden_kube_error(err: &kube::Error) -> bool {
+    matches!(err, kube::Error::Api(response) if response.is_forbidden())
+}
+
 fn should_handle_root_enter(key: crossterm::event::KeyEvent, app: &AppState) -> bool {
     key.code == KeyCode::Enter
         && plain_shortcut(key)
@@ -7349,7 +7359,17 @@ pub(crate) async fn run_app_inner(
                             let result = pods_api
                                 .get(&pod_name)
                                 .await
-                                .map_err(|err| err.to_string())
+                                .map_err(|err| {
+                                    if is_forbidden_kube_error(&err) {
+                                        pod_get_forbidden_status(
+                                            "logs container discovery",
+                                            &pod_name,
+                                            &pod_ns,
+                                        )
+                                    } else {
+                                        err.to_string()
+                                    }
+                                })
                                 .map(|pod| {
                                     pod.spec
                                         .map(|spec| {
@@ -8827,6 +8847,13 @@ pub(crate) async fn run_app_inner(
                             let pods_api: Api<Pod> = Api::namespaced(k, &pod_ns);
                             let result = match pods_api.get(&pod_name).await {
                                 Ok(pod) => Ok(extract_probes_from_pod(&pod).unwrap_or_default()),
+                                Err(err) if is_forbidden_kube_error(&err) => {
+                                    Err(pod_get_forbidden_status(
+                                        "probe inspection",
+                                        &pod_name,
+                                        &pod_ns,
+                                    ))
+                                }
                                 Err(err) => Err(format!("Failed to load probes: {err}")),
                             };
                             let _ = tx
