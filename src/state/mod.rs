@@ -2345,6 +2345,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vulnerability_fetch_error_is_preserved_for_active_view() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource {
+            vulnerability_reports_err: Some(
+                "RBAC forbidden: you are not allowed to list vulnerabilityreports in namespace 'prod'"
+                    .to_string(),
+            ),
+            ..MockDataSource::success()
+        };
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("prod"),
+                refresh_options(RefreshScope::SECURITY, false),
+            )
+            .await
+            .expect("partial security refresh should preserve the fetch error and continue");
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert!(snapshot.vulnerability_reports.is_empty());
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some(
+                "vulnerabilityreports: RBAC forbidden: you are not allowed to list vulnerabilityreports in namespace 'prod'"
+            )
+        );
+        assert_eq!(snapshot.failed_resource_count, 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_fetch_error_is_preserved_for_dashboard_status() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource {
+            node_metrics_err: Some(
+                "RBAC forbidden: you are not allowed to list node metrics at cluster scope"
+                    .to_string(),
+            ),
+            pod_metrics_err: Some(
+                "RBAC forbidden: you are not allowed to list pod metrics across all namespaces"
+                    .to_string(),
+            ),
+            ..MockDataSource::success()
+        };
+
+        state
+            .refresh_with_options(&source, None, refresh_options(RefreshScope::METRICS, false))
+            .await
+            .expect("partial metrics refresh should preserve fetch errors and continue");
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert!(snapshot.node_metrics.is_empty());
+        assert!(snapshot.pod_metrics.is_empty());
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some(
+                "nodemetrics: RBAC forbidden: you are not allowed to list node metrics at cluster scope | podmetrics: RBAC forbidden: you are not allowed to list pod metrics across all namespaces"
+            )
+        );
+        assert_eq!(snapshot.failed_resource_count, 2);
+    }
+
+    #[tokio::test]
     async fn refresh_namespaces_count_unions_pods_services_and_deployments() {
         let mut state = GlobalState::default();
         let source = MockDataSource {

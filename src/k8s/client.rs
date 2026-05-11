@@ -826,8 +826,14 @@ impl K8sClient {
 
         let items = match api.list(&ListParams::default()).await {
             Ok(list) => valid_guarded_dynamic_items(list.items),
-            Err(err) if is_forbidden_error(&err) || is_missing_api_error(&err) => {
+            Err(err) if is_missing_api_error(&err) => {
                 return Ok(Vec::new());
+            }
+            Err(err) if is_forbidden_error(&err) => {
+                return Err(anyhow::anyhow!(list_forbidden_message(
+                    "vulnerabilityreports",
+                    ListFetchScope::Namespaced(namespace),
+                )));
             }
             Err(err) => {
                 return Err(err).with_context(|| {
@@ -858,8 +864,14 @@ impl K8sClient {
 
         let items = match api.list(&ListParams::default()).await {
             Ok(list) => valid_guarded_dynamic_items(list.items),
-            Err(err) if is_forbidden_error(&err) || is_missing_api_error(&err) => {
+            Err(err) if is_missing_api_error(&err) => {
                 return Ok(Vec::new());
+            }
+            Err(err) if is_forbidden_error(&err) => {
+                return Err(anyhow::anyhow!(list_forbidden_message(
+                    "clustervulnerabilityreports",
+                    ListFetchScope::Cluster,
+                )));
             }
             Err(err) => return Err(err).context("failed fetching cluster vulnerability reports"),
         };
@@ -883,8 +895,13 @@ impl K8sClient {
 
         let obj = match api.get(name).await {
             Ok(value) => value,
-            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+            Err(err) if is_metrics_api_unavailable(&err) => {
                 return Ok(None);
+            }
+            Err(err) if is_forbidden_error(&err) => {
+                return Err(anyhow::anyhow!(
+                    "RBAC forbidden: you are not allowed to get pod metrics for pod '{name}' in namespace '{namespace}'"
+                ));
             }
             Err(err) => {
                 return Err(err).with_context(|| {
@@ -909,8 +926,13 @@ impl K8sClient {
 
         let obj = match api.get(name).await {
             Ok(value) => value,
-            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+            Err(err) if is_metrics_api_unavailable(&err) => {
                 return Ok(None);
+            }
+            Err(err) if is_forbidden_error(&err) => {
+                return Err(anyhow::anyhow!(
+                    "RBAC forbidden: you are not allowed to get node metrics for node '{name}'"
+                ));
             }
             Err(err) => {
                 return Err(err)
@@ -931,8 +953,14 @@ impl K8sClient {
 
         let list = match api.list(&ListParams::default()).await {
             Ok(list) => list.items,
-            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+            Err(err) if is_metrics_api_unavailable(&err) => {
                 return Ok(Vec::new());
+            }
+            Err(err) if is_forbidden_error(&err) => {
+                return Err(anyhow::anyhow!(list_forbidden_message(
+                    "node metrics",
+                    ListFetchScope::Cluster,
+                )));
             }
             Err(err) => return Err(err).context("failed listing node metrics"),
         };
@@ -962,8 +990,14 @@ impl K8sClient {
 
         let list = match api.list(&ListParams::default()).await {
             Ok(list) => list.items,
-            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+            Err(err) if is_metrics_api_unavailable(&err) => {
                 return Ok(Vec::new());
+            }
+            Err(err) if is_forbidden_error(&err) => {
+                return Err(anyhow::anyhow!(list_forbidden_message(
+                    "pod metrics",
+                    ListFetchScope::Namespaced(namespace),
+                )));
             }
             Err(err) => return Err(err).context("failed listing pod metrics"),
         };
