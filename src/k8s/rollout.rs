@@ -101,11 +101,14 @@ impl K8sClient {
             &Patch::Merge(json!({ "spec": { "paused": paused } })),
         )
         .await
-        .with_context(|| {
-            if paused {
-                format!("failed to pause deployment '{name}' in '{namespace}'")
+        .map_err(|err| {
+            let action = if paused { "pause" } else { "resume" };
+            if is_forbidden_error(&err) {
+                rollout_forbidden_message(action, "Deployment", name, namespace)
             } else {
-                format!("failed to resume deployment '{name}' in '{namespace}'")
+                anyhow!(err).context(format!(
+                    "failed to {action} deployment '{name}' in '{namespace}'"
+                ))
             }
         })?;
         Ok(())
@@ -119,8 +122,14 @@ impl K8sClient {
         match resource {
             ResourceRef::Deployment(name, namespace) => {
                 let api: Api<Deployment> = Api::namespaced(self.get_client(), namespace);
-                let deployment = api.get(name).await.with_context(|| {
-                    format!("failed to fetch deployment '{name}' in '{namespace}'")
+                let deployment = api.get(name).await.map_err(|err| {
+                    if is_forbidden_error(&err) {
+                        rollout_forbidden_message("get", "Deployment", name, namespace)
+                    } else {
+                        anyhow!(err).context(format!(
+                            "failed to fetch deployment '{name}' in '{namespace}'"
+                        ))
+                    }
                 })?;
                 let uid = deployment.metadata.uid.clone();
                 let replicasets =
@@ -143,8 +152,14 @@ impl K8sClient {
             }
             ResourceRef::StatefulSet(name, namespace) => {
                 let api: Api<StatefulSet> = Api::namespaced(self.get_client(), namespace);
-                let statefulset = api.get(name).await.with_context(|| {
-                    format!("failed to fetch statefulset '{name}' in '{namespace}'")
+                let statefulset = api.get(name).await.map_err(|err| {
+                    if is_forbidden_error(&err) {
+                        rollout_forbidden_message("get", "StatefulSet", name, namespace)
+                    } else {
+                        anyhow!(err).context(format!(
+                            "failed to fetch statefulset '{name}' in '{namespace}'"
+                        ))
+                    }
                 })?;
                 let revisions = list_related_controller_revisions(
                     self,
@@ -169,8 +184,14 @@ impl K8sClient {
             }
             ResourceRef::DaemonSet(name, namespace) => {
                 let api: Api<DaemonSet> = Api::namespaced(self.get_client(), namespace);
-                let daemonset = api.get(name).await.with_context(|| {
-                    format!("failed to fetch daemonset '{name}' in '{namespace}'")
+                let daemonset = api.get(name).await.map_err(|err| {
+                    if is_forbidden_error(&err) {
+                        rollout_forbidden_message("get", "DaemonSet", name, namespace)
+                    } else {
+                        anyhow!(err).context(format!(
+                            "failed to fetch daemonset '{name}' in '{namespace}'"
+                        ))
+                    }
                 })?;
                 let revisions = list_related_controller_revisions(
                     self,
@@ -206,10 +227,15 @@ async fn fetch_deployment_rollout(
     namespace: &str,
 ) -> Result<RolloutInspection> {
     let api: Api<Deployment> = Api::namespaced(client.get_client(), namespace);
-    let deployment = api
-        .get(name)
-        .await
-        .with_context(|| format!("failed to fetch deployment '{name}' in '{namespace}'"))?;
+    let deployment = api.get(name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            rollout_forbidden_message("get", "Deployment", name, namespace)
+        } else {
+            anyhow!(err).context(format!(
+                "failed to fetch deployment '{name}' in '{namespace}'"
+            ))
+        }
+    })?;
     let status = deployment.status.as_ref();
     let spec = deployment.spec.as_ref();
     let desired = spec.and_then(|spec| spec.replicas).unwrap_or(1);
@@ -299,10 +325,15 @@ async fn fetch_statefulset_rollout(
     namespace: &str,
 ) -> Result<RolloutInspection> {
     let api: Api<StatefulSet> = Api::namespaced(client.get_client(), namespace);
-    let statefulset = api
-        .get(name)
-        .await
-        .with_context(|| format!("failed to fetch statefulset '{name}' in '{namespace}'"))?;
+    let statefulset = api.get(name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            rollout_forbidden_message("get", "StatefulSet", name, namespace)
+        } else {
+            anyhow!(err).context(format!(
+                "failed to fetch statefulset '{name}' in '{namespace}'"
+            ))
+        }
+    })?;
     let status = statefulset.status.as_ref();
     let spec = statefulset.spec.as_ref();
     let revisions = list_related_controller_revisions(
@@ -392,10 +423,15 @@ async fn fetch_daemonset_rollout(
     namespace: &str,
 ) -> Result<RolloutInspection> {
     let api: Api<DaemonSet> = Api::namespaced(client.get_client(), namespace);
-    let daemonset = api
-        .get(name)
-        .await
-        .with_context(|| format!("failed to fetch daemonset '{name}' in '{namespace}'"))?;
+    let daemonset = api.get(name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            rollout_forbidden_message("get", "DaemonSet", name, namespace)
+        } else {
+            anyhow!(err).context(format!(
+                "failed to fetch daemonset '{name}' in '{namespace}'"
+            ))
+        }
+    })?;
     let status = daemonset.status.as_ref();
     let spec = daemonset.spec.as_ref();
     let revisions = list_related_controller_revisions(
@@ -483,10 +519,15 @@ async fn list_related_replicasets(
     owner_uid: Option<&str>,
 ) -> Result<Vec<ReplicaSet>> {
     let api: Api<ReplicaSet> = Api::namespaced(client.get_client(), namespace);
-    let items = api
-        .list(&Default::default())
-        .await
-        .with_context(|| format!("failed to list ReplicaSets in namespace '{namespace}'"))?;
+    let items = api.list(&Default::default()).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            rollout_list_forbidden_message("ReplicaSets", namespace)
+        } else {
+            anyhow!(err).context(format!(
+                "failed to list ReplicaSets in namespace '{namespace}'"
+            ))
+        }
+    })?;
     Ok(items
         .items
         .into_iter()
@@ -501,8 +542,14 @@ async fn list_related_controller_revisions(
     owner_uid: Option<&str>,
 ) -> Result<Vec<ControllerRevision>> {
     let api: Api<ControllerRevision> = Api::namespaced(client.get_client(), namespace);
-    let items = api.list(&Default::default()).await.with_context(|| {
-        format!("failed to list ControllerRevisions in namespace '{namespace}'")
+    let items = api.list(&Default::default()).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            rollout_list_forbidden_message("ControllerRevisions", namespace)
+        } else {
+            anyhow!(err).context(format!(
+                "failed to list ControllerRevisions in namespace '{namespace}'"
+            ))
+        }
     })?;
     Ok(items
         .items
@@ -536,9 +583,7 @@ where
     .await
     .map_err(|err| {
         if is_forbidden_error(&err) {
-            anyhow!(
-                "RBAC forbidden: you are not allowed to patch workload '{name}' in namespace '{namespace}'"
-            )
+            rollout_forbidden_message("patch", "workload", name, namespace)
         } else {
             anyhow!(err).context(format!(
                 "failed to patch workload '{name}' in namespace '{namespace}'"
@@ -546,6 +591,23 @@ where
         }
     })?;
     Ok(())
+}
+
+fn rollout_forbidden_message(
+    action: &str,
+    kind: &str,
+    name: &str,
+    namespace: &str,
+) -> anyhow::Error {
+    anyhow!(
+        "RBAC forbidden: you are not allowed to {action} {kind} '{name}' in namespace '{namespace}'"
+    )
+}
+
+fn rollout_list_forbidden_message(resource: &str, namespace: &str) -> anyhow::Error {
+    anyhow!(
+        "RBAC forbidden: you are not allowed to list {resource} in namespace '{namespace}' for rollout inspection"
+    )
 }
 
 fn extract_controller_revision_template(
@@ -715,5 +777,17 @@ mod tests {
         let mut annotations = BTreeMap::new();
         annotations.insert(DEPLOYMENT_REVISION_ANNOTATION.to_string(), "7".to_string());
         assert_eq!(deployment_revision(Some(&annotations)), Some(7));
+    }
+
+    #[test]
+    fn rollout_forbidden_messages_scope_workload_and_related_lists() {
+        assert_eq!(
+            rollout_forbidden_message("get", "Deployment", "api", "prod").to_string(),
+            "RBAC forbidden: you are not allowed to get Deployment 'api' in namespace 'prod'"
+        );
+        assert_eq!(
+            rollout_list_forbidden_message("ReplicaSets", "prod").to_string(),
+            "RBAC forbidden: you are not allowed to list ReplicaSets in namespace 'prod' for rollout inspection"
+        );
     }
 }

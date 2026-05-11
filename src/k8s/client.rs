@@ -1688,14 +1688,24 @@ impl K8sClient {
 
         // 1. Verify pod exists
         let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &target.namespace);
-        let pod =
-            pods_api
-                .get(&target.pod_name)
-                .await
-                .map_err(|_| PortForwardError::PodNotFound {
+        let pod = pods_api
+            .get(&target.pod_name)
+            .await
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    PortForwardError::Forbidden {
+                        message: format!(
+                            "RBAC forbidden: you are not allowed to get Pod '{}' in namespace '{}' for port-forward",
+                            target.pod_name, target.namespace
+                        ),
+                    }
+                } else {
+                    PortForwardError::PodNotFound {
                     namespace: target.namespace.clone(),
                     pod_name: target.pod_name.clone(),
-                })?;
+                    }
+                }
+            })?;
 
         // 2. Check if port is exposed in pod spec
         let container_ports: Vec<u16> = pod

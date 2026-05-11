@@ -19,7 +19,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::k8s::client::K8sClient;
+use crate::k8s::client::{K8sClient, is_forbidden_error};
 
 const SHELL_READY_GRACE_PERIOD_MS: u64 = 250;
 const READ_CHUNK_SIZE: usize = 1024;
@@ -331,10 +331,13 @@ pub async fn fetch_pod_containers(
     namespace: &str,
 ) -> Result<Vec<String>> {
     let pods: Api<Pod> = Api::namespaced(client.get_client(), namespace);
-    let pod = pods
-        .get(pod_name)
-        .await
-        .with_context(|| format!("failed to fetch Pod '{pod_name}'"))?;
+    let pod = pods.get(pod_name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            pod_get_forbidden_message(pod_name, namespace)
+        } else {
+            anyhow!(err).context(format!("failed to fetch Pod '{pod_name}'"))
+        }
+    })?;
     let containers = pod
         .spec
         .context("pod missing spec")?
@@ -353,10 +356,13 @@ pub async fn launch_debug_container(
     request: &DebugContainerLaunchRequest,
 ) -> Result<DebugContainerLaunchResult> {
     let pods: Api<Pod> = Api::namespaced(client.get_client(), &request.namespace);
-    let pod = pods
-        .get(&request.pod_name)
-        .await
-        .with_context(|| format!("failed to fetch Pod '{}'", request.pod_name))?;
+    let pod = pods.get(&request.pod_name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            pod_get_forbidden_message(&request.pod_name, &request.namespace)
+        } else {
+            anyhow!(err).context(format!("failed to fetch Pod '{}'", request.pod_name))
+        }
+    })?;
     ensure_pod_supports_debug_container(&pod, &request.pod_name)?;
     let container_name = next_debug_container_name(&pod);
     let patch = serde_json::json!({
@@ -377,14 +383,28 @@ pub async fn launch_debug_container(
 
     pods.patch_ephemeral_containers(&request.pod_name, &patch_params, &Patch::Strategic(&patch))
         .await
-        .with_context(|| {
-            format!(
-                "failed to create debug container on Pod '{}' in namespace '{}'",
-                request.pod_name, request.namespace
-            )
+        .map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow!(
+                    "RBAC forbidden: you are not allowed to create debug containers on Pod '{}' in namespace '{}'",
+                    request.pod_name,
+                    request.namespace
+                )
+            } else {
+                anyhow!(err).context(format!(
+                    "failed to create debug container on Pod '{}' in namespace '{}'",
+                    request.pod_name, request.namespace
+                ))
+            }
         })?;
 
-    wait_for_debug_container_ready(&pods, &request.pod_name, &container_name).await?;
+    wait_for_debug_container_ready(
+        &pods,
+        &request.pod_name,
+        &request.namespace,
+        &container_name,
+    )
+    .await?;
 
     Ok(DebugContainerLaunchResult {
         pod_name: request.pod_name.clone(),
@@ -452,7 +472,7 @@ async fn run_exec_session(
 ) -> Result<()> {
     let pods: Api<Pod> = Api::namespaced(client.get_client(), &namespace);
     let (mut attached, shell, mut status_future) =
-        open_shell_process(&pods, &pod_name, &container_name, &config).await?;
+        open_shell_process(&pods, &pod_name, &namespace, &container_name, &config).await?;
 
     let _ = update_tx
         .send(ExecEvent::Opened {
@@ -581,6 +601,7 @@ async fn await_attached_process(attached: AttachedProcess) {
 async fn open_shell_process(
     pods: &Api<Pod>,
     pod_name: &str,
+    namespace: &str,
     container_name: &str,
     config: &ExecConfig,
 ) -> Result<(AttachedProcess, String, StatusFuture)> {
@@ -591,7 +612,15 @@ async fn open_shell_process(
         let mut attached = pods
             .exec(pod_name, command.iter().map(String::as_str), &attach)
             .await
-            .with_context(|| format!("failed to exec {shell} in Pod '{pod_name}'"))?;
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    anyhow!(
+                        "RBAC forbidden: you are not allowed to exec into Pod '{pod_name}' container '{container_name}' in namespace '{namespace}'"
+                    )
+                } else {
+                    anyhow!(err).context(format!("failed to exec {shell} in Pod '{pod_name}'"))
+                }
+            })?;
         let mut status_future = attached
             .take_status()
             .map(|future| Box::pin(future) as StatusFuture)
@@ -819,16 +848,22 @@ fn next_debug_container_name(pod: &Pod) -> String {
 async fn wait_for_debug_container_ready(
     pods: &Api<Pod>,
     pod_name: &str,
+    namespace: &str,
     container_name: &str,
 ) -> Result<()> {
     let started = tokio::time::Instant::now();
     let mut last_state: Option<String> = None;
 
     loop {
-        let pod = pods
-            .get(pod_name)
-            .await
-            .with_context(|| format!("failed to re-fetch Pod '{pod_name}'"))?;
+        let pod = pods.get(pod_name).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow!(
+                    "RBAC forbidden: you are not allowed to get Pod '{pod_name}' in namespace '{namespace}' while waiting for debug container readiness"
+                )
+            } else {
+                anyhow!(err).context(format!("failed to re-fetch Pod '{pod_name}'"))
+            }
+        })?;
         if let Some(status) = pod.status.as_ref()
             && let Some(container_status) = status
                 .ephemeral_container_statuses
@@ -877,6 +912,12 @@ async fn wait_for_debug_container_ready(
     }
 }
 
+fn pod_get_forbidden_message(pod_name: &str, namespace: &str) -> anyhow::Error {
+    anyhow!(
+        "RBAC forbidden: you are not allowed to get Pod '{pod_name}' in namespace '{namespace}'"
+    )
+}
+
 fn container_state_is_running(state: &ContainerState) -> bool {
     state.running.is_some()
 }
@@ -918,6 +959,14 @@ mod tests {
         assert!(shells.iter().any(|shell| shell == "/bin/bash"));
         assert!(shells.iter().any(|shell| shell == "/bin/sh"));
         assert!(shells.iter().any(|shell| shell == "/busybox/sh"));
+    }
+
+    #[test]
+    fn pod_get_forbidden_message_scopes_namespace() {
+        assert_eq!(
+            pod_get_forbidden_message("api-0", "prod").to_string(),
+            "RBAC forbidden: you are not allowed to get Pod 'api-0' in namespace 'prod'"
+        );
     }
 
     #[test]

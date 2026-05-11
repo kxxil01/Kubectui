@@ -1,6 +1,6 @@
 //! Kubernetes deployment scaling operations with progress tracking.
 
-use crate::k8s::client::K8sClient;
+use crate::k8s::client::{K8sClient, is_forbidden_error};
 use anyhow::{Context, Result, anyhow};
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, StatefulSet};
 use kube::{Api, api::Patch, api::PatchParams};
@@ -94,21 +94,29 @@ impl K8sClient {
         }
         let client = self.get_client();
         let deployments: Api<Deployment> = Api::namespaced(client, namespace);
-        deployments.get(name).await.with_context(|| {
-            format!(
-                "deployment '{}' not found in namespace '{}'",
-                name, namespace
-            )
+        deployments.get(name).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                scale_forbidden_message("get Deployment", name, namespace)
+            } else {
+                anyhow!(err).context(format!(
+                    "deployment '{}' not found in namespace '{}'",
+                    name, namespace
+                ))
+            }
         })?;
         let patch = Patch::Merge(json!({"spec": {"replicas": replicas}}));
         deployments
             .patch(name, &PatchParams::default(), &patch)
             .await
-            .with_context(|| {
-                format!(
-                    "failed to patch deployment '{}' in namespace '{}'",
-                    name, namespace
-                )
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    scale_forbidden_message("scale Deployment", name, namespace)
+                } else {
+                    anyhow!(err).context(format!(
+                        "failed to patch deployment '{}' in namespace '{}'",
+                        name, namespace
+                    ))
+                }
             })?;
         Ok(())
     }
@@ -127,21 +135,29 @@ impl K8sClient {
         }
         let client = self.get_client();
         let statefulsets: Api<StatefulSet> = Api::namespaced(client, namespace);
-        statefulsets.get(name).await.with_context(|| {
-            format!(
-                "statefulset '{}' not found in namespace '{}'",
-                name, namespace
-            )
+        statefulsets.get(name).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                scale_forbidden_message("get StatefulSet", name, namespace)
+            } else {
+                anyhow!(err).context(format!(
+                    "statefulset '{}' not found in namespace '{}'",
+                    name, namespace
+                ))
+            }
         })?;
         let patch = Patch::Merge(json!({"spec": {"replicas": replicas}}));
         statefulsets
             .patch(name, &PatchParams::default(), &patch)
             .await
-            .with_context(|| {
-                format!(
-                    "failed to patch statefulset '{}' in namespace '{}'",
-                    name, namespace
-                )
+            .map_err(|err| {
+                if is_forbidden_error(&err) {
+                    scale_forbidden_message("scale StatefulSet", name, namespace)
+                } else {
+                    anyhow!(err).context(format!(
+                        "failed to patch statefulset '{}' in namespace '{}'",
+                        name, namespace
+                    ))
+                }
             })?;
         Ok(())
     }
@@ -191,6 +207,10 @@ impl K8sClient {
         }
         Ok(())
     }
+}
+
+fn scale_forbidden_message(action: &str, name: &str, namespace: &str) -> anyhow::Error {
+    anyhow!("RBAC forbidden: you are not allowed to {action} '{name}' in namespace '{namespace}'")
 }
 
 /// Executes a scale operation with progress tracking.
@@ -295,6 +315,14 @@ mod tests {
         let err = ScaleError::DeploymentNotFound("nginx".to_string(), "default".to_string());
         assert!(format!("{}", err).contains("nginx"));
         assert!(format!("{}", err).contains("default"));
+    }
+
+    #[test]
+    fn scale_forbidden_message_scopes_workload() {
+        assert_eq!(
+            scale_forbidden_message("scale Deployment", "api", "prod").to_string(),
+            "RBAC forbidden: you are not allowed to scale Deployment 'api' in namespace 'prod'"
+        );
     }
 
     #[test]

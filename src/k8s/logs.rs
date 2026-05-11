@@ -1,8 +1,12 @@
 //! Pod logs streaming client for KubecTUI.
 
+#[cfg(test)]
 use anyhow::Context;
+use anyhow::anyhow;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{Api, Client};
+
+use crate::k8s::client::is_forbidden_error;
 
 /// Pod reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,10 +47,13 @@ impl LogsClient {
             container: container.map(str::to_string),
             ..Default::default()
         };
-        let raw = pods
-            .logs(&pod_ref.name, &params)
-            .await
-            .context("failed to fetch pod logs")?;
+        let raw = pods.logs(&pod_ref.name, &params).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                logs_forbidden_message(&pod_ref.name, &pod_ref.namespace, container, false)
+            } else {
+                anyhow!(err).context("failed to fetch pod logs")
+            }
+        })?;
 
         Ok(raw.lines().map(str::to_string).collect())
     }
@@ -67,10 +74,13 @@ impl LogsClient {
             previous: true,
             ..Default::default()
         };
-        let raw = pods
-            .logs(&pod_ref.name, &params)
-            .await
-            .context("failed to fetch previous pod logs")?;
+        let raw = pods.logs(&pod_ref.name, &params).await.map_err(|err| {
+            if is_forbidden_error(&err) {
+                logs_forbidden_message(&pod_ref.name, &pod_ref.namespace, container, true)
+            } else {
+                anyhow!(err).context("failed to fetch previous pod logs")
+            }
+        })?;
 
         Ok(raw.lines().map(str::to_string).collect())
     }
@@ -83,6 +93,21 @@ impl LogsClient {
     }
 }
 
+fn logs_forbidden_message(
+    pod_name: &str,
+    namespace: &str,
+    container: Option<&str>,
+    previous: bool,
+) -> anyhow::Error {
+    let previous = if previous { " previous" } else { "" };
+    let container = container
+        .map(|container| format!(" container '{container}'"))
+        .unwrap_or_default();
+    anyhow!(
+        "RBAC forbidden: you are not allowed to read{previous} logs for pod '{pod_name}'{container} in namespace '{namespace}'"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +117,18 @@ mod tests {
         let pod = PodRef::new("my-pod".to_string(), "default".to_string());
         assert_eq!(pod.name, "my-pod");
         assert_eq!(pod.namespace, "default");
+    }
+
+    #[test]
+    fn logs_forbidden_message_scopes_container_and_previous() {
+        assert_eq!(
+            logs_forbidden_message("api-0", "prod", Some("app"), false).to_string(),
+            "RBAC forbidden: you are not allowed to read logs for pod 'api-0' container 'app' in namespace 'prod'"
+        );
+        assert_eq!(
+            logs_forbidden_message("api-0", "prod", None, true).to_string(),
+            "RBAC forbidden: you are not allowed to read previous logs for pod 'api-0' in namespace 'prod'"
+        );
     }
 
     #[tokio::test]

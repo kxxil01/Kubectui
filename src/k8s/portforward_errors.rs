@@ -24,6 +24,9 @@ pub enum PortForwardError {
     /// Permission denied (typically for privileged ports < 1024)
     PermissionDenied { port: u16, reason: String },
 
+    /// Kubernetes RBAC denied port-forward setup or stream access
+    Forbidden { message: String },
+
     /// Connection to pod failed
     ConnectionFailed {
         pod_name: String,
@@ -84,6 +87,7 @@ impl PortForwardError {
             Self::PermissionDenied { port, reason } => {
                 format!("Cannot bind to port {}: {} (try port > 1024)", port, reason)
             }
+            Self::Forbidden { message } => message.clone(),
             Self::ConnectionFailed {
                 pod_name,
                 retryable,
@@ -145,7 +149,9 @@ impl PortForwardError {
     /// Get severity level for error display
     pub fn severity(&self) -> ErrorSeverity {
         match self {
-            Self::PodNotFound { .. } | Self::PermissionDenied { .. } => ErrorSeverity::Error,
+            Self::PodNotFound { .. } | Self::PermissionDenied { .. } | Self::Forbidden { .. } => {
+                ErrorSeverity::Error
+            }
             Self::PortNotExposed { .. } | Self::PortInUse { .. } => ErrorSeverity::Warning,
             Self::ConnectionFailed { .. } => ErrorSeverity::Warning,
             Self::Timeout { .. } => ErrorSeverity::Warning,
@@ -202,5 +208,19 @@ mod tests {
             message: "test".to_string(),
         };
         assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn forbidden_message_is_direct_and_not_retryable() {
+        let err = PortForwardError::Forbidden {
+            message: "RBAC forbidden: you are not allowed to get Pod 'api-0' in namespace 'prod' for port-forward".to_string(),
+        };
+
+        assert_eq!(
+            err.to_user_message(),
+            "RBAC forbidden: you are not allowed to get Pod 'api-0' in namespace 'prod' for port-forward"
+        );
+        assert!(!err.is_retryable());
+        assert_eq!(err.severity(), ErrorSeverity::Error);
     }
 }
