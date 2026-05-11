@@ -190,7 +190,7 @@ pub fn render_pvcs(
     let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
-        sort_header_cell("NAME", sort, WorkloadSortColumn::Name, &theme, true),
+        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("NAMESPACE", theme.header_style())),
         Cell::from(Span::styled("STATUS", theme.header_style())),
         Cell::from(Span::styled("CAPACITY", theme.header_style())),
@@ -379,7 +379,7 @@ pub fn render_pvs(
     let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
-        sort_header_cell("NAME", sort, WorkloadSortColumn::Name, &theme, true),
+        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("CAPACITY", theme.header_style())),
         Cell::from(Span::styled("ACCESS MODES", theme.header_style())),
         Cell::from(Span::styled("RECLAIM", theme.header_style())),
@@ -572,7 +572,7 @@ pub fn render_storage_classes(
     let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
-        sort_header_cell("NAME", sort, WorkloadSortColumn::Name, &theme, true),
+        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("PROVISIONER", theme.header_style())),
         Cell::from(Span::styled("RECLAIM", theme.header_style())),
         Cell::from(Span::styled("BINDING MODE", theme.header_style())),
