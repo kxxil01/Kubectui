@@ -3634,6 +3634,34 @@ mod tests {
     }
 
     #[test]
+    fn sortable_name_headers_use_title_case() {
+        for (path, source) in [
+            ("views/storage.rs", include_str!("views/storage.rs")),
+            (
+                "views/security/roles.rs",
+                include_str!("views/security/roles.rs"),
+            ),
+            (
+                "views/security/cluster_roles.rs",
+                include_str!("views/security/cluster_roles.rs"),
+            ),
+            (
+                "views/security/role_bindings.rs",
+                include_str!("views/security/role_bindings.rs"),
+            ),
+            (
+                "views/security/cluster_role_bindings.rs",
+                include_str!("views/security/cluster_role_bindings.rs"),
+            ),
+        ] {
+            assert!(
+                !source.contains("sort_header_cell(\"NAME\""),
+                "{path} should use title-case sortable Name headers",
+            );
+        }
+    }
+
+    #[test]
     fn unsorted_age_tables_keep_age_width_consistent() {
         for (path, source) in [
             ("views/detail.rs", include_str!("views/detail.rs")),
