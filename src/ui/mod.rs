@@ -3787,6 +3787,22 @@ mod tests {
     }
 
     #[test]
+    fn secrets_view_uses_active_fetch_error_message() {
+        let snapshot = ClusterSnapshot {
+            last_error: Some(
+                "secrets: RBAC forbidden: you are not allowed to list Secrets in namespace 'prod'"
+                    .to_string(),
+            ),
+            ..ClusterSnapshot::default()
+        };
+
+        assert_eq!(
+            active_view_fetch_error(&snapshot, AppView::Secrets),
+            Some("RBAC forbidden: you are not allowed to list Secrets in namespace 'prod'")
+        );
+    }
+
+    #[test]
     fn vertical_primary_detail_chunks_compact_on_short_height() {
         let (primary, detail) = vertical_primary_detail_chunks(Rect::new(0, 0, 90, 18), 60, 8, 24);
         assert_eq!(primary.height, 10);

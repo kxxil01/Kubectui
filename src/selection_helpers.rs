@@ -783,13 +783,13 @@ pub fn detail_action_denied_message(
 ) -> String {
     match status {
         DetailActionAuthorization::Denied => format!(
-            "{} is not allowed for {} '{}'.",
+            "RBAC denied: {} is not allowed for {} '{}'.",
             action.label(),
             resource.kind(),
             resource.name()
         ),
         DetailActionAuthorization::Unknown => format!(
-            "{} requires verified authorization for {} '{}', but access could not be confirmed.",
+            "RBAC unknown: {} requires verified authorization for {} '{}', but access could not be confirmed.",
             action.label(),
             resource.kind(),
             resource.name()
@@ -1411,6 +1411,7 @@ mod tests {
             &resource,
             DetailActionAuthorization::Denied,
         );
+        assert!(msg.contains("RBAC denied"), "msg = {msg}");
         assert!(msg.contains("not allowed"), "msg = {msg}");
         assert!(msg.contains("api-0"), "msg = {msg}");
     }
@@ -1427,6 +1428,7 @@ mod tests {
             &resource,
             DetailActionAuthorization::Unknown,
         );
+        assert!(msg.contains("RBAC unknown"), "msg = {msg}");
         assert!(msg.contains("verified authorization"), "msg = {msg}");
         assert!(msg.contains("node-0"), "msg = {msg}");
     }

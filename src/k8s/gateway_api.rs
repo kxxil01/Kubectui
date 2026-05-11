@@ -1,6 +1,6 @@
 //! Dynamic Gateway API fetch and parsing helpers.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use kube::{
     Api, Client,
     api::{ApiResource, DynamicObject, GroupVersionKind, ListParams},
@@ -134,7 +134,9 @@ async fn list_gateway_api_resources(
         match api.list(&ListParams::default()).await {
             Ok(list) => return Ok((version, list.items)),
             Err(err) if is_missing_api_error(&err) => continue,
-            Err(err) if is_forbidden_error(&err) => return Ok((version, Vec::new())),
+            Err(err) if is_forbidden_error(&err) => {
+                return Err(anyhow!(gateway_api_forbidden_message(namespace, spec)));
+            }
             Err(err) => {
                 return Err(err).with_context(|| {
                     format!(
@@ -147,6 +149,26 @@ async fn list_gateway_api_resources(
     }
 
     Ok((spec.versions[0], Vec::new()))
+}
+
+fn gateway_api_forbidden_message(namespace: Option<&str>, spec: GatewayApiKindSpec) -> String {
+    if spec.namespaced {
+        match namespace {
+            Some(namespace) => format!(
+                "RBAC forbidden: you are not allowed to list {} in namespace '{}'",
+                spec.plural, namespace
+            ),
+            None => format!(
+                "RBAC forbidden: you are not allowed to list {} across all namespaces",
+                spec.plural
+            ),
+        }
+    } else {
+        format!(
+            "RBAC forbidden: you are not allowed to list {} at cluster scope",
+            spec.plural
+        )
+    }
 }
 
 fn parse_gateway_class(version: &str, item: &DynamicObject) -> Option<GatewayClassInfo> {
@@ -562,6 +584,22 @@ mod tests {
             },
             data,
         }
+    }
+
+    #[test]
+    fn gateway_api_forbidden_message_scopes_kind() {
+        assert_eq!(
+            gateway_api_forbidden_message(Some("prod"), GATEWAY_SPEC),
+            "RBAC forbidden: you are not allowed to list gateways in namespace 'prod'"
+        );
+        assert_eq!(
+            gateway_api_forbidden_message(None, HTTP_ROUTE_SPEC),
+            "RBAC forbidden: you are not allowed to list httproutes across all namespaces"
+        );
+        assert_eq!(
+            gateway_api_forbidden_message(None, GATEWAY_CLASS_SPEC),
+            "RBAC forbidden: you are not allowed to list gatewayclasses at cluster scope"
+        );
     }
 
     #[test]
