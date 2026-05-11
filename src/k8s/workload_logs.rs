@@ -14,6 +14,7 @@ use k8s_openapi::{
 use kube::{Api, Client, api::ListParams};
 
 use crate::app::ResourceRef;
+use crate::k8s::client::is_forbidden_error;
 
 pub const MAX_WORKLOAD_LOG_STREAMS: usize = 16;
 
@@ -33,10 +34,13 @@ pub async fn resolve_workload_log_targets(
         ResourceRef::Pod(name, namespace) => fetch_single_pod_target(client, name, namespace).await,
         ResourceRef::Deployment(name, namespace) => {
             let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
-            let workload = api
-                .get(name)
-                .await
-                .with_context(|| format!("failed to fetch Deployment '{name}'"))?;
+            let workload = api.get(name).await.map_err(|err| {
+                if is_forbidden_error(&err) {
+                    workload_log_get_forbidden("Deployment", name, namespace)
+                } else {
+                    anyhow!(err).context(format!("failed to fetch Deployment '{name}'"))
+                }
+            })?;
             list_pods_for_selector(
                 client,
                 namespace,
@@ -46,10 +50,13 @@ pub async fn resolve_workload_log_targets(
         }
         ResourceRef::StatefulSet(name, namespace) => {
             let api: Api<StatefulSet> = Api::namespaced(client.clone(), namespace);
-            let workload = api
-                .get(name)
-                .await
-                .with_context(|| format!("failed to fetch StatefulSet '{name}'"))?;
+            let workload = api.get(name).await.map_err(|err| {
+                if is_forbidden_error(&err) {
+                    workload_log_get_forbidden("StatefulSet", name, namespace)
+                } else {
+                    anyhow!(err).context(format!("failed to fetch StatefulSet '{name}'"))
+                }
+            })?;
             list_pods_for_selector(
                 client,
                 namespace,
@@ -59,10 +66,13 @@ pub async fn resolve_workload_log_targets(
         }
         ResourceRef::DaemonSet(name, namespace) => {
             let api: Api<DaemonSet> = Api::namespaced(client.clone(), namespace);
-            let workload = api
-                .get(name)
-                .await
-                .with_context(|| format!("failed to fetch DaemonSet '{name}'"))?;
+            let workload = api.get(name).await.map_err(|err| {
+                if is_forbidden_error(&err) {
+                    workload_log_get_forbidden("DaemonSet", name, namespace)
+                } else {
+                    anyhow!(err).context(format!("failed to fetch DaemonSet '{name}'"))
+                }
+            })?;
             list_pods_for_selector(
                 client,
                 namespace,
@@ -72,10 +82,13 @@ pub async fn resolve_workload_log_targets(
         }
         ResourceRef::ReplicaSet(name, namespace) => {
             let api: Api<ReplicaSet> = Api::namespaced(client.clone(), namespace);
-            let workload = api
-                .get(name)
-                .await
-                .with_context(|| format!("failed to fetch ReplicaSet '{name}'"))?;
+            let workload = api.get(name).await.map_err(|err| {
+                if is_forbidden_error(&err) {
+                    workload_log_get_forbidden("ReplicaSet", name, namespace)
+                } else {
+                    anyhow!(err).context(format!("failed to fetch ReplicaSet '{name}'"))
+                }
+            })?;
             list_pods_for_selector(
                 client,
                 namespace,
@@ -85,10 +98,13 @@ pub async fn resolve_workload_log_targets(
         }
         ResourceRef::ReplicationController(name, namespace) => {
             let api: Api<ReplicationController> = Api::namespaced(client.clone(), namespace);
-            let workload = api
-                .get(name)
-                .await
-                .with_context(|| format!("failed to fetch ReplicationController '{name}'"))?;
+            let workload = api.get(name).await.map_err(|err| {
+                if is_forbidden_error(&err) {
+                    workload_log_get_forbidden("ReplicationController", name, namespace)
+                } else {
+                    anyhow!(err).context(format!("failed to fetch ReplicationController '{name}'"))
+                }
+            })?;
             list_pods_for_match_labels(
                 client,
                 namespace,
@@ -98,10 +114,13 @@ pub async fn resolve_workload_log_targets(
         }
         ResourceRef::Job(name, namespace) => {
             let api: Api<Job> = Api::namespaced(client.clone(), namespace);
-            let workload = api
-                .get(name)
-                .await
-                .with_context(|| format!("failed to fetch Job '{name}'"))?;
+            let workload = api.get(name).await.map_err(|err| {
+                if is_forbidden_error(&err) {
+                    workload_log_get_forbidden("Job", name, namespace)
+                } else {
+                    anyhow!(err).context(format!("failed to fetch Job '{name}'"))
+                }
+            })?;
             list_pods_for_selector(
                 client,
                 namespace,
@@ -121,10 +140,13 @@ async fn fetch_single_pod_target(
     namespace: &str,
 ) -> Result<Vec<WorkloadLogTarget>> {
     let pods: Api<Pod> = Api::namespaced(client, namespace);
-    let pod = pods
-        .get(name)
-        .await
-        .with_context(|| format!("failed to fetch Pod '{name}'"))?;
+    let pod = pods.get(name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            workload_log_get_forbidden("Pod", name, namespace)
+        } else {
+            anyhow!(err).context(format!("failed to fetch Pod '{name}'"))
+        }
+    })?;
     Ok(vec![map_pod_to_target(pod)?])
 }
 
@@ -157,7 +179,15 @@ async fn list_pods_for_selector(
     let list = pods
         .list(&ListParams::default().labels(&selector))
         .await
-        .with_context(|| format!("failed to list pods for selector '{selector}'"))?;
+        .map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow!(
+                    "RBAC forbidden: you are not allowed to list Pods in namespace '{namespace}' for aggregated logs"
+                )
+            } else {
+                anyhow!(err).context(format!("failed to list pods for selector '{selector}'"))
+            }
+        })?;
 
     let mut targets = list
         .items
@@ -210,6 +240,12 @@ fn map_pod_to_target(pod: Pod) -> Result<WorkloadLogTarget> {
         containers,
         labels,
     })
+}
+
+fn workload_log_get_forbidden(kind: &str, name: &str, namespace: &str) -> anyhow::Error {
+    anyhow!(
+        "RBAC forbidden: you are not allowed to get {kind} '{name}' in namespace '{namespace}' for aggregated logs"
+    )
 }
 
 fn selector_to_string(selector: Option<LabelSelector>) -> Result<String> {
@@ -281,6 +317,14 @@ mod tests {
     fn selector_to_string_rejects_empty_selector() {
         let err = selector_to_string(Some(LabelSelector::default())).expect_err("empty selector");
         assert!(err.to_string().contains("selector is empty"));
+    }
+
+    #[test]
+    fn workload_log_get_forbidden_message_scopes_workload() {
+        assert_eq!(
+            workload_log_get_forbidden("Deployment", "api", "prod").to_string(),
+            "RBAC forbidden: you are not allowed to get Deployment 'api' in namespace 'prod' for aggregated logs"
+        );
     }
 
     #[test]

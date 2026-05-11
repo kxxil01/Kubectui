@@ -8,6 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+use crate::k8s::client::is_forbidden_error;
 pub use crate::k8s::portforward_errors::PortForwardError;
 
 /// Port forwarding target
@@ -268,7 +269,18 @@ async fn proxy_connection(
     use kube::Api;
 
     let pods: Api<Pod> = Api::namespaced(client.get_client(), namespace);
-    let mut pf = pods.portforward(pod_name, &[remote_port]).await?;
+    let mut pf = pods
+        .portforward(pod_name, &[remote_port])
+        .await
+        .map_err(|err| {
+            if is_forbidden_error(&err) {
+                anyhow!(
+                    "RBAC forbidden: you are not allowed to open port-forward to Pod '{pod_name}' in namespace '{namespace}'"
+                )
+            } else {
+                anyhow!(err).context("failed to open pod port-forward")
+            }
+        })?;
 
     let mut port_stream = pf
         .take_stream(remote_port)
