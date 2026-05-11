@@ -3518,38 +3518,41 @@ mod tests {
 
     #[test]
     fn table_construction_sites_route_through_responsive_widths() {
-        let ui_mod_source = include_str!("mod.rs")
-            .split("\n#[cfg(test)]\nmod tests")
-            .next()
-            .expect("ui module source should contain production section");
-        let table_counts = [
-            (
-                "src/ui/mod.rs",
-                ui_mod_source.matches("Table::new(").count(),
-            ),
-            (
-                "src/ui/views/dashboard.rs",
-                include_str!("views/dashboard.rs")
-                    .matches("Table::new(")
-                    .count(),
-            ),
-            (
-                "src/ui/views/detail.rs",
-                include_str!("views/detail.rs")
-                    .matches("Table::new(")
-                    .count(),
-            ),
-        ];
-
-        assert_eq!(
-            table_counts,
-            [
-                ("src/ui/mod.rs", 2),
-                ("src/ui/views/dashboard.rs", 1),
-                ("src/ui/views/detail.rs", 1),
-            ],
-            "new table construction sites must use responsive_table_widths or responsive_table_widths_vec",
+        let mut violations = Vec::new();
+        collect_table_width_violations(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui"),
+            &mut violations,
         );
+
+        assert!(
+            violations.is_empty(),
+            "new table construction sites must use responsive_table_widths or responsive_table_widths_vec: {violations:?}",
+        );
+    }
+
+    fn collect_table_width_violations(path: &std::path::Path, violations: &mut Vec<String>) {
+        for entry in std::fs::read_dir(path).expect("ui source directory should be readable") {
+            let entry = entry.expect("ui source entry should be readable");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_table_width_violations(&path, violations);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+
+            let source = std::fs::read_to_string(&path).expect("ui source file should be readable");
+            let production_source = source
+                .split("\n#[cfg(test)]\nmod tests")
+                .next()
+                .expect("source split should yield production section");
+            if production_source.contains("Table::new(")
+                && !production_source.contains("responsive_table_widths")
+            {
+                violations.push(path.display().to_string());
+            }
+        }
     }
 
     #[test]
