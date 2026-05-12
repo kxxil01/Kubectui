@@ -24,7 +24,7 @@ pub enum PortForwardError {
     /// Permission denied (typically for privileged ports < 1024)
     PermissionDenied { port: u16, reason: String },
 
-    /// Kubernetes RBAC denied port-forward setup or stream access
+    /// Kubernetes RBAC forbids port-forward setup or stream access
     Forbidden { message: String },
 
     /// Connection to pod failed

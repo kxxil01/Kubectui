@@ -1737,7 +1737,7 @@ fn ai_context_summary_counts_signals_without_gap_markers() {
         log_lines: vec![
             "current logs unavailable for pod api-0 container main: request timed out".to_string(),
             "pod prod/api-0 container main current: panic".to_string(),
-            "skipped current logs for pod api-0 container sidecar: RBAC denied".to_string(),
+            "skipped current logs for pod api-0 container sidecar: RBAC forbidden: you are not allowed to read logs for pod 'api-0' container 'sidecar' in namespace 'prod'".to_string(),
         ],
         yaml_excerpt: None,
     };

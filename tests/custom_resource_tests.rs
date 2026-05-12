@@ -195,10 +195,16 @@ fn extensions_set_instances_stores_error() {
     app.set_extension_instances(
         "broken.crd".to_string(),
         vec![],
-        Some("RBAC denied".to_string()),
+        Some(
+            "RBAC forbidden: you are not allowed to list widgets in namespace 'default'"
+                .to_string(),
+        ),
     );
 
-    assert_eq!(app.extension_error.as_deref(), Some("RBAC denied"));
+    assert_eq!(
+        app.extension_error.as_deref(),
+        Some("RBAC forbidden: you are not allowed to list widgets in namespace 'default'")
+    );
     assert!(app.extension_instances.is_empty());
 }
 

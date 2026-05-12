@@ -257,7 +257,9 @@ mod tests {
                     CrdPickerPane {
                         crds: &[],
                         is_loading: false,
-                        fetch_error: Some("forbidden by RBAC"),
+                        fetch_error: Some(
+                            "RBAC forbidden: you are not allowed to list custom resource definitions at cluster scope",
+                        ),
                         selected_idx: 0,
                         query: "",
                         is_focused: true,
@@ -275,7 +277,7 @@ mod tests {
             out.push('\n');
         }
 
-        assert!(out.contains("Failed to load CRDs: forbidden by RBAC"));
+        assert!(out.contains("Failed to load CRDs: RBAC forbidden"));
         assert!(!out.contains("No CRDs found"));
     }
 
