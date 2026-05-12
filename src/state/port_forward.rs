@@ -2,7 +2,10 @@
 
 use std::collections::HashMap;
 
-use crate::k8s::portforward::{PortForwardTunnelInfo, TunnelState};
+use crate::{
+    k8s::portforward::{PortForwardTunnelInfo, TunnelState},
+    ui::contains_ci,
+};
 
 /// Registry of active port forward tunnels
 #[derive(Debug, Default, Clone)]
@@ -122,19 +125,10 @@ impl TunnelRegistry {
             .get(selected_index)
             .map(|tunnel| tunnel.id.clone());
         self.update_tunnels(tunnels);
+        let filtered_tunnels = self.ordered_tunnels_matching(search);
         selected_id
-            .and_then(|id| {
-                self.ordered_tunnels_matching(search)
-                    .iter()
-                    .position(|tunnel| tunnel.id == id)
-            })
-            .unwrap_or_else(|| {
-                selected_index.min(
-                    self.ordered_tunnels_matching(search)
-                        .len()
-                        .saturating_sub(1),
-                )
-            })
+            .and_then(|id| filtered_tunnels.iter().position(|tunnel| tunnel.id == id))
+            .unwrap_or_else(|| selected_index.min(filtered_tunnels.len().saturating_sub(1)))
     }
 
     /// Returns the selected index.
@@ -177,21 +171,8 @@ impl TunnelRegistry {
 
 fn tunnel_matches_search(tunnel: &PortForwardTunnelInfo, search: &str) -> bool {
     search.is_empty()
-        || contains_ascii_case_insensitive(&tunnel.target.pod_name, search)
-        || contains_ascii_case_insensitive(&tunnel.target.namespace, search)
-}
-
-fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if needle.len() > haystack.len() {
-        return false;
-    }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+        || contains_ci(&tunnel.target.pod_name, search)
+        || contains_ci(&tunnel.target.namespace, search)
 }
 
 #[cfg(test)]

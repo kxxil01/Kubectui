@@ -1,6 +1,9 @@
 //! Shared log analysis and query helpers for pod/workload log tabs.
 
-use crate::time::{AppTimestamp, format_rfc3339, parse_timestamp};
+use crate::{
+    time::{AppTimestamp, format_rfc3339, parse_timestamp},
+    ui::contains_ci,
+};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -351,10 +354,10 @@ pub fn entry_matches_query(
 
     match mode {
         LogQueryMode::Substring => {
-            contains_ci_ascii(entry.raw(), query)
+            contains_ci(entry.raw(), query)
                 || (structured
                     && entry.display_text(true) != entry.raw()
-                    && contains_ci_ascii(entry.display_text(true), query))
+                    && contains_ci(entry.display_text(true), query))
         }
         LogQueryMode::Regex => compiled.is_some_and(|regex| {
             regex.is_match(entry.raw())
@@ -554,19 +557,6 @@ fn substring_match_ranges(text: &str, query: &str) -> Vec<(usize, usize)> {
         .take(32)
         .map(|(start, _)| (start, start + query.len()))
         .collect()
-}
-
-fn contains_ci_ascii(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if needle.len() > haystack.len() {
-        return false;
-    }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn contains_token_ci(text: &str, token: &str) -> bool {
