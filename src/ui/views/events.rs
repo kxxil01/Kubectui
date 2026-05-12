@@ -323,21 +323,29 @@ mod tests {
     #[test]
     fn events_empty_state_shows_fetch_error_without_search() {
         let snapshot = ClusterSnapshot {
-            events_last_error: Some("forbidden by RBAC".to_string()),
+            events_last_error: Some(
+                "RBAC forbidden: you are not allowed to list Events in namespace 'prod'"
+                    .to_string(),
+            ),
             loaded_scope: RefreshScope::EVENTS,
             ..ClusterSnapshot::default()
         };
 
         let out = render_events_to_string(&snapshot, "");
 
-        assert!(out.contains("Failed to load events: forbidden by RBAC"));
+        assert!(out.contains(
+            "Failed to load events: RBAC forbidden: you are not allowed to list Events in namespace 'prod'"
+        ));
         assert!(!out.contains("No events match the search query"));
     }
 
     #[test]
     fn events_empty_state_keeps_search_no_match_over_fetch_error() {
         let snapshot = ClusterSnapshot {
-            events_last_error: Some("forbidden by RBAC".to_string()),
+            events_last_error: Some(
+                "RBAC forbidden: you are not allowed to list Events in namespace 'prod'"
+                    .to_string(),
+            ),
             loaded_scope: RefreshScope::EVENTS,
             ..ClusterSnapshot::default()
         };
@@ -345,6 +353,6 @@ mod tests {
         let out = render_events_to_string(&snapshot, "crash");
 
         assert!(out.contains("No events match the search query"));
-        assert!(!out.contains("Failed to load events: forbidden by RBAC"));
+        assert!(!out.contains("Failed to load events: RBAC forbidden"));
     }
 }

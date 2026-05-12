@@ -4323,14 +4323,19 @@ mod tests {
                 states[AppView::Pods.index()] = ViewLoadState::Ready;
                 states
             },
-            last_error: Some("pods: forbidden by RBAC | services: timed out".to_string()),
+            last_error: Some(
+                "pods: RBAC forbidden: you are not allowed to list Pods in namespace 'prod' | services: timed out"
+                    .to_string(),
+            ),
             ..ClusterSnapshot::default()
         };
 
         let text = render_to_string(&app, &snapshot);
 
         assert!(
-            text.contains("Failed to load Pods: forbidden by RBAC"),
+            text.contains(
+                "Failed to load Pods: RBAC forbidden: you are not allowed to list Pods in namespace 'prod'"
+            ),
             "{text}"
         );
         assert!(!text.contains("No pods available"), "{text}");
@@ -4348,7 +4353,10 @@ mod tests {
                 states[AppView::Pods.index()] = ViewLoadState::Ready;
                 states
             },
-            last_error: Some("pods: forbidden by RBAC".to_string()),
+            last_error: Some(
+                "pods: RBAC forbidden: you are not allowed to list Pods in namespace 'prod'"
+                    .to_string(),
+            ),
             ..ClusterSnapshot::default()
         };
 
@@ -5558,13 +5566,16 @@ mod tests {
         let snapshot = ClusterSnapshot {
             phase: DataPhase::Ready,
             loaded_scope: RefreshScope::EXTENSIONS,
-            last_error: Some("crds: forbidden by RBAC".to_string()),
+            last_error: Some(
+                "crds: RBAC forbidden: you are not allowed to list custom resource definitions at cluster scope"
+                    .to_string(),
+            ),
             ..ClusterSnapshot::default()
         };
 
         let rendered = render_to_string(&app, &snapshot);
 
-        assert!(rendered.contains("Failed to load CRDs: forbidden by RBAC"));
+        assert!(rendered.contains("Failed to load CRDs: RBAC forbidden"));
         assert!(!rendered.contains("No CRDs found"));
     }
 
