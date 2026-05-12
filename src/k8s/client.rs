@@ -718,7 +718,7 @@ impl K8sClient {
                 Err(err) if is_forbidden_error(&err) => {
                     return Ok(vec![events_unavailable_info(
                         namespace,
-                        "Events unavailable (RBAC)",
+                        &events_list_forbidden_message(namespace),
                     )]);
                 }
                 Err(err) => {
@@ -2042,6 +2042,17 @@ fn events_unavailable_info(namespace: Option<&str>, message: &str) -> K8sEventIn
         involved_object: String::new(),
         last_seen: Some(now()),
         age: None,
+    }
+}
+
+fn events_list_forbidden_message(namespace: Option<&str>) -> String {
+    match namespace {
+        Some(namespace) => {
+            format!("RBAC forbidden: you are not allowed to list Events in namespace '{namespace}'")
+        }
+        None => {
+            "RBAC forbidden: you are not allowed to list Events across all namespaces".to_string()
+        }
     }
 }
 
@@ -3461,14 +3472,30 @@ mod tests {
 
     #[test]
     fn events_unavailable_info_keeps_rbac_as_snapshot_signal() {
-        let event = events_unavailable_info(Some("prod"), "Events unavailable (RBAC)");
+        let event =
+            events_unavailable_info(Some("prod"), &events_list_forbidden_message(Some("prod")));
 
         assert_eq!(event.name, "events-unavailable");
         assert_eq!(event.namespace, "prod");
         assert_eq!(event.reason, "RBAC");
-        assert_eq!(event.message, "Events unavailable (RBAC)");
+        assert_eq!(
+            event.message,
+            "RBAC forbidden: you are not allowed to list Events in namespace 'prod'"
+        );
         assert!(event.involved_object.is_empty());
         assert!(event.last_seen.is_some());
+    }
+
+    #[test]
+    fn events_list_forbidden_message_scopes_list() {
+        assert_eq!(
+            events_list_forbidden_message(Some("prod")),
+            "RBAC forbidden: you are not allowed to list Events in namespace 'prod'"
+        );
+        assert_eq!(
+            events_list_forbidden_message(None),
+            "RBAC forbidden: you are not allowed to list Events across all namespaces"
+        );
     }
 
     #[test]
