@@ -40,7 +40,7 @@ pub async fn fetch_resource_events(
             return Ok(vec![EventInfo {
                 event_type: "Info".to_string(),
                 reason: "RBAC".to_string(),
-                message: "Events unavailable (RBAC)".to_string(),
+                message: resource_events_forbidden_message(kind, name, namespace),
                 first_timestamp: now(),
                 last_timestamp: now(),
                 count: 1,
@@ -75,7 +75,7 @@ pub async fn fetch_pod_events(
             return Ok(vec![EventInfo {
                 event_type: "Info".to_string(),
                 reason: "RBAC".to_string(),
-                message: "Events unavailable (RBAC)".to_string(),
+                message: resource_events_forbidden_message("Pod", name, namespace),
                 first_timestamp: now(),
                 last_timestamp: now(),
                 count: 1,
@@ -168,6 +168,12 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
 
 fn is_forbidden_error(err: &kube::Error) -> bool {
     matches!(err, kube::Error::Api(status) if status.is_forbidden())
+}
+
+fn resource_events_forbidden_message(kind: &str, name: &str, namespace: &str) -> String {
+    format!(
+        "RBAC forbidden: you are not allowed to list events for {kind} '{name}' in namespace '{namespace}'"
+    )
 }
 
 #[cfg(test)]
@@ -279,5 +285,17 @@ mod tests {
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&timeout));
+    }
+
+    #[test]
+    fn resource_events_forbidden_message_scopes_resource() {
+        assert_eq!(
+            resource_events_forbidden_message("Deployment", "api", "prod"),
+            "RBAC forbidden: you are not allowed to list events for Deployment 'api' in namespace 'prod'"
+        );
+        assert_eq!(
+            resource_events_forbidden_message("Pod", "api-0", "prod"),
+            "RBAC forbidden: you are not allowed to list events for Pod 'api-0' in namespace 'prod'"
+        );
     }
 }
