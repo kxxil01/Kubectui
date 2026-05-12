@@ -96,10 +96,7 @@ pub async fn get_resource_yaml_for_diff(
 
     let fetched = api.get(name).await.map_err(|err| {
         if is_forbidden_error(&err) {
-            anyhow!(
-                "RBAC denied reading live manifest for {kind}/{name} in namespace '{}'",
-                namespace.unwrap_or("<cluster-scope>")
-            )
+            read_forbidden_message(kind, name, namespace)
         } else {
             anyhow!(err).context(format!(
                 "failed fetching resource kind='{kind}' name='{name}' namespace='{}'",
@@ -790,10 +787,7 @@ pub async fn get_custom_resource_yaml_for_diff(
 
     let fetched = api.get(name).await.map_err(|err| {
         if is_forbidden_error(&err) {
-            anyhow!(
-                "RBAC denied reading live manifest for {group}/{version}/{kind} '{name}' in namespace '{}'",
-                namespace.unwrap_or("<cluster-scope>")
-            )
+            read_forbidden_message(&format!("{group}/{version}/{kind}"), name, namespace)
         } else {
             anyhow!(err).context(format!(
                 "failed fetching custom resource {group}/{version}/{kind} name='{name}' namespace='{}'",
@@ -1001,6 +995,17 @@ fn mutation_forbidden_message(
     }
 }
 
+fn read_forbidden_message(kind: &str, name: &str, namespace: Option<&str>) -> anyhow::Error {
+    match namespace {
+        Some(namespace) => anyhow!(
+            "RBAC forbidden: you are not allowed to get {kind} '{name}' in namespace '{namespace}'"
+        ),
+        None => {
+            anyhow!("RBAC forbidden: you are not allowed to get {kind} '{name}' at cluster scope")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1069,6 +1074,18 @@ mod tests {
         assert_eq!(
             mutation_forbidden_message("delete", "ClusterRole", "readonly", None),
             "RBAC forbidden: you are not allowed to delete ClusterRole 'readonly' at cluster scope"
+        );
+    }
+
+    #[test]
+    fn read_forbidden_message_scopes_resource() {
+        assert_eq!(
+            read_forbidden_message("Secret", "api-token", Some("prod")).to_string(),
+            "RBAC forbidden: you are not allowed to get Secret 'api-token' in namespace 'prod'"
+        );
+        assert_eq!(
+            read_forbidden_message("ClusterRole", "readonly", None).to_string(),
+            "RBAC forbidden: you are not allowed to get ClusterRole 'readonly' at cluster scope"
         );
     }
 

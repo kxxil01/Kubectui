@@ -1548,10 +1548,20 @@ impl K8sClient {
         let secrets_api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
         let lp = ListParams::default().labels(&format!("owner=helm,name={release_name}"));
         let list = if allow_missing_comment {
-            list_items_or_empty(&secrets_api, &lp, || {
-                format!("failed fetching Helm release secrets for '{release_name}'")
-            })
-            .await?
+            match secrets_api.list(&lp).await {
+                Ok(list) => list.items,
+                Err(err) if is_forbidden_error(&err) => {
+                    return Err(anyhow::anyhow!(helm_release_secret_forbidden_message(
+                        release_name,
+                        namespace
+                    )));
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("failed fetching Helm release secrets for '{release_name}'")
+                    });
+                }
+            }
         } else {
             match secrets_api.list(&lp).await {
                 Ok(list) => list.items,
@@ -2062,18 +2072,6 @@ where
             resource_name,
             scope
         ))),
-        Err(err) => Err(err).with_context(context),
-    }
-}
-
-async fn list_items_or_empty<K, C>(api: &Api<K>, params: &ListParams, context: C) -> Result<Vec<K>>
-where
-    K: Clone + std::fmt::Debug + serde::de::DeserializeOwned,
-    C: FnOnce() -> String,
-{
-    match api.list(params).await {
-        Ok(list) => Ok(list.items),
-        Err(err) if is_forbidden_error(&err) => Ok(Vec::new()),
         Err(err) => Err(err).with_context(context),
     }
 }
