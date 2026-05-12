@@ -781,18 +781,24 @@ pub fn detail_action_denied_message(
     resource: &ResourceRef,
     status: DetailActionAuthorization,
 ) -> String {
+    let scope = match resource.namespace() {
+        Some(namespace) => format!(" in namespace '{namespace}'"),
+        None => " at cluster scope".to_string(),
+    };
     match status {
         DetailActionAuthorization::Denied => format!(
-            "RBAC denied: {} is not allowed for {} '{}'.",
+            "RBAC forbidden: you are not allowed to {} {} '{}'{}",
             action.label(),
             resource.kind(),
-            resource.name()
+            resource.name(),
+            scope
         ),
         DetailActionAuthorization::Unknown => format!(
-            "RBAC unknown: {} requires verified authorization for {} '{}', but access could not be confirmed.",
+            "RBAC unknown: {} requires verified authorization for {} '{}'{} but access could not be confirmed.",
             action.label(),
             resource.kind(),
-            resource.name()
+            resource.name(),
+            scope
         ),
         DetailActionAuthorization::Allowed => format!(
             "{} is already allowed for {} '{}'.",
@@ -1411,9 +1417,28 @@ mod tests {
             &resource,
             DetailActionAuthorization::Denied,
         );
-        assert!(msg.contains("RBAC denied"), "msg = {msg}");
-        assert!(msg.contains("not allowed"), "msg = {msg}");
-        assert!(msg.contains("api-0"), "msg = {msg}");
+        assert_eq!(
+            msg,
+            "RBAC forbidden: you are not allowed to Exec Pod 'api-0' in namespace 'default'"
+        );
+    }
+
+    #[test]
+    fn denied_message_scopes_cluster_resources() {
+        use super::detail_action_denied_message;
+        use kubectui::app::ResourceRef;
+        use kubectui::policy::DetailAction;
+
+        let resource = ResourceRef::Node("node-0".to_string());
+        let msg = detail_action_denied_message(
+            DetailAction::Drain,
+            &resource,
+            DetailActionAuthorization::Denied,
+        );
+        assert_eq!(
+            msg,
+            "RBAC forbidden: you are not allowed to Drain Node 'node-0' at cluster scope"
+        );
     }
 
     #[test]
@@ -1431,6 +1456,7 @@ mod tests {
         assert!(msg.contains("RBAC unknown"), "msg = {msg}");
         assert!(msg.contains("verified authorization"), "msg = {msg}");
         assert!(msg.contains("node-0"), "msg = {msg}");
+        assert!(msg.contains("at cluster scope"), "msg = {msg}");
     }
 
     #[test]
