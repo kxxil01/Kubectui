@@ -1560,7 +1560,8 @@ fn ai_context_reports_snapshot_events_rbac_unavailable() {
                 involved_object: String::new(),
                 type_: "Info".to_string(),
                 reason: "RBAC".to_string(),
-                message: "Events unavailable (RBAC)".to_string(),
+                message: "RBAC forbidden: you are not allowed to list Events in namespace 'prod'"
+                    .to_string(),
                 count: 1,
                 last_seen: Some(now()),
                 ..K8sEventInfo::default()
@@ -1573,7 +1574,10 @@ fn ai_context_reports_snapshot_events_rbac_unavailable() {
     let rendered = context.render_prompt();
 
     assert!(rendered.contains("Info RBAC count=1"), "{rendered}");
-    assert!(rendered.contains("Events unavailable (RBAC)"), "{rendered}");
+    assert!(
+        rendered.contains("RBAC forbidden: you are not allowed to list Events in namespace 'prod'"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -1696,9 +1700,7 @@ fn ai_context_summary_marks_unavailable_context_gaps() {
         workflow_title: None,
         workflow_lines: Vec::new(),
         issue_lines: Vec::new(),
-        event_lines: vec![
-            "Warning EventsUnavailable count=1: Events unavailable (RBAC)".to_string(),
-        ],
+        event_lines: vec!["Warning EventsUnavailable count=1: RBAC forbidden: you are not allowed to list Events in namespace 'prod'".to_string()],
         probe_lines: Vec::new(),
         log_lines: vec![
             "current logs unavailable for pod api-0 container main: request timed out".to_string(),
