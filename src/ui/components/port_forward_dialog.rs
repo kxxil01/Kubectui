@@ -233,9 +233,14 @@ impl PortForwardDialog {
                 PortForwardAction::None
             }
             KeyCode::Up | KeyCode::Char('k') if plain_shortcut(key) => {
-                self.selected_tunnel =
-                    selected_tunnel_index(self.registry.len(), self.selected_tunnel)
-                        .saturating_sub(1);
+                if !self.registry.is_empty() {
+                    let selected = selected_tunnel_index(self.registry.len(), self.selected_tunnel);
+                    self.selected_tunnel = selected
+                        .checked_sub(1)
+                        .unwrap_or_else(|| self.registry.len() - 1);
+                } else {
+                    self.selected_tunnel = 0;
+                }
                 PortForwardAction::None
             }
             KeyCode::Down | KeyCode::Char('j') if plain_shortcut(key) => {
@@ -1022,6 +1027,22 @@ mod tests {
         // Delete action should target the currently selected tunnel (second one)
         let action = dialog.handle_key(KeyEvent::from(KeyCode::Char('d')));
         assert_eq!(action, PortForwardAction::Stop(second_tunnel.id));
+    }
+
+    #[test]
+    fn list_navigation_wraps_up_from_first_tunnel() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.mode = PortForwardMode::List;
+
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(make_tunnel("t1", "pod-1", TunnelState::Active, 4001));
+        registry.add_tunnel(make_tunnel("t2", "pod-2", TunnelState::Active, 4002));
+        dialog.update_registry(registry);
+
+        assert_eq!(dialog.selected_tunnel, 0);
+        dialog.handle_key(KeyEvent::from(KeyCode::Up));
+
+        assert_eq!(dialog.selected_tunnel, 1);
     }
 
     #[test]
