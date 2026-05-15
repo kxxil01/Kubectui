@@ -62,7 +62,7 @@ use kubectui::{
     },
     workbench::{
         DecodedSecretTabState, MAX_EXTENSION_OUTPUT_LINES, PodLogsTabState, ResourceYamlTabState,
-        RolloutTabState, WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
+        RolloutTabState, WorkbenchTabKey, WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
     },
 };
 use ratatui::layout::Rect;
@@ -1048,6 +1048,34 @@ fn runtime_overlay_openers_clear_mouse_content_click_priming() {
     assert!(command.command_palette.is_open());
     assert_eq!(command.mouse_last_content_selection, None);
     assert_eq!(command.mouse_last_content_pointer_row, None);
+}
+
+#[test]
+fn activate_workbench_tab_runtime_clears_mouse_content_click_priming() {
+    let resource = ResourceRef::Pod("api".into(), "default".into());
+    let mut app = AppState {
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 3,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            resource.clone(),
+        )));
+    app.focus = Focus::Content;
+
+    assert!(super::activate_workbench_tab_runtime(
+        &mut app,
+        &WorkbenchTabKey::PodLogs(resource)
+    ));
+
+    assert_eq!(app.focus, Focus::Workbench);
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 }
 
 #[test]

@@ -821,6 +821,19 @@ fn open_command_palette_runtime(
     app.command_palette.open_with_context(resource_ctx);
 }
 
+fn activate_workbench_tab_runtime(
+    app: &mut kubectui::app::AppState,
+    key: &WorkbenchTabKey,
+) -> bool {
+    if app.workbench.activate_tab(key) {
+        app.clear_mouse_content_selection();
+        app.focus = kubectui::app::Focus::Workbench;
+        true
+    } else {
+        false
+    }
+}
+
 fn close_resource_tabs_and_refresh_palette_activity(app: &mut kubectui::app::AppState) {
     app.workbench.close_resource_tabs();
     if app.command_palette.is_open() {
@@ -7087,9 +7100,7 @@ pub(crate) async fn run_app_inner(
                 }
                 AppAction::ActivateWorkbenchTab(key) => {
                     app.command_palette.close();
-                    if app.workbench.activate_tab(&key) {
-                        app.focus = kubectui::app::Focus::Workbench;
-                    } else {
+                    if !activate_workbench_tab_runtime(&mut app, &key) {
                         app.set_error("Selected workbench activity is no longer available.".into());
                     }
                 }
