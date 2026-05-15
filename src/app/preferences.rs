@@ -5,6 +5,7 @@ impl AppState {
     pub(crate) fn set_or_toggle_pod_sort(&mut self, column: PodSortColumn) {
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
         self.pod_sort = match self.pod_sort {
             Some(current) if current.column == column => {
                 Some(PodSortState::new(column, !current.descending))
@@ -17,6 +18,7 @@ impl AppState {
     pub(super) fn clear_pod_sort(&mut self) {
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
         self.pod_sort = None;
         self.save_sort_to_preferences("pods");
     }
@@ -24,6 +26,7 @@ impl AppState {
     pub(super) fn set_or_toggle_workload_sort(&mut self, column: WorkloadSortColumn) {
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
         self.workload_sort = match self.workload_sort {
             Some(current) if current.column == column => {
                 Some(WorkloadSortState::new(column, !current.descending))
@@ -37,6 +40,7 @@ impl AppState {
     pub(super) fn clear_workload_sort(&mut self) {
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
         self.workload_sort = None;
         let view_key = crate::columns::view_key(self.view);
         self.save_sort_to_preferences(view_key);
@@ -512,6 +516,7 @@ impl AppState {
 
         self.detail_view = None;
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
         self.search_query = snapshot.search_query.clone().unwrap_or_default();
         move_cursor_end(&mut self.search_cursor, &self.search_query);
         self.is_search_mode = false;
