@@ -3935,6 +3935,12 @@ fn direct_focus_transitions_clear_mouse_content_click_priming() {
     assert_eq!(sidebar.focus, Focus::Content);
     assert_eq!(sidebar.mouse_last_content_selection, None);
     assert_eq!(sidebar.mouse_last_content_pointer_row, None);
+
+    let mut opened_tab = primed();
+    opened_tab.open_pod_logs_tab(ResourceRef::Pod("api".into(), "default".into()));
+    assert_eq!(opened_tab.focus, Focus::Workbench);
+    assert_eq!(opened_tab.mouse_last_content_selection, None);
+    assert_eq!(opened_tab.mouse_last_content_pointer_row, None);
 }
 
 #[test]

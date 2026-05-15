@@ -118,7 +118,7 @@ impl AppState {
         {
             tab.update_content(yaml, error, pending_request_id);
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = ResourceYamlTabState::new(resource);
@@ -128,7 +128,7 @@ impl AppState {
         tab.pending_request_id = pending_request_id;
         self.workbench
             .open_tab(WorkbenchTabState::ResourceYaml(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_access_review_tab(
@@ -152,7 +152,7 @@ impl AppState {
                 attempted_review,
             );
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         self.workbench
@@ -164,7 +164,7 @@ impl AppState {
                 subject_review,
                 attempted_review,
             )));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_resource_diff_tab(
@@ -188,7 +188,7 @@ impl AppState {
                 tab.refresh(None);
             }
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = ResourceDiffTabState::new(resource);
@@ -200,7 +200,7 @@ impl AppState {
         }
         self.workbench
             .open_tab(WorkbenchTabState::ResourceDiff(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_rollout_tab(
@@ -227,7 +227,7 @@ impl AppState {
                 tab.confirm_undo_revision = None;
             }
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = RolloutTabState::new(resource);
@@ -238,7 +238,7 @@ impl AppState {
             tab.apply_inspection(inspection);
         }
         self.workbench.open_tab(WorkbenchTabState::Rollout(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_helm_history_tab(
@@ -267,7 +267,7 @@ impl AppState {
                 tab.diff = None;
             }
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = HelmHistoryTabState::new(resource);
@@ -278,7 +278,7 @@ impl AppState {
             tab.apply_history(history);
         }
         self.workbench.open_tab(WorkbenchTabState::HelmHistory(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_decoded_secret_tab(
@@ -303,7 +303,7 @@ impl AppState {
                 }
             }
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = DecodedSecretTabState::new(resource);
@@ -313,7 +313,7 @@ impl AppState {
         tab.pending_request_id = pending_request_id;
         self.workbench
             .open_tab(WorkbenchTabState::DecodedSecret(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_resource_events_tab(
@@ -336,7 +336,7 @@ impl AppState {
             tab.error = error;
             tab.pending_request_id = pending_request_id;
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = ResourceEventsTabState::new(resource);
@@ -347,7 +347,7 @@ impl AppState {
         tab.rebuild_timeline(&self.action_history);
         self.workbench
             .open_tab(WorkbenchTabState::ResourceEvents(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_network_policy_tab(
@@ -366,7 +366,7 @@ impl AppState {
                 tab.set_error(error);
             }
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = NetworkPolicyTabState::new(resource);
@@ -377,7 +377,7 @@ impl AppState {
         }
         self.workbench
             .open_tab(WorkbenchTabState::NetworkPolicy(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_connectivity_tab(
@@ -400,14 +400,14 @@ impl AppState {
             tab.apply_targets(targets);
             self.workbench.active_tab = idx;
             self.workbench.open = true;
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         self.workbench
             .open_tab(WorkbenchTabState::Connectivity(ConnectivityTabState::new(
                 source, targets,
             )));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_traffic_debug_tab(
@@ -426,7 +426,7 @@ impl AppState {
                 tab.set_error(error);
             }
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = TrafficDebugTabState::new(resource);
@@ -437,7 +437,7 @@ impl AppState {
         }
         self.workbench
             .open_tab(WorkbenchTabState::TrafficDebug(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_runbook_tab(&mut self, runbook: LoadedRunbook, resource: Option<ResourceRef>) {
@@ -447,25 +447,25 @@ impl AppState {
         {
             tab.refresh_runbook(runbook);
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         self.workbench
             .open_tab(WorkbenchTabState::Runbook(Box::new(RunbookTabState::new(
                 runbook, resource,
             ))));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_pod_logs_tab(&mut self, resource: ResourceRef) {
         let key = WorkbenchTabKey::PodLogs(resource.clone());
         if self.workbench.activate_tab(&key) {
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         self.workbench
             .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(resource)));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_workload_logs_tab(&mut self, resource: ResourceRef, session_id: u64) {
@@ -475,14 +475,14 @@ impl AppState {
         {
             tab.restart_session(session_id);
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         self.workbench
             .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
                 resource, session_id,
             )));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_exec_tab(
@@ -499,13 +499,13 @@ impl AppState {
             exec_tab.restart_session(session_id, pod_name, namespace, None);
             exec_tab.set_shell_plan(self.exec_config.shell_summary());
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = ExecTabState::new(resource, session_id, pod_name, namespace);
         tab.set_shell_plan(self.exec_config.shell_summary());
         self.workbench.open_tab(WorkbenchTabState::Exec(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_exec_tab_for_container(
@@ -523,14 +523,14 @@ impl AppState {
             exec_tab.restart_session(session_id, pod_name, namespace, Some(container_name));
             exec_tab.set_shell_plan(self.exec_config.shell_summary());
             self.workbench.activate_tab(&key);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         let mut tab = ExecTabState::new(resource, session_id, pod_name, namespace);
         tab.preset_container(container_name);
         tab.set_shell_plan(self.exec_config.shell_summary());
         self.workbench.open_tab(WorkbenchTabState::Exec(tab));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn append_exec_banner(
@@ -559,14 +559,14 @@ impl AppState {
             && existing.target == resource
         {
             self.workbench.activate_tab(&WorkbenchTabKey::PortForward);
-            self.focus = Focus::Workbench;
+            self.focus_workbench();
             return;
         }
         self.workbench
             .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
                 resource, dialog,
             )));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_extension_output_tab(
@@ -586,7 +586,7 @@ impl AppState {
                 command_preview,
             ),
         ));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     pub fn open_ai_analysis_tab(
@@ -609,7 +609,7 @@ impl AppState {
                     context_summary,
                 ),
             )));
-        self.focus = Focus::Workbench;
+        self.focus_workbench();
     }
 
     /// Convenience initializer used by tests and non-runtime callers.
