@@ -274,9 +274,11 @@ fn focus_mouse_region(
         .is_some_and(|area| rect_contains(area, column, row))
     {
         if app_state.workbench().open {
+            app_state.clear_mouse_content_selection();
             app_state.focus = Focus::Workbench;
         }
     } else if rect_contains(regions.sidebar, column, row) {
+        app_state.clear_mouse_content_selection();
         app_state.focus = Focus::Sidebar;
     } else if regions
         .secondary
@@ -284,6 +286,7 @@ fn focus_mouse_region(
     {
         focus_content_secondary_pane(app_state);
     } else if rect_contains(regions.content, column, row) {
+        app_state.clear_mouse_content_selection();
         app_state.focus = Focus::Content;
         app_state.content_pane_focus = ContentPaneFocus::List;
     }
@@ -291,6 +294,7 @@ fn focus_mouse_region(
 
 fn focus_content_secondary_pane(app_state: &mut AppState) {
     if app_state.view().supports_secondary_pane_scroll() && app_state.detail_view.is_none() {
+        app_state.clear_mouse_content_selection();
         app_state.focus = Focus::Content;
         app_state.content_pane_focus = ContentPaneFocus::Secondary;
     }
@@ -1334,6 +1338,68 @@ mod tests {
         assert_eq!(app.content_pane_focus(), ContentPaneFocus::Secondary);
         assert_eq!(app.selected_idx, 4);
         assert_eq!(app.content_detail_scroll, 1);
+    }
+
+    #[test]
+    fn mouse_scroll_focus_changes_clear_content_click_priming() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 30),
+            search: None,
+            content: Rect::new(28, 3, 92, 16),
+            secondary: Some(Rect::new(28, 19, 92, 14)),
+            workbench: Some(Rect::new(0, 33, 120, 10)),
+        };
+        let mut workbench = primed_mouse_app();
+        workbench
+            .workbench
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+                crate::app::ResourceRef::Pod("api".into(), "prod".into()),
+            )));
+        workbench.workbench.open = true;
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 30,
+                row: 34,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut workbench,
+            Some(&regions),
+            None,
+        );
+        assert_eq!(workbench.focus, Focus::Workbench);
+        assert_eq!(workbench.mouse_last_content_selection, None);
+        assert_eq!(workbench.mouse_last_content_pointer_row, None);
+
+        for (label, column, row, expected_focus, expected_pane) in [
+            ("sidebar", 2, 8, Focus::Sidebar, ContentPaneFocus::List),
+            ("content", 30, 8, Focus::Content, ContentPaneFocus::List),
+            (
+                "secondary",
+                30,
+                22,
+                Focus::Content,
+                ContentPaneFocus::Secondary,
+            ),
+        ] {
+            let mut app = primed_mouse_app();
+            app.view = AppView::Projects;
+            route_mouse_input(
+                MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+                &mut app,
+                Some(&regions),
+                None,
+            );
+            assert_eq!(app.focus, expected_focus, "{label}");
+            assert_eq!(app.content_pane_focus(), expected_pane, "{label}");
+            assert_eq!(app.mouse_last_content_selection, None, "{label}");
+            assert_eq!(app.mouse_last_content_pointer_row, None, "{label}");
+        }
     }
 
     #[test]
