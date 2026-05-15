@@ -8514,7 +8514,7 @@ pub(crate) async fn run_app_inner(
                                             format!("Applied changes to {resource_label}."),
                                             true,
                                         );
-                                        app.detail_view = None;
+                                        close_detail_runtime(&mut app);
                                         app.focus = kubectui::app::Focus::Content;
                                         apply_mutation_success(
                                             &mut app,
