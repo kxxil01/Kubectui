@@ -421,6 +421,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         | AppAction::OpenNetworkConnectivity
         | AppAction::OpenTrafficDebug => true,
         AppAction::CloseDetail => {
+            app_state.clear_mouse_content_selection();
             app_state.detail_view = None;
             true
         }
@@ -2081,11 +2082,13 @@ mod tests {
 
     #[test]
     fn test_apply_action_close_detail() {
-        let mut app = AppState::default();
+        let mut app = primed_mouse_app();
         app.detail_view = Some(Default::default());
         assert!(app.detail_view.is_some());
         apply_action(AppAction::CloseDetail, &mut app);
         assert!(app.detail_view.is_none());
+        assert_eq!(app.mouse_last_content_selection, None);
+        assert_eq!(app.mouse_last_content_pointer_row, None);
     }
 
     #[test]
