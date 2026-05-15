@@ -798,6 +798,29 @@ fn close_detail_runtime(app: &mut kubectui::app::AppState) {
     app.detail_view = None;
 }
 
+fn open_namespace_picker_runtime(app: &mut kubectui::app::AppState, namespaces: Vec<String>) {
+    app.clear_mouse_content_selection();
+    app.set_available_namespaces(namespaces);
+    app.open_namespace_picker();
+}
+
+fn open_context_picker_runtime(
+    app: &mut kubectui::app::AppState,
+    contexts: Vec<String>,
+    current: Option<String>,
+) {
+    app.clear_mouse_content_selection();
+    app.open_context_picker(contexts, current);
+}
+
+fn open_command_palette_runtime(
+    app: &mut kubectui::app::AppState,
+    resource_ctx: Option<kubectui::policy::ResourceActionContext>,
+) {
+    app.clear_mouse_content_selection();
+    app.command_palette.open_with_context(resource_ctx);
+}
+
 fn close_resource_tabs_and_refresh_palette_activity(app: &mut kubectui::app::AppState) {
     app.workbench.close_resource_tabs();
     if app.command_palette.is_open() {
@@ -6285,8 +6308,7 @@ pub(crate) async fn run_app_inner(
                     app.needs_config_save = true;
                 }
                 AppAction::OpenNamespacePicker => {
-                    app.set_available_namespaces(global_state.namespaces().to_vec());
-                    app.open_namespace_picker();
+                    open_namespace_picker_runtime(&mut app, global_state.namespaces().to_vec());
                 }
                 AppAction::CloseNamespacePicker => {
                     app.close_namespace_picker();
@@ -6315,7 +6337,7 @@ pub(crate) async fn run_app_inner(
                     refresh_palette_extensions(&mut app, &cached_snapshot, &extension_registry);
                     refresh_palette_ai_actions(&mut app, &cached_snapshot, &ai_registry);
                     refresh_palette_runbooks(&mut app, &cached_snapshot, &runbook_registry);
-                    app.command_palette.open_with_context(resource_ctx);
+                    open_command_palette_runtime(&mut app, resource_ctx);
                 }
                 AppAction::CloseCommandPalette => {
                     app.command_palette.close();
@@ -6890,7 +6912,7 @@ pub(crate) async fn run_app_inner(
                     let current = kube::config::Kubeconfig::read()
                         .ok()
                         .and_then(|cfg| cfg.current_context);
-                    app.open_context_picker(contexts, current);
+                    open_context_picker_runtime(&mut app, contexts, current);
                 }
                 AppAction::CloseContextPicker => {
                     app.close_context_picker();
