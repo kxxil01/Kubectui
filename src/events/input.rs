@@ -515,6 +515,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             {
                 app_state.close_probe_panel();
             } else if app_state.detail_view.is_some() {
+                app_state.clear_mouse_content_selection();
                 app_state.detail_view = None;
             } else {
                 return false;
@@ -2184,6 +2185,16 @@ mod tests {
         app.detail_view = Some(Default::default());
         assert!(app.detail_view.is_some());
         apply_action(AppAction::CloseDetail, &mut app);
+        assert!(app.detail_view.is_none());
+        assert_eq!(app.mouse_last_content_selection, None);
+        assert_eq!(app.mouse_last_content_pointer_row, None);
+    }
+
+    #[test]
+    fn test_apply_action_escape_closing_detail_clears_mouse_content_priming() {
+        let mut app = primed_mouse_app();
+        app.detail_view = Some(Default::default());
+        assert!(apply_action(AppAction::EscapePressed, &mut app));
         assert!(app.detail_view.is_none());
         assert_eq!(app.mouse_last_content_selection, None);
         assert_eq!(app.mouse_last_content_pointer_row, None);
