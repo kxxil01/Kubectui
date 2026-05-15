@@ -232,6 +232,26 @@ fn navigation_closes_stale_detail() {
 }
 
 #[test]
+fn navigation_clears_mouse_content_click_priming() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        selected_idx: 3,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 3,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    app.navigate_to_view(AppView::Services);
+
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
+}
+
+#[test]
 fn namespace_switch_clears_selection_search_status() {
     let mut app = AppState {
         search_query: "Running".to_string(),
@@ -268,6 +288,26 @@ fn namespace_switch_closes_stale_detail() {
 }
 
 #[test]
+fn namespace_switch_clears_mouse_content_click_priming() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        selected_idx: 3,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 3,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    app.set_namespace("prod".to_string());
+
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
+}
+
+#[test]
 fn search_query_edit_resets_selected_idx_to_first_result() {
     let mut app = AppState {
         selected_idx: 9,
@@ -279,6 +319,29 @@ fn search_query_edit_resets_selected_idx_to_first_result() {
 
     assert_eq!(app.search_query(), "a");
     assert_eq!(app.selected_idx, 0);
+}
+
+#[test]
+fn search_query_edit_clears_mouse_content_click_priming() {
+    let mut app = AppState {
+        selected_idx: 9,
+        search_query: "api".to_string(),
+        search_cursor: 3,
+        is_search_mode: true,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 9,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+
+    assert_eq!(app.search_query(), "apix");
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 }
 
 #[test]
