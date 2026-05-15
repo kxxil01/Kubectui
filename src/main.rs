@@ -681,6 +681,7 @@ fn reopen_pending_runbook(
         tab_state.banner = Some("Workspace applied from runbook step.".to_string());
         app.workbench
             .open_tab(WorkbenchTabState::Runbook(Box::new(tab_state)));
+        app.clear_mouse_content_selection();
         app.focus = kubectui::app::Focus::Workbench;
         if let Some(WorkbenchTabState::Runbook(tab)) =
             app.workbench.active_tab_mut().map(|tab| &mut tab.state)
@@ -7115,6 +7116,7 @@ pub(crate) async fn run_app_inner(
                         refresh_state.context_generation,
                     );
                     if app.focus == kubectui::app::Focus::Workbench {
+                        app.clear_mouse_content_selection();
                         app.focus = kubectui::app::Focus::Content;
                     }
                 }

@@ -358,6 +358,7 @@ impl AppState {
     pub fn toggle_workbench(&mut self) {
         self.workbench.toggle_open();
         if !self.workbench.open && self.focus == Focus::Workbench {
+            self.clear_mouse_content_selection();
             self.focus = Focus::Content;
         }
     }
@@ -377,6 +378,7 @@ impl AppState {
 
     pub fn sync_workbench_focus(&mut self) {
         if self.workbench.tabs.is_empty() && self.focus == Focus::Workbench {
+            self.clear_mouse_content_selection();
             self.focus = Focus::Content;
         }
     }
