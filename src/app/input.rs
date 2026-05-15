@@ -3127,6 +3127,7 @@ impl AppState {
                 self.is_search_mode = false;
                 // Reset selection so the user doesn't land on a stale filtered index.
                 self.selected_idx = 0;
+                self.clear_mouse_content_selection();
                 self.detail_view = None;
                 self.clear_selection_search_status();
             }
@@ -3164,6 +3165,7 @@ impl AppState {
         }
         if self.search_query != previous_query {
             self.selected_idx = 0;
+            self.clear_mouse_content_selection();
             self.detail_view = None;
             self.clear_selection_search_status();
         }

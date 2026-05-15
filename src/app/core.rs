@@ -94,6 +94,11 @@ impl AppState {
         self.content_pane_focus = ContentPaneFocus::List;
     }
 
+    pub fn clear_mouse_content_selection(&mut self) {
+        self.mouse_last_content_selection = None;
+        self.mouse_last_content_pointer_row = None;
+    }
+
     pub fn workload_sort_for_view(&self, view: AppView) -> Option<WorkloadSortState> {
         self.workload_sort
             .filter(|sort| view.supports_shared_sort(sort.column))

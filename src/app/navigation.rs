@@ -8,6 +8,7 @@ impl AppState {
         self.current_namespace = ns;
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
         self.clear_search_query();
         self.is_search_mode = false;
         self.clear_selection_search_status();
@@ -133,6 +134,7 @@ impl AppState {
         self.view = view;
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
         self.clear_search_query();
         self.is_search_mode = false;
         self.clear_selection_search_status();

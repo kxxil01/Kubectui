@@ -364,14 +364,12 @@ fn finish_mouse_pod_selection(
                     selection.start_pointer_row,
                 );
             } else {
-                app.mouse_last_content_selection = None;
-                app.mouse_last_content_pointer_row = None;
+                app.clear_mouse_content_selection();
             }
             AppAction::None
         };
     } else {
-        app.mouse_last_content_selection = None;
-        app.mouse_last_content_pointer_row = None;
+        app.clear_mouse_content_selection();
     }
 
     let Some(text) = pod_mouse_selection_text(app, snapshot, selection) else {
