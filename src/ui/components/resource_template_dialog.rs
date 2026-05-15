@@ -390,9 +390,7 @@ pub fn render_resource_template_dialog(
                 ResourceTemplateField::ConfigValue => {
                     ("Config Value", state.values.config_value.as_str())
                 }
-                ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => {
-                    unreachable!()
-                }
+                ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => ("", ""),
             };
             let selected = *field == state.focus_field;
             cursor_visible_input_line(

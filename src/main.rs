@@ -169,7 +169,7 @@ fn mouse_clicked_content_row(
             MouseContentTarget::Selection { .. } => app.selected_idx(),
             MouseContentTarget::ExtensionInstances { .. } => app.extension_instance_cursor,
         };
-        mouse_content_row_at(
+        let raw_row = mouse_content_row_at(
             regions.content,
             selected_idx,
             match target {
@@ -178,7 +178,20 @@ fn mouse_clicked_content_row(
             },
             mouse.column,
             mouse.row,
-        )
+        );
+        if app.view() == AppView::Pods
+            && matches!(target, MouseContentTarget::Selection { .. })
+            && app.mouse_last_content_pointer_row == Some(mouse.row)
+            && let Some(selection) = app.mouse_last_content_selection
+            && selection.view == AppView::Pods
+            && selection.scope == MouseContentSelectionScope::Primary
+            && selection.row == app.selected_idx()
+            && raw_row.is_some()
+        {
+            Some(selection.row)
+        } else {
+            raw_row
+        }
     })
 }
 
@@ -212,8 +225,10 @@ fn remember_mouse_content_selection(
     view: AppView,
     scope: MouseContentSelectionScope,
     row: usize,
+    pointer_row: u16,
 ) {
     app.mouse_last_content_selection = Some(MouseContentSelection { view, scope, row });
+    app.mouse_last_content_pointer_row = Some(pointer_row);
 }
 
 fn start_mouse_pod_selection(
@@ -339,19 +354,24 @@ fn finish_mouse_pod_selection(
             activate_selected_content_resource(app, snapshot)
         } else {
             if release_row == Some(selection.start_row) {
+                app.selected_idx = selection.start_row;
+                app.reset_content_secondary_pane_state();
                 remember_mouse_content_selection(
                     app,
                     selection.view,
                     MouseContentSelectionScope::Primary,
                     selection.start_row,
+                    selection.start_pointer_row,
                 );
             } else {
                 app.mouse_last_content_selection = None;
+                app.mouse_last_content_pointer_row = None;
             }
             AppAction::None
         };
     } else {
         app.mouse_last_content_selection = None;
+        app.mouse_last_content_pointer_row = None;
     }
 
     let Some(text) = pod_mouse_selection_text(app, snapshot, selection) else {
@@ -376,7 +396,7 @@ fn finish_mouse_pod_selection(
 fn finish_mouse_content_click(
     app: &mut AppState,
     snapshot: &ClusterSnapshot,
-    mouse_kind: MouseEventKind,
+    mouse: MouseEvent,
     routed_action: AppAction,
     content_target: Option<MouseContentTarget>,
     clicked_row: Option<usize>,
@@ -394,12 +414,18 @@ fn finish_mouse_content_click(
         activate_selected_content_resource(app, snapshot)
     } else {
         if routed_action == AppAction::None
-            && matches!(mouse_kind, MouseEventKind::Down(MouseButton::Left))
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             && app.mouse_row_selection.is_none()
             && let Some(row) = clicked_row
         {
             let view = app.view();
-            remember_mouse_content_selection(app, view, mouse_selection_scope(content_target), row);
+            remember_mouse_content_selection(
+                app,
+                view,
+                mouse_selection_scope(content_target),
+                row,
+                mouse.row,
+            );
         }
         routed_action
     }
@@ -6071,7 +6097,7 @@ pub(crate) async fn run_app_inner(
                             finish_mouse_content_click(
                                 &mut app,
                                 &cached_snapshot,
-                                mouse.kind,
+                                mouse,
                                 action,
                                 content_target,
                                 clicked_content_row,

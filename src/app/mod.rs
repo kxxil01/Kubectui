@@ -377,6 +377,8 @@ pub struct AppState {
     pub mouse_row_selection: Option<MouseRowSelection>,
     /// Last content row selected by mouse; a repeated click activates it.
     pub mouse_last_content_selection: Option<MouseContentSelection>,
+    /// Screen row used for the last mouse-selected content row.
+    pub mouse_last_content_pointer_row: Option<u16>,
     /// Active port-forward tunnels displayed in the PortForwarding view.
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
     /// Canonical mutation/action history.
