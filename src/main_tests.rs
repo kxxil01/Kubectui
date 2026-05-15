@@ -1020,6 +1020,37 @@ fn close_detail_runtime_clears_mouse_content_click_priming() {
 }
 
 #[test]
+fn runtime_overlay_openers_clear_mouse_content_click_priming() {
+    let primed = || AppState {
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 3,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    let mut namespace = primed();
+    super::open_namespace_picker_runtime(&mut namespace, vec!["default".into()]);
+    assert!(namespace.is_namespace_picker_open());
+    assert_eq!(namespace.mouse_last_content_selection, None);
+    assert_eq!(namespace.mouse_last_content_pointer_row, None);
+
+    let mut context = primed();
+    super::open_context_picker_runtime(&mut context, vec!["kind-kind".into()], None);
+    assert!(context.is_context_picker_open());
+    assert_eq!(context.mouse_last_content_selection, None);
+    assert_eq!(context.mouse_last_content_pointer_row, None);
+
+    let mut command = primed();
+    super::open_command_palette_runtime(&mut command, None);
+    assert!(command.command_palette.is_open());
+    assert_eq!(command.mouse_last_content_selection, None);
+    assert_eq!(command.mouse_last_content_pointer_row, None);
+}
+
+#[test]
 fn truncate_ai_block_respects_character_limit() {
     let truncated = super::truncate_ai_block("abcdef", 1);
     assert_eq!(truncated, "a…");
