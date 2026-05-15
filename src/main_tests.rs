@@ -313,7 +313,12 @@ fn mouse_content_first_click_records_global_list_selection_without_opening() {
     let action = super::finish_mouse_content_click(
         &mut app,
         &ClusterSnapshot::default(),
-        MouseEventKind::Down(MouseButton::Left),
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 9,
+            modifiers: KeyModifiers::NONE,
+        },
         AppAction::None,
         Some(MouseContentTarget::Selection { total: 2 }),
         Some(1),
@@ -329,6 +334,7 @@ fn mouse_content_first_click_records_global_list_selection_without_opening() {
             row: 1
         })
     );
+    assert_eq!(app.mouse_last_content_pointer_row, Some(9));
 }
 
 #[test]
@@ -368,7 +374,12 @@ fn mouse_content_second_click_opens_global_list_selection() {
     let action = super::finish_mouse_content_click(
         &mut app,
         &snapshot,
-        MouseEventKind::Down(MouseButton::Left),
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 9,
+            modifiers: KeyModifiers::NONE,
+        },
         AppAction::None,
         Some(MouseContentTarget::Selection { total: 2 }),
         Some(1),
@@ -433,7 +444,12 @@ fn mouse_content_second_click_opens_extension_instance_selection() {
     let action = super::finish_mouse_content_click(
         &mut app,
         &snapshot,
-        MouseEventKind::Down(MouseButton::Left),
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 9,
+            modifiers: KeyModifiers::NONE,
+        },
         AppAction::None,
         Some(MouseContentTarget::ExtensionInstances { total: 2 }),
         Some(1),
@@ -602,6 +618,98 @@ fn mouse_pod_selection_pointer_mapping_stays_anchored_after_recenter() {
 }
 
 #[test]
+fn mouse_pod_reclick_after_recenter_keeps_original_pod() {
+    let content = Rect::new(28, 3, 92, 20);
+    let regions = MouseRegions {
+        sidebar: Rect::new(0, 0, 28, 24),
+        search: None,
+        content,
+        secondary: None,
+        workbench: None,
+    };
+    let total = 100;
+    let pointer_row = 21;
+    let first_row =
+        kubectui::events::input::mouse_content_row_at(content, 0, total, 30, pointer_row)
+            .expect("initial row");
+
+    let mut app = AppState {
+        view: AppView::Pods,
+        focus: Focus::Content,
+        selected_idx: first_row,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: first_row,
+        }),
+        mouse_last_content_pointer_row: Some(pointer_row),
+        ..AppState::default()
+    };
+    let raw_recentered_row = kubectui::events::input::mouse_content_row_at(
+        content,
+        app.selected_idx,
+        total,
+        30,
+        pointer_row,
+    );
+    assert_ne!(raw_recentered_row, Some(first_row));
+
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 30,
+        row: pointer_row,
+        modifiers: KeyModifiers::NONE,
+    };
+    let clicked_row = super::mouse_clicked_content_row(
+        &app,
+        down,
+        Some(&regions),
+        Some(MouseContentTarget::Selection { total }),
+    );
+    assert_eq!(clicked_row, Some(first_row));
+    assert!(super::mouse_can_activate_clicked_content(
+        &app,
+        Some(MouseContentTarget::Selection { total }),
+        clicked_row,
+    ));
+
+    super::start_mouse_pod_selection(
+        &mut app,
+        clicked_row.expect("clicked row"),
+        pointer_row,
+        MouseCopyMode::Name,
+        true,
+    );
+    kubectui::events::input::route_mouse_input(
+        down,
+        &mut app,
+        Some(&regions),
+        Some(MouseContentTarget::Selection { total }),
+    );
+    assert_eq!(app.selected_idx, first_row);
+
+    let snapshot = ClusterSnapshot {
+        pods: (0..total)
+            .map(|idx| PodInfo {
+                name: format!("pod-{idx}"),
+                namespace: "default".to_string(),
+                ..PodInfo::default()
+            })
+            .collect(),
+        ..ClusterSnapshot::default()
+    };
+    let action = super::finish_mouse_pod_selection(&mut app, &snapshot, clicked_row);
+
+    assert_eq!(
+        action,
+        AppAction::OpenDetail(ResourceRef::Pod(
+            format!("pod-{first_row}"),
+            "default".to_string()
+        ))
+    );
+}
+
+#[test]
 fn mouse_pod_click_from_sidebar_does_not_activate_on_release() {
     let mut app = AppState {
         view: AppView::Pods,
@@ -623,6 +731,7 @@ fn mouse_pod_click_from_sidebar_does_not_activate_on_release() {
             row: 4
         })
     );
+    assert_eq!(app.mouse_last_content_pointer_row, Some(10));
 }
 
 #[test]
@@ -652,6 +761,7 @@ fn mouse_pod_click_release_outside_content_does_not_activate() {
 
     assert_eq!(action, AppAction::None);
     assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 }
 
 #[test]
@@ -675,6 +785,8 @@ fn mouse_pod_first_click_release_selects_without_opening() {
             row: 0
         })
     );
+    assert_eq!(app.selected_idx, 0);
+    assert_eq!(app.mouse_last_content_pointer_row, Some(10));
 }
 
 #[test]

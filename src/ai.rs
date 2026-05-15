@@ -340,7 +340,7 @@ fn call_ai_cli(
     system_prompt: &str,
     user_prompt: &str,
 ) -> Result<String> {
-    let command = ai_cli_command(provider);
+    let command = ai_cli_command(provider)?;
     let args = ai_cli_args(provider, system_prompt, user_prompt);
     let mut process = Command::new(&command);
     process
@@ -446,17 +446,21 @@ fn run_ai_cli_process_with_timeout(
     }
 }
 
-fn ai_cli_command(provider: &AiProviderConfig) -> String {
-    provider
-        .command
-        .clone()
-        .unwrap_or_else(|| match provider.provider {
-            AiProviderKind::ClaudeCli => "claude".to_string(),
-            AiProviderKind::CodexCli => "codex".to_string(),
-            AiProviderKind::OpenAi | AiProviderKind::Anthropic => {
-                unreachable!("not a CLI provider")
-            }
-        })
+fn ai_cli_command(provider: &AiProviderConfig) -> Result<String> {
+    match provider.provider {
+        AiProviderKind::ClaudeCli => Ok(provider
+            .command
+            .clone()
+            .unwrap_or_else(|| "claude".to_string())),
+        AiProviderKind::CodexCli => Ok(provider
+            .command
+            .clone()
+            .unwrap_or_else(|| "codex".to_string())),
+        AiProviderKind::OpenAi | AiProviderKind::Anthropic => Err(anyhow!(
+            "provider '{}' does not support CLI execution",
+            provider.provider.label()
+        )),
+    }
 }
 
 fn ai_cli_args(provider: &AiProviderConfig, system_prompt: &str, user_prompt: &str) -> Vec<String> {
@@ -1424,7 +1428,7 @@ trailing note {also ignored}"#,
             action: None,
         };
 
-        assert_eq!(ai_cli_command(&provider), "claude");
+        assert_eq!(ai_cli_command(&provider).expect("CLI command"), "claude");
         let args = ai_cli_args(&provider, "system", "user");
         assert_eq!(args[0], "-p");
         assert!(args[1].contains("system"));
@@ -1446,11 +1450,30 @@ trailing note {also ignored}"#,
             action: None,
         };
 
-        assert_eq!(ai_cli_command(&provider), "codex");
+        assert_eq!(ai_cli_command(&provider).expect("CLI command"), "codex");
         let args = ai_cli_args(&provider, "system", "user");
         assert_eq!(args[0], "exec");
         assert!(args[1].contains("system"));
         assert!(args[1].contains("user"));
+    }
+
+    #[test]
+    fn http_provider_never_resolves_cli_command() {
+        let provider = AiProviderConfig {
+            provider: AiProviderKind::OpenAi,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 5,
+            max_output_tokens: 128,
+            temperature: Some(0.1),
+            command: Some("codex".into()),
+            args: Vec::new(),
+            action: None,
+        };
+
+        let err = ai_cli_command(&provider).expect_err("HTTP provider must not run CLI");
+        assert!(err.to_string().contains("does not support CLI execution"));
     }
 
     #[test]

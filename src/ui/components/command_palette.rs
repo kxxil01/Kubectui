@@ -931,7 +931,15 @@ fn palette_item_lines(
                 .unwrap_or_else(|| "Bank".to_string()),
             None,
         ),
-        PaletteEntry::ColumnToggle { .. } => unreachable!(),
+        PaletteEntry::ColumnToggle { label, visible, .. } => (
+            label.clone(),
+            if *visible {
+                "Visible".to_string()
+            } else {
+                "Hidden".to_string()
+            },
+            None,
+        ),
     };
 
     let prefix = if is_selected { " ▶ " } else { "   " };

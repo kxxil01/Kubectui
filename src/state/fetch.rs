@@ -56,7 +56,10 @@ where
             }
         }
     }
-    unreachable!()
+    Err(anyhow!(
+        "failed fetching {label} after {} attempts",
+        TRANSIENT_RETRY_ATTEMPTS + 1
+    ))
 }
 
 /// Returns `true` if the error looks like a transient transport failure

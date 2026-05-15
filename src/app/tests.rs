@@ -8212,6 +8212,7 @@ fn reopening_connectivity_tab_preserves_selected_target_identity() {
         ],
     );
 
+    assert_eq!(app.workbench.tabs.len(), 1);
     let Some(tab) = app.workbench.active_tab() else {
         panic!("connectivity tab should stay open");
     };

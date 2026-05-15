@@ -383,17 +383,18 @@ impl AppState {
         source: ResourceRef,
         targets: Vec<ConnectivityTargetOption>,
     ) {
-        if let Some((idx, existing_tab)) =
-            self.workbench.tabs.iter_mut().enumerate().find(|(_, tab)| {
-                matches!(
-                    &tab.state,
-                    WorkbenchTabState::Connectivity(existing) if existing.source == source
-                )
-            })
+        if let Some((idx, tab)) =
+            self.workbench
+                .tabs
+                .iter_mut()
+                .enumerate()
+                .find_map(|(idx, tab)| match &mut tab.state {
+                    WorkbenchTabState::Connectivity(existing) if existing.source == source => {
+                        Some((idx, existing))
+                    }
+                    _ => None,
+                })
         {
-            let WorkbenchTabState::Connectivity(tab) = &mut existing_tab.state else {
-                unreachable!("connectivity tab lookup must return connectivity state");
-            };
             tab.apply_targets(targets);
             self.workbench.active_tab = idx;
             self.workbench.open = true;

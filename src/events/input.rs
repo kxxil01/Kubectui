@@ -100,6 +100,7 @@ pub fn route_mouse_input(
                     ) {
                         app_state.set_or_toggle_pod_sort(column);
                     } else if app_state.detail_view.is_none()
+                        && app_state.mouse_row_selection.is_none()
                         && let Some(target) = content_target
                         && let Some(selected) = mouse_content_row_at(
                             regions.content,
