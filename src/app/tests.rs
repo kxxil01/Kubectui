@@ -3888,6 +3888,56 @@ fn keyboard_focus_changes_clear_mouse_content_click_priming() {
 }
 
 #[test]
+fn direct_focus_transitions_clear_mouse_content_click_priming() {
+    let primed = || AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 0,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    let mut workbench = primed();
+    workbench
+        .workbench
+        .open_tab(WorkbenchTabState::ActionHistory(
+            crate::workbench::ActionHistoryTabState::default(),
+        ));
+    workbench.focus_workbench();
+    assert_eq!(workbench.focus, Focus::Workbench);
+    assert_eq!(workbench.mouse_last_content_selection, None);
+    assert_eq!(workbench.mouse_last_content_pointer_row, None);
+
+    let mut content = primed();
+    content.focus = Focus::Workbench;
+    content.blur_workbench();
+    assert_eq!(content.focus, Focus::Content);
+    assert_eq!(content.mouse_last_content_selection, None);
+    assert_eq!(content.mouse_last_content_pointer_row, None);
+
+    let mut sidebar = primed();
+    sidebar.focus = Focus::Sidebar;
+    let rows = sidebar_rows(&sidebar.collapsed_groups);
+    let (view_row, view) = rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, item)| match item {
+            SidebarItem::View(view) => Some((row, *view)),
+            SidebarItem::Group(_) => None,
+        })
+        .expect("visible sidebar view row");
+    sidebar.sidebar_cursor = view_row;
+    assert_eq!(sidebar.sidebar_activate(), AppAction::NavigateTo(view));
+    assert_eq!(sidebar.focus, Focus::Content);
+    assert_eq!(sidebar.mouse_last_content_selection, None);
+    assert_eq!(sidebar.mouse_last_content_pointer_row, None);
+}
+
+#[test]
 fn sidebar_navigation_clamps_stale_cursor() {
     let mut app = AppState {
         focus: Focus::Sidebar,

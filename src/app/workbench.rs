@@ -93,12 +93,14 @@ impl AppState {
 
     pub(crate) fn focus_workbench(&mut self) {
         if self.workbench.open && !self.workbench.tabs.is_empty() {
+            self.clear_mouse_content_selection();
             self.focus = Focus::Workbench;
         }
     }
 
     pub(crate) fn blur_workbench(&mut self) {
         if self.focus == Focus::Workbench {
+            self.clear_mouse_content_selection();
             self.focus = Focus::Content;
         }
     }

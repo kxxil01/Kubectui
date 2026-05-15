@@ -251,6 +251,7 @@ impl AppState {
         match rows.get(self.sidebar_cursor) {
             Some(SidebarItem::Group(g)) => AppAction::ToggleNavGroup(*g),
             Some(SidebarItem::View(v)) => {
+                self.clear_mouse_content_selection();
                 self.focus = Focus::Content;
                 AppAction::NavigateTo(*v)
             }
