@@ -14,10 +14,11 @@ use super::{
     pod_get_forbidden_status, prepare_bookmark_target, prepare_resource_target,
     preserve_detail_selection_identity, preserve_selection_identity_after_snapshot_change,
     queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
-    refresh_scope_pending, request_refresh, run_extension_command, selected_extension_crd,
-    selected_flux_reconcile_resource, selected_resource, should_animate_loading_spinner,
-    should_include_flux_in_auto_refresh, should_preserve_current_flux_after_refresh,
-    should_request_navigation_refresh, should_request_periodic_redraw, stop_port_forward_sessions,
+    refresh_scope_pending, reopen_pending_runbook, request_refresh, run_extension_command,
+    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
+    should_animate_loading_spinner, should_include_flux_in_auto_refresh,
+    should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
+    should_request_periodic_redraw, stop_port_forward_sessions,
     strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
     workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
@@ -3184,6 +3185,38 @@ fn failed_context_switch_clears_pending_workspace_restore() {
     assert!(snapshot_dirty);
     assert!(needs_redraw);
     assert_eq!(app.error_message(), Some("context failed"));
+}
+
+#[test]
+fn reopen_pending_runbook_clears_mouse_content_click_priming() {
+    let mut app = AppState {
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 4,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+    let mut pending_runbook_restore = Some(kubectui::workbench::RunbookTabState::new(
+        kubectui::runbooks::LoadedRunbook {
+            id: "pod_failure".into(),
+            title: "Pod Failure Triage".into(),
+            description: None,
+            aliases: Vec::new(),
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            steps: Vec::new(),
+        },
+        Some(ResourceRef::Pod("api".into(), "prod".into())),
+    ));
+
+    reopen_pending_runbook(&mut app, &mut pending_runbook_restore);
+
+    assert!(pending_runbook_restore.is_none());
+    assert_eq!(app.focus, Focus::Workbench);
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 }
 
 #[test]

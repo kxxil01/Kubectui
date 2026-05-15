@@ -3919,6 +3919,25 @@ fn direct_focus_transitions_clear_mouse_content_click_priming() {
     assert_eq!(content.mouse_last_content_selection, None);
     assert_eq!(content.mouse_last_content_pointer_row, None);
 
+    let mut closed_workbench = primed();
+    closed_workbench
+        .workbench
+        .open_tab(WorkbenchTabState::ActionHistory(
+            crate::workbench::ActionHistoryTabState::default(),
+        ));
+    closed_workbench.focus = Focus::Workbench;
+    closed_workbench.toggle_workbench();
+    assert_eq!(closed_workbench.focus, Focus::Content);
+    assert_eq!(closed_workbench.mouse_last_content_selection, None);
+    assert_eq!(closed_workbench.mouse_last_content_pointer_row, None);
+
+    let mut empty_workbench = primed();
+    empty_workbench.focus = Focus::Workbench;
+    empty_workbench.sync_workbench_focus();
+    assert_eq!(empty_workbench.focus, Focus::Content);
+    assert_eq!(empty_workbench.mouse_last_content_selection, None);
+    assert_eq!(empty_workbench.mouse_last_content_pointer_row, None);
+
     let mut sidebar = primed();
     sidebar.focus = Focus::Sidebar;
     let rows = sidebar_rows(&sidebar.collapsed_groups);
