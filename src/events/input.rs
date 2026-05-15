@@ -129,6 +129,7 @@ pub fn route_mouse_input(
                 let bottom = area.y.saturating_add(area.height);
                 let height = bottom.saturating_sub(mouse.row).max(1);
                 app_state.workbench.set_open_and_height(true, height);
+                app_state.clear_mouse_content_selection();
                 app_state.focus = Focus::Workbench;
             }
             AppAction::None
@@ -1982,6 +1983,37 @@ mod tests {
 
         assert_eq!(app.focus, Focus::Workbench);
         assert_eq!(app.workbench.height, 12);
+    }
+
+    #[test]
+    fn mouse_drag_resize_workbench_clears_content_click_priming() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let mut app = primed_mouse_app();
+        app.workbench.open = true;
+        app.workbench.height = 10;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 40,
+                row: 21,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        assert_eq!(app.focus, Focus::Workbench);
+        assert_eq!(app.workbench.height, 12);
+        assert_eq!(app.mouse_last_content_selection, None);
+        assert_eq!(app.mouse_last_content_pointer_row, None);
     }
 
     #[test]
