@@ -3848,6 +3848,46 @@ fn keyboard_selection_clears_mouse_content_click_priming() {
 }
 
 #[test]
+fn keyboard_focus_changes_clear_mouse_content_click_priming() {
+    let primed = || AppState {
+        focus: Focus::Content,
+        view: AppView::Projects,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Projects,
+            scope: MouseContentSelectionScope::Primary,
+            row: 0,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    let mut search = primed();
+    search.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+    assert!(search.is_search_mode());
+    assert_eq!(search.mouse_last_content_selection, None);
+    assert_eq!(search.mouse_last_content_pointer_row, None);
+
+    let mut sidebar = primed();
+    sidebar.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(sidebar.focus, Focus::Sidebar);
+    assert_eq!(sidebar.mouse_last_content_selection, None);
+    assert_eq!(sidebar.mouse_last_content_pointer_row, None);
+
+    let mut secondary = primed();
+    secondary.handle_key_event(KeyEvent::from(KeyCode::Char(';')));
+    assert_eq!(secondary.content_pane_focus(), ContentPaneFocus::Secondary);
+    assert_eq!(secondary.mouse_last_content_selection, None);
+    assert_eq!(secondary.mouse_last_content_pointer_row, None);
+
+    let mut workbench = primed();
+    workbench.focus = Focus::Workbench;
+    workbench.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(workbench.focus, Focus::Content);
+    assert_eq!(workbench.mouse_last_content_selection, None);
+    assert_eq!(workbench.mouse_last_content_pointer_row, None);
+}
+
+#[test]
 fn sidebar_navigation_clamps_stale_cursor() {
     let mut app = AppState {
         focus: Focus::Sidebar,

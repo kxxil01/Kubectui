@@ -2384,10 +2384,12 @@ impl AppState {
                 AppAction::CloseDetail
             }
             KeyCode::Esc if self.focus == Focus::Content && plain_shortcut(key) => {
+                self.clear_mouse_content_selection();
                 self.focus = Focus::Sidebar;
                 AppAction::None
             }
             KeyCode::Esc if self.focus == Focus::Workbench && plain_shortcut(key) => {
+                self.clear_mouse_content_selection();
                 self.focus = Focus::Content;
                 AppAction::None
             }
@@ -2789,6 +2791,7 @@ impl AppState {
                     && plain_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
+                self.clear_mouse_content_selection();
                 self.content_pane_focus = match self.content_pane_focus() {
                     ContentPaneFocus::List => ContentPaneFocus::Secondary,
                     ContentPaneFocus::Secondary => ContentPaneFocus::List,
@@ -2985,6 +2988,7 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('/') if plain_shortcut(key) => {
+                self.clear_mouse_content_selection();
                 self.is_search_mode = true;
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
                 AppAction::None
