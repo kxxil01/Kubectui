@@ -364,14 +364,17 @@ impl AppState {
     }
 
     pub fn workbench_next_tab(&mut self) {
+        self.clear_mouse_content_selection();
         self.workbench.next_tab();
     }
 
     pub fn workbench_previous_tab(&mut self) {
+        self.clear_mouse_content_selection();
         self.workbench.previous_tab();
     }
 
     pub fn workbench_close_active_tab(&mut self) {
+        self.clear_mouse_content_selection();
         self.workbench.close_active_tab();
         self.sync_workbench_focus();
     }
@@ -384,14 +387,17 @@ impl AppState {
     }
 
     pub fn workbench_increase_height(&mut self) {
+        self.clear_mouse_content_selection();
         self.workbench.resize_larger();
     }
 
     pub fn workbench_decrease_height(&mut self) {
+        self.clear_mouse_content_selection();
         self.workbench.resize_smaller();
     }
 
     pub fn workbench_toggle_maximize(&mut self) {
+        self.clear_mouse_content_selection();
         self.workbench.toggle_maximize();
     }
 }
