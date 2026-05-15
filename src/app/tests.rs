@@ -3963,6 +3963,56 @@ fn direct_focus_transitions_clear_mouse_content_click_priming() {
 }
 
 #[test]
+fn workbench_shortcuts_clear_mouse_content_click_priming() {
+    let primed = || {
+        let mut app = AppState {
+            focus: Focus::Workbench,
+            mouse_last_content_selection: Some(MouseContentSelection {
+                view: AppView::Pods,
+                scope: MouseContentSelectionScope::Primary,
+                row: 0,
+            }),
+            mouse_last_content_pointer_row: Some(12),
+            ..AppState::default()
+        };
+        app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+            crate::workbench::ActionHistoryTabState::default(),
+        ));
+        app
+    };
+
+    let mut next = primed();
+    next.workbench_next_tab();
+    assert_eq!(next.mouse_last_content_selection, None);
+    assert_eq!(next.mouse_last_content_pointer_row, None);
+
+    let mut previous = primed();
+    previous.workbench_previous_tab();
+    assert_eq!(previous.mouse_last_content_selection, None);
+    assert_eq!(previous.mouse_last_content_pointer_row, None);
+
+    let mut close = primed();
+    close.workbench_close_active_tab();
+    assert_eq!(close.mouse_last_content_selection, None);
+    assert_eq!(close.mouse_last_content_pointer_row, None);
+
+    let mut larger = primed();
+    larger.workbench_increase_height();
+    assert_eq!(larger.mouse_last_content_selection, None);
+    assert_eq!(larger.mouse_last_content_pointer_row, None);
+
+    let mut smaller = primed();
+    smaller.workbench_decrease_height();
+    assert_eq!(smaller.mouse_last_content_selection, None);
+    assert_eq!(smaller.mouse_last_content_pointer_row, None);
+
+    let mut maximize = primed();
+    maximize.workbench_toggle_maximize();
+    assert_eq!(maximize.mouse_last_content_selection, None);
+    assert_eq!(maximize.mouse_last_content_pointer_row, None);
+}
+
+#[test]
 fn sidebar_navigation_clamps_stale_cursor() {
     let mut app = AppState {
         focus: Focus::Sidebar,
