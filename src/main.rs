@@ -793,6 +793,11 @@ fn prepare_context_switch_ui(app: &mut kubectui::app::AppState) {
     app.sync_workbench_focus();
 }
 
+fn close_detail_runtime(app: &mut kubectui::app::AppState) {
+    app.clear_mouse_content_selection();
+    app.detail_view = None;
+}
+
 fn close_resource_tabs_and_refresh_palette_activity(app: &mut kubectui::app::AppState) {
     app.workbench.close_resource_tabs();
     if app.command_palette.is_open() {
@@ -7107,7 +7112,7 @@ pub(crate) async fn run_app_inner(
                     );
                 }
                 AppAction::CloseDetail => {
-                    app.detail_view = None;
+                    close_detail_runtime(&mut app);
                 }
                 AppAction::OpenResourceYaml => {
                     if action::detail_tabs::handle_open_resource_yaml(

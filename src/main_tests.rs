@@ -1000,6 +1000,26 @@ fn prepare_context_switch_ui_resets_secondary_pane_focus_and_scroll() {
 }
 
 #[test]
+fn close_detail_runtime_clears_mouse_content_click_priming() {
+    let mut app = AppState {
+        detail_view: Some(DetailViewState::default()),
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 3,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    super::close_detail_runtime(&mut app);
+
+    assert!(app.detail_view.is_none());
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
+}
+
+#[test]
 fn truncate_ai_block_respects_character_limit() {
     let truncated = super::truncate_ai_block("abcdef", 1);
     assert_eq!(truncated, "a…");
