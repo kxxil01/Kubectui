@@ -61,6 +61,7 @@ pub fn route_mouse_input(
                     && rect_contains(area, mouse.column, mouse.row)
                 {
                     if app_state.workbench().open {
+                        app_state.clear_mouse_content_selection();
                         app_state.focus = Focus::Workbench;
                         if let Some(tab_idx) =
                             workbench_tab_at(app_state, area, mouse.column, mouse.row)
@@ -69,6 +70,7 @@ pub fn route_mouse_input(
                         }
                     }
                 } else if rect_contains(regions.sidebar, mouse.column, mouse.row) {
+                    app_state.clear_mouse_content_selection();
                     app_state.focus = Focus::Sidebar;
                     if let Some(row) = sidebar_row_at(regions.sidebar, mouse.column, mouse.row) {
                         let rows = sidebar_rows(&app_state.collapsed_groups);
@@ -81,6 +83,7 @@ pub fn route_mouse_input(
                     .search
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
+                    app_state.clear_mouse_content_selection();
                     app_state.focus = Focus::Content;
                     app_state.content_pane_focus = ContentPaneFocus::List;
                     app_state.is_search_mode = true;
@@ -88,6 +91,7 @@ pub fn route_mouse_input(
                 } else if let Some(area) = regions.secondary
                     && rect_contains(area, mouse.column, mouse.row)
                 {
+                    app_state.clear_mouse_content_selection();
                     focus_content_secondary_pane(app_state);
                 } else if rect_contains(regions.content, mouse.column, mouse.row) {
                     app_state.focus = Focus::Content;
@@ -1428,6 +1432,61 @@ mod tests {
         assert!(app.is_search_mode());
         assert_eq!(app.search_cursor(), 3);
         assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+    }
+
+    #[test]
+    fn mouse_left_click_non_row_targets_clear_content_click_priming() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: Some(Rect::new(28, 3, 92, 1)),
+            content: Rect::new(28, 4, 92, 12),
+            secondary: Some(Rect::new(28, 16, 92, 8)),
+            workbench: None,
+        };
+        let mut app = AppState {
+            focus: Focus::Content,
+            mouse_last_content_selection: Some(MouseContentSelection {
+                view: AppView::Pods,
+                scope: MouseContentSelectionScope::Primary,
+                row: 4,
+            }),
+            mouse_last_content_pointer_row: Some(8),
+            ..AppState::default()
+        };
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(MouseContentTarget::Selection { total: 100 }),
+        );
+        assert_eq!(app.mouse_last_content_selection, None);
+        assert_eq!(app.mouse_last_content_pointer_row, None);
+
+        app.mouse_last_content_selection = Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 4,
+        });
+        app.mouse_last_content_pointer_row = Some(8);
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 30,
+                row: 18,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            Some(MouseContentTarget::Selection { total: 100 }),
+        );
+        assert_eq!(app.mouse_last_content_selection, None);
+        assert_eq!(app.mouse_last_content_pointer_row, None);
     }
 
     #[test]
