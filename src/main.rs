@@ -789,7 +789,7 @@ fn prepare_context_switch_ui(app: &mut kubectui::app::AppState) {
     app.clear_search_query();
     app.is_search_mode = false;
     app.clear_selection_search_status();
-    app.detail_view = None;
+    close_detail_runtime(app);
     close_resource_tabs_and_refresh_palette_activity(app);
     app.sync_workbench_focus();
 }
@@ -3309,7 +3309,7 @@ fn start_ai_analysis(
     *runtime.next_execution_id = (*runtime.next_execution_id).wrapping_add(1).max(1);
     let context = build_ai_analysis_context(app, snapshot, resource, action.workflow);
     let initial_context_summary = summarize_ai_context_for_tab(&context);
-    app.detail_view = None;
+    close_detail_runtime(app);
     app.open_ai_analysis_tab(
         execution_id,
         action.title.clone(),
@@ -5305,7 +5305,7 @@ pub(crate) async fn run_app_inner(
                                         false,
                                         MUTATION_REFRESH_DELAYS_SECS,
                                     );
-                                    app.detail_view = None;
+                                    close_detail_runtime(&mut app);
                                     app.open_exec_tab_for_container(
                                         result.resource.clone(),
                                         result.session_id,
@@ -5491,7 +5491,7 @@ pub(crate) async fn run_app_inner(
                                         result.session_id,
                                         &action::node_debug::node_debug_shell_banner(&launch),
                                     );
-                                    app.detail_view = None;
+                                    close_detail_runtime(&mut app);
                                 }
                                 Err(err) => {
                                     spawn_node_debug_cleanup(
@@ -6738,7 +6738,7 @@ pub(crate) async fn run_app_inner(
                                 let execution_id = next_extension_execution_id;
                                 next_extension_execution_id =
                                     next_extension_execution_id.wrapping_add(1).max(1);
-                                app.detail_view = None;
+                                close_detail_runtime(&mut app);
                                 app.open_extension_output_tab(
                                     execution_id,
                                     action.title.clone(),
@@ -7017,7 +7017,7 @@ pub(crate) async fn run_app_inner(
                     // Drop old namespace data immediately to prevent inconsistent mixed views.
                     global_state.begin_loading_transition(false);
                     snapshot_dirty = true;
-                    app.detail_view = None;
+                    close_detail_runtime(&mut app);
                     close_resource_tabs_and_refresh_palette_activity(&mut app);
                     if let Some(snapshot) =
                         app.pending_workspace_restore.take().filter(|snapshot| {
@@ -7377,7 +7377,7 @@ pub(crate) async fn run_app_inner(
                             )
                             .await;
                         }
-                        app.detail_view = None;
+                        close_detail_runtime(&mut app);
                         app.open_workload_logs_tab(resource.clone(), session_id);
                         let context_generation = refresh_state.context_generation;
                         let tx = workload_logs_bootstrap_tx.clone();
@@ -7398,7 +7398,7 @@ pub(crate) async fn run_app_inner(
                         continue;
                     };
                     let mut container_request: Option<(u64, String, String)> = None;
-                    app.detail_view = None;
+                    close_detail_runtime(&mut app);
                     app.open_pod_logs_tab(pod_resource);
                     if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PodLogs(
                         ResourceRef::Pod(pod_name.clone(), pod_ns.clone()),
@@ -7495,7 +7495,7 @@ pub(crate) async fn run_app_inner(
 
                     let session_id = next_exec_session_id;
                     next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
-                    app.detail_view = None;
+                    close_detail_runtime(&mut app);
                     app.open_exec_tab(
                         resource.clone(),
                         session_id,
@@ -8183,7 +8183,7 @@ pub(crate) async fn run_app_inner(
                     {
                         continue;
                     }
-                    app.detail_view = None;
+                    close_detail_runtime(&mut app);
                     app.open_port_forward_tab(Some(resource), dialog);
                     let tunnels = port_forwarder.list_tunnels();
                     update_port_forwarding_registry(&mut app, tunnels.clone());
