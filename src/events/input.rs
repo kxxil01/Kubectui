@@ -425,6 +425,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenNamespacePicker => {
+            app_state.clear_mouse_content_selection();
             app_state.open_namespace_picker();
             true
         }
@@ -438,6 +439,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenContextPicker => {
+            app_state.clear_mouse_content_selection();
             app_state.context_picker.open();
             true
         }
@@ -454,6 +456,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenCommandPalette => {
+            app_state.clear_mouse_content_selection();
             app_state.refresh_palette_columns();
             app_state.refresh_palette_workspaces();
             app_state.command_palette.open();
@@ -975,6 +978,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenHelp => {
+            app_state.clear_mouse_content_selection();
             app_state.help_overlay.toggle();
             true
         }
@@ -1145,12 +1149,40 @@ mod tests {
     use crossterm::event::KeyModifiers;
     use ratatui::layout::Rect;
 
+    fn primed_mouse_app() -> AppState {
+        AppState {
+            mouse_last_content_selection: Some(MouseContentSelection {
+                view: AppView::Pods,
+                scope: MouseContentSelectionScope::Primary,
+                row: 4,
+            }),
+            mouse_last_content_pointer_row: Some(12),
+            ..AppState::default()
+        }
+    }
+
     fn mouse_event(kind: MouseEventKind) -> MouseEvent {
         MouseEvent {
             kind,
             column: 10,
             row: 5,
             modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn overlay_actions_clear_content_click_priming() {
+        for (label, action) in [
+            ("namespace", AppAction::OpenNamespacePicker),
+            ("context", AppAction::OpenContextPicker),
+            ("command", AppAction::OpenCommandPalette),
+            ("help", AppAction::OpenHelp),
+        ] {
+            let mut app = primed_mouse_app();
+
+            assert!(apply_action(action, &mut app), "{label}");
+            assert_eq!(app.mouse_last_content_selection, None, "{label}");
+            assert_eq!(app.mouse_last_content_pointer_row, None, "{label}");
         }
     }
 
