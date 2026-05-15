@@ -2861,6 +2861,7 @@ impl AppState {
                                 .min(self.extension_instances.len().saturating_sub(1));
                             self.extension_instance_cursor =
                                 (current + 1) % self.extension_instances.len();
+                            self.clear_mouse_content_selection();
                         }
                     }
                     Focus::Content => self.select_next(),
@@ -2885,6 +2886,7 @@ impl AppState {
                             } else {
                                 current - 1
                             };
+                            self.clear_mouse_content_selection();
                         }
                     }
                     Focus::Content => self.select_previous(),

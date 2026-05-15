@@ -1034,6 +1034,21 @@ fn pods_sort_keybindings_toggle_and_clear() {
     let mut app = AppState::default();
     app.view = AppView::Pods;
     app.focus = Focus::Content;
+    app.mouse_row_selection = Some(MouseRowSelection {
+        view: AppView::Pods,
+        start_row: 4,
+        end_row: 5,
+        start_pointer_row: 12,
+        mode: MouseCopyMode::Name,
+        dragged: true,
+        activate_on_release: false,
+    });
+    app.mouse_last_content_selection = Some(MouseContentSelection {
+        view: AppView::Pods,
+        scope: MouseContentSelectionScope::Primary,
+        row: 4,
+    });
+    app.mouse_last_content_pointer_row = Some(12);
 
     assert_eq!(app.pod_sort(), None);
 
@@ -1042,6 +1057,9 @@ fn pods_sort_keybindings_toggle_and_clear() {
         app.pod_sort(),
         Some(PodSortState::new(PodSortColumn::Age, true))
     );
+    assert_eq!(app.mouse_row_selection, None);
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 
     app.handle_key_event(KeyEvent::from(KeyCode::Char('1')));
     assert_eq!(
@@ -1106,6 +1124,12 @@ fn workload_sort_keybindings_toggle_and_clear() {
     let mut app = AppState::default();
     app.view = AppView::Deployments;
     app.focus = Focus::Content;
+    app.mouse_last_content_selection = Some(MouseContentSelection {
+        view: AppView::Deployments,
+        scope: MouseContentSelectionScope::Primary,
+        row: 4,
+    });
+    app.mouse_last_content_pointer_row = Some(12);
 
     assert_eq!(app.workload_sort(), None);
 
@@ -1114,6 +1138,8 @@ fn workload_sort_keybindings_toggle_and_clear() {
         app.workload_sort(),
         Some(WorkloadSortState::new(WorkloadSortColumn::Name, false))
     );
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 
     app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
     assert_eq!(
@@ -1381,6 +1407,12 @@ fn extension_instance_navigation_clamps_stale_cursor() {
             },
         ],
         extension_instance_cursor: usize::MAX,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Extensions,
+            scope: MouseContentSelectionScope::ExtensionInstances,
+            row: 1,
+        }),
+        mouse_last_content_pointer_row: Some(12),
         ..AppState::default()
     };
 
@@ -1389,13 +1421,23 @@ fn extension_instance_navigation_clamps_stale_cursor() {
         AppAction::None
     );
     assert_eq!(app.extension_instance_cursor, 0);
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 
     app.extension_instance_cursor = usize::MAX;
+    app.mouse_last_content_selection = Some(MouseContentSelection {
+        view: AppView::Extensions,
+        scope: MouseContentSelectionScope::ExtensionInstances,
+        row: 1,
+    });
+    app.mouse_last_content_pointer_row = Some(12);
     assert_eq!(
         app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
         AppAction::None
     );
     assert_eq!(app.extension_instance_cursor, 0);
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 }
 
 #[test]
@@ -3783,6 +3825,26 @@ fn selected_index_grows_with_down_events() {
         app.handle_key_event(KeyEvent::from(KeyCode::Down));
     }
     assert_eq!(app.sidebar_cursor, 5);
+}
+
+#[test]
+fn keyboard_selection_clears_mouse_content_click_priming() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        mouse_last_content_selection: Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 0,
+        }),
+        mouse_last_content_pointer_row: Some(12),
+        ..AppState::default()
+    };
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Down));
+
+    assert_eq!(app.selected_idx(), 1);
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 }
 
 #[test]
@@ -7786,6 +7848,21 @@ fn apply_workspace_snapshot_resets_secondary_pane_focus_and_scroll() {
     app.focus = Focus::Content;
     app.content_detail_scroll = 17;
     app.content_pane_focus = ContentPaneFocus::Secondary;
+    app.mouse_row_selection = Some(MouseRowSelection {
+        view: AppView::Pods,
+        start_row: 4,
+        end_row: 5,
+        start_pointer_row: 12,
+        mode: MouseCopyMode::Name,
+        dragged: true,
+        activate_on_release: false,
+    });
+    app.mouse_last_content_selection = Some(MouseContentSelection {
+        view: AppView::Pods,
+        scope: MouseContentSelectionScope::Primary,
+        row: 4,
+    });
+    app.mouse_last_content_pointer_row = Some(12);
 
     let snapshot = WorkspaceSnapshot {
         context: Some("prod".into()),
@@ -7804,6 +7881,9 @@ fn apply_workspace_snapshot_resets_secondary_pane_focus_and_scroll() {
     assert_eq!(app.content_detail_scroll, 0);
     assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
     assert!(!app.content_secondary_pane_active());
+    assert_eq!(app.mouse_row_selection, None);
+    assert_eq!(app.mouse_last_content_selection, None);
+    assert_eq!(app.mouse_last_content_pointer_row, None);
 }
 
 #[test]

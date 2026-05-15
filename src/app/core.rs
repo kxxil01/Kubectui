@@ -95,6 +95,7 @@ impl AppState {
     }
 
     pub fn clear_mouse_content_selection(&mut self) {
+        self.mouse_row_selection = None;
         self.mouse_last_content_selection = None;
         self.mouse_last_content_pointer_row = None;
     }

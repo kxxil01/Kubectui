@@ -154,11 +154,13 @@ impl AppState {
     pub(super) fn select_next(&mut self) {
         self.selected_idx = self.selected_idx.saturating_add(1);
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
     }
 
     pub(super) fn select_previous(&mut self) {
         self.selected_idx = self.selected_idx.saturating_sub(1);
         self.reset_content_secondary_pane_state();
+        self.clear_mouse_content_selection();
     }
 
     pub fn sidebar_cursor_down(&mut self) {

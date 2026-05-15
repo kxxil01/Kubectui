@@ -308,9 +308,11 @@ fn apply_mouse_content_selection(
         MouseContentTarget::Selection { .. } => {
             app_state.selected_idx = selected;
             app_state.reset_content_secondary_pane_state();
+            app_state.clear_mouse_content_selection();
         }
         MouseContentTarget::ExtensionInstances { .. } => {
             app_state.extension_instance_cursor = selected;
+            app_state.clear_mouse_content_selection();
         }
     }
 }
@@ -1131,7 +1133,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        app::PodSortState,
+        app::{MouseContentSelection, MouseContentSelectionScope, PodSortState},
         policy::ResourceActionContext,
         ui::components::port_forward_dialog::PortForwardDialog,
         workbench::{PodLogsTabState, PortForwardTabState, WorkbenchTabState},
@@ -1441,6 +1443,12 @@ mod tests {
         app.focus = Focus::Sidebar;
         app.selected_idx = 50;
         app.content_detail_scroll = 10;
+        app.mouse_last_content_selection = Some(MouseContentSelection {
+            view: AppView::Pods,
+            scope: MouseContentSelectionScope::Primary,
+            row: 50,
+        });
+        app.mouse_last_content_pointer_row = Some(8);
 
         let action = route_mouse_input(
             MouseEvent {
@@ -1458,6 +1466,8 @@ mod tests {
         assert_eq!(app.focus, Focus::Content);
         assert_eq!(app.selected_idx, 49);
         assert_eq!(app.content_detail_scroll, 0);
+        assert_eq!(app.mouse_last_content_selection, None);
+        assert_eq!(app.mouse_last_content_pointer_row, None);
     }
 
     #[test]
