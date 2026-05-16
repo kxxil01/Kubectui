@@ -3289,14 +3289,15 @@ impl WorkbenchState {
     }
 
     /// Remove all resource-bound tabs (YAML, Drift, Events, Logs, Exec) that become
-    /// stale after a context or namespace switch.  ActionHistory and PortForward
-    /// are retained since they are not resource-scoped.
+    /// stale after a context or namespace switch.  ActionHistory and the
+    /// unscoped PortForward sessions tab are retained.
     pub fn close_resource_tabs(&mut self) {
         let active_id = self.active_tab().map(|tab| tab.id);
         self.tabs.retain(|tab| {
             matches!(
-                tab.state.kind(),
-                WorkbenchTabKind::ActionHistory | WorkbenchTabKind::PortForward
+                &tab.state,
+                WorkbenchTabState::ActionHistory(_)
+                    | WorkbenchTabState::PortForward(PortForwardTabState { target: None, .. })
             )
         });
         if self.tabs.is_empty() {
@@ -4684,6 +4685,20 @@ mod tests {
             state.active_tab().map(|tab| &tab.state),
             Some(WorkbenchTabState::ActionHistory(_))
         ));
+    }
+
+    #[test]
+    fn close_resource_tabs_drops_targeted_port_forward_tab() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
+            Some(pod("pod-0")),
+            PortForwardDialog::with_target("default", "pod-0", 8080),
+        )));
+
+        state.close_resource_tabs();
+
+        assert!(!state.has_tab(&WorkbenchTabKey::PortForward));
+        assert!(!state.open);
     }
 
     #[test]
