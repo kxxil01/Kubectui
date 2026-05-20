@@ -2294,6 +2294,55 @@ fn exec_page_down_scrolls_wrapped_visual_output() {
 }
 
 #[test]
+fn exec_command_mode_scrolls_output_without_editing_input() {
+    let mut app = AppState::default();
+    let mut tab = crate::workbench::ExecTabState::new(
+        ResourceRef::Pod("pod-1".into(), "default".into()),
+        1,
+        "pod-1".into(),
+        "default".into(),
+    );
+    tab.input = "draft".into();
+    tab.input_cursor = tab.input.chars().count();
+    tab.scroll = 3;
+    tab.lines = vec!["one".into(), "two".into(), "three".into(), "four".into()];
+    app.workbench.open_tab(WorkbenchTabState::Exec(tab));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('k'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::PageDown)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('g'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('G'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert!(exec_tab.command_mode);
+    assert_eq!(exec_tab.input, "draft");
+    assert_eq!(exec_tab.input_cursor, "draft".chars().count());
+    assert_eq!(exec_tab.scroll, 3);
+}
+
+#[test]
 fn exec_input_ignores_alt_modified_chars() {
     let mut app = AppState::default();
     app.workbench.open_tab(WorkbenchTabState::Exec(

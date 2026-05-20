@@ -1470,6 +1470,30 @@ impl AppState {
                             tab.command_mode = false;
                             AppAction::None
                         }
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_add(1);
+                            AppAction::None
+                        }
+                        KeyCode::Char('g') if plain_shortcut(key) => {
+                            tab.scroll = 0;
+                            AppAction::None
+                        }
+                        KeyCode::Char('G') if plain_shortcut(key) => {
+                            tab.scroll = tab.lines.len().saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::PageUp if plain_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::PageDown if plain_shortcut(key) => {
+                            tab.scroll = tab.scroll.saturating_add(10);
+                            AppAction::None
+                        }
                         KeyCode::Char('y') if plain_shortcut(key) => AppAction::CopyExecOutput,
                         KeyCode::Char('S') | KeyCode::Char('s') if plain_shortcut(key) => {
                             AppAction::ExportExecOutput
