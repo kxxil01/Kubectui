@@ -49,11 +49,19 @@ pub fn route_mouse_input(
     match mouse.kind {
         MouseEventKind::ScrollUp => {
             focus_mouse_region(app_state, regions, mouse.column, mouse.row);
-            app_state.handle_key_event(KeyEvent::from(KeyCode::Up))
+            if scroll_workbench_output_for_mouse(app_state, false) {
+                AppAction::None
+            } else {
+                app_state.handle_key_event(KeyEvent::from(KeyCode::Up))
+            }
         }
         MouseEventKind::ScrollDown => {
             focus_mouse_region(app_state, regions, mouse.column, mouse.row);
-            app_state.handle_key_event(KeyEvent::from(KeyCode::Down))
+            if scroll_workbench_output_for_mouse(app_state, true) {
+                AppAction::None
+            } else {
+                app_state.handle_key_event(KeyEvent::from(KeyCode::Down))
+            }
         }
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(regions) = regions {
@@ -135,6 +143,28 @@ pub fn route_mouse_input(
             AppAction::None
         }
         _ => AppAction::None,
+    }
+}
+
+fn scroll_workbench_output_for_mouse(app_state: &mut AppState, down: bool) -> bool {
+    if app_state.focus != Focus::Workbench || !app_state.workbench().open {
+        return false;
+    }
+
+    let Some(tab) = app_state.workbench.active_tab_mut() else {
+        return false;
+    };
+
+    match &mut tab.state {
+        WorkbenchTabState::Exec(tab) if !tab.picking_container => {
+            if down {
+                tab.scroll = tab.scroll.saturating_add(1);
+            } else {
+                tab.scroll = tab.scroll.saturating_sub(1);
+            }
+            true
+        }
+        _ => false,
     }
 }
 
@@ -1151,7 +1181,7 @@ mod tests {
         app::{MouseContentSelection, MouseContentSelectionScope, PodSortState},
         policy::ResourceActionContext,
         ui::components::port_forward_dialog::PortForwardDialog,
-        workbench::{PodLogsTabState, PortForwardTabState, WorkbenchTabState},
+        workbench::{ExecTabState, PodLogsTabState, PortForwardTabState, WorkbenchTabState},
     };
     use crossterm::event::KeyModifiers;
     use ratatui::layout::Rect;
@@ -1278,6 +1308,48 @@ mod tests {
         );
 
         assert_eq!(app.focus, Focus::Workbench);
+    }
+
+    #[test]
+    fn mouse_scroll_over_exec_input_scrolls_output_not_command_history() {
+        let regions = MouseRegions {
+            sidebar: Rect::new(0, 3, 28, 20),
+            search: None,
+            content: Rect::new(28, 3, 92, 20),
+            secondary: None,
+            workbench: Some(Rect::new(0, 23, 120, 10)),
+        };
+        let resource = crate::app::ResourceRef::Pod("api".into(), "prod".into());
+        let mut exec = ExecTabState::new(resource.clone(), 1, "api".into(), "prod".into());
+        exec.record_command_history("kubectl get pods");
+        exec.input = "draft".into();
+        exec.input_cursor = exec.input.chars().count();
+        exec.scroll = 3;
+
+        let mut app = AppState::default();
+        app.workbench.open_tab(WorkbenchTabState::Exec(exec));
+        app.workbench.open = true;
+        app.focus = Focus::Content;
+
+        route_mouse_input(
+            MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 30,
+                row: 24,
+                modifiers: KeyModifiers::NONE,
+            },
+            &mut app,
+            Some(&regions),
+            None,
+        );
+
+        let WorkbenchTabState::Exec(tab) = &app.workbench.active_tab().unwrap().state else {
+            panic!("expected exec tab");
+        };
+        assert_eq!(app.focus, Focus::Workbench);
+        assert_eq!(tab.scroll, 2);
+        assert_eq!(tab.input, "draft");
+        assert_eq!(tab.command_history_cursor, None);
     }
 
     #[test]
