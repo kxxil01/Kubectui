@@ -530,8 +530,8 @@ fn readme_scopes_cronjob_logs_to_detail_history() {
 fn readme_lists_exact_quit_sequence() {
     let readme = include_str!("../README.md");
     assert!(
-        readme.contains("| `Esc then Enter` | Quit |"),
-        "README must list runtime quit sequence"
+        readme.contains("| `Sidebar Esc then Enter` | Quit |"),
+        "README must list root quit sequence"
     );
     assert!(
         !readme.contains("| `q` | Quit |"),
