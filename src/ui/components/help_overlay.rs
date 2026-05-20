@@ -59,7 +59,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Global",
         &[
             ("?", "Toggle this help"),
-            ("Esc then Enter", "Quit"),
+            ("Sidebar Esc then Enter", "Quit"),
             ("Esc", "Back / close overlay"),
             ("Tab / Shift+Tab", "Next / previous view"),
             ("j / k / \u{2193} / \u{2191}", "Navigate list"),
@@ -926,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn global_help_lists_exact_quit_sequence() {
+    fn global_help_lists_root_quit_sequence() {
         let global = SECTIONS
             .iter()
             .find(|(title, _)| *title == "Global")
@@ -936,7 +936,7 @@ mod tests {
         assert!(
             global
                 .iter()
-                .any(|(key, desc)| *key == "Esc then Enter" && *desc == "Quit")
+                .any(|(key, desc)| *key == "Sidebar Esc then Enter" && *desc == "Quit")
         );
         assert!(
             !global
