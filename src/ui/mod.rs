@@ -1156,7 +1156,7 @@ fn status_bar_message(
             "[j/k] navigate"
         };
         format!(
-            "{status_prefix}{current_activity}{focus_hint}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit"
+            "{status_prefix}{current_activity}{focus_hint}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Sidebar Esc then Enter] quit"
         )
     };
 
@@ -4722,7 +4722,10 @@ mod tests {
 
         assert!(rendered.contains("[Ctrl+W] close-tab"), "{rendered}");
         assert!(!rendered.contains("[Ctrl+w] close-tab"), "{rendered}");
-        assert!(rendered.contains("[Esc then Enter] quit"), "{rendered}");
+        assert!(
+            rendered.contains("[Sidebar Esc then Enter] quit"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -4737,7 +4740,10 @@ mod tests {
         let rendered = render_to_string_with_size(&app, &pods_snapshot_for_render_tests(), 120, 40);
 
         assert!(rendered.contains("[Ctrl+W] close-tab"), "{rendered}");
-        assert!(rendered.contains("[Esc then Enter] quit"), "{rendered}");
+        assert!(
+            rendered.contains("[Sidebar Esc then Enter] quit"),
+            "{rendered}"
+        );
     }
 
     #[test]
